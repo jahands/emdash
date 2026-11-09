@@ -23,9 +23,13 @@ export interface QueryEvent {
 	sql: string;
 	params: readonly unknown[];
 	durationMs: number;
+	/** `performance.now()` when the query started; compare within one process only. */
+	startedAtMs: number;
 	route: string;
 	method: string;
 	phase: string;
+	/** Distinguishes concurrent requests to the same route. */
+	requestId: string;
 }
 
 export interface QueryRecorder {
@@ -33,6 +37,7 @@ export interface QueryRecorder {
 	route: string;
 	method: string;
 	phase: string;
+	requestId: string;
 	/**
 	 * Set once the recorder has been emitted, so a flush is idempotent.
 	 * Without this, a fallback flush and the stream-end flush could both
@@ -49,7 +54,7 @@ export interface QueryRecorder {
 }
 
 export function createRecorder(route: string, method: string, phase: string): QueryRecorder {
-	return { events: [], route, method, phase };
+	return { events: [], route, method, phase, requestId: crypto.randomUUID() };
 }
 
 export function recordEvent(
@@ -57,14 +62,17 @@ export function recordEvent(
 	sql: string,
 	params: readonly unknown[],
 	durationMs: number,
+	startedAtMs: number,
 ): void {
 	rec.events.push({
 		sql,
 		params,
 		durationMs,
+		startedAtMs,
 		route: rec.route,
 		method: rec.method,
 		phase: rec.phase,
+		requestId: rec.requestId,
 	});
 }
 
@@ -116,7 +124,13 @@ function kyselyLog(event: LogEvent): void {
 		m.dbLastOffset = finishedAt;
 	}
 	if (ctx.queryRecorder) {
-		recordEvent(ctx.queryRecorder, event.query.sql, event.query.parameters, dur);
+		recordEvent(
+			ctx.queryRecorder,
+			event.query.sql,
+			event.query.parameters,
+			dur,
+			performance.now() - dur,
+		);
 	}
 }
 

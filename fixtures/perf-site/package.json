@@ -21,8 +21,10 @@
 		"astro": "catalog:",
 		"emdash": "workspace:*",
 		"kysely": "^0.29.0",
+		"pg": "^8.0.0",
 		"react": "catalog:",
-		"react-dom": "catalog:"
+		"react-dom": "catalog:",
+		"sharp": "^0.34.5"
 	},
 	"devDependencies": {
 		"@astrojs/check": "catalog:",
