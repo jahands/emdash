@@ -1,4 +1,4 @@
-import type { Kysely } from "kysely";
+import { SelectQueryNode, TableNode, type Kysely, type KyselyPlugin } from "kysely";
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 
 import {
@@ -263,6 +263,29 @@ describe("redirect handlers — loop detection", () => {
 	});
 
 	describe("handleRedirectList", () => {
+		it("does not re-read the loop cache after computing it on first access", async () => {
+			await handleRedirectCreate(db, { source: "/a", destination: "/b" });
+			await db.deleteFrom("options").where("name", "=", "_redirect_loop_ids").execute();
+			let selects = 0;
+			const counter: KyselyPlugin = {
+				transformQuery({ node }) {
+					if (SelectQueryNode.is(node)) {
+						const from = node.from?.froms[0];
+						if (from && TableNode.is(from) && from.table.identifier.name === "options") {
+							selects++;
+						}
+					}
+					return node;
+				},
+				transformResult: async ({ result }) => result,
+			};
+
+			const result = await handleRedirectList(db.withPlugin(counter), {});
+
+			expect(result.success).toBe(true);
+			expect(selects).toBe(1);
+		});
+
 		it("does not include loopRedirectIds when no loops exist", async () => {
 			await handleRedirectCreate(db, { source: "/a", destination: "/b" });
 

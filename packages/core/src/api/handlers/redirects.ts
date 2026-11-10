@@ -59,9 +59,10 @@ export async function handleRedirectList(
 ): Promise<ApiResult<FindManyResult<Redirect> & { loopRedirectIds?: string[] }>> {
 	try {
 		const repo = new RedirectRepository(db);
-		const result = await repo.findMany(params);
-
-		const loopRedirectIds = await getLoopRedirectIds(db);
+		const [result, loopRedirectIds] = await Promise.all([
+			repo.findMany(params),
+			getLoopRedirectIds(db),
+		]);
 
 		return {
 			success: true,
@@ -443,16 +444,19 @@ function toEdges(redirects: Redirect[]): RedirectEdge[] {
 const LOOP_CACHE_KEY = "_redirect_loop_ids";
 
 /**
- * Recompute loop redirect IDs and store in the options table.
+ * Recompute loop redirect IDs and store them in the options table. Returns the
+ * stored IDs, or null when they could not be computed or stored.
  */
-async function updateLoopCache(db: Kysely<Database>): Promise<void> {
+async function updateLoopCache(db: Kysely<Database>): Promise<string[] | null> {
 	try {
 		const options = new OptionsRepository(db);
 		const edges = toEdges(await new RedirectRepository(db).findAllEnabled());
 		const loopRedirectIds = detectLoops(edges);
 		await options.set(LOOP_CACHE_KEY, loopRedirectIds);
+		return loopRedirectIds;
 	} catch (error) {
 		console.error("Failed to update redirect loop cache:", error);
+		return null;
 	}
 }
 
@@ -466,8 +470,7 @@ async function getLoopRedirectIds(db: Kysely<Database>): Promise<string[]> {
 		if (cached !== null) return cached;
 
 		// First access after upgrade — compute and cache
-		await updateLoopCache(db);
-		return (await options.get<string[]>(LOOP_CACHE_KEY)) ?? [];
+		return (await updateLoopCache(db)) ?? [];
 	} catch {
 		return [];
 	}
