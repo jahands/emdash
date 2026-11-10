@@ -7,6 +7,7 @@ import {
 	type DatetimeFieldDescriptor,
 } from "../datetime-normalization.js";
 import { requestCached } from "../request-cache.js";
+import { getRequestContext } from "../request-context.js";
 import { isStoragelessFieldRow, type FieldType, type RepeaterSubField } from "../schema/types.js";
 import { isSafeUrlFieldWriteValue } from "../utils/url.js";
 import { EmDashValidationError } from "./repositories/types.js";
@@ -140,6 +141,16 @@ export class ContentDatetimeNormalizer {
 		const context = await this.context(collection);
 		assertSafeUrlFields(data, context.urlFields);
 		return this.normalizeWithContext(context, [data])[0] ?? data;
+	}
+
+	/**
+	 * Starts loading the collection's context so a later normalization in the
+	 * same request finds it ready. Does nothing outside a request, where
+	 * nothing would keep the result.
+	 */
+	prefetch(collection: string): void {
+		if (!this.contexts && !getRequestContext()) return;
+		void this.context(collection).catch(() => {});
 	}
 
 	async normalizeData(

@@ -65,6 +65,24 @@ export function normalizeRevisionLimit(value: unknown): number {
 	return Math.max(1, Math.min(Math.trunc(numeric), 100));
 }
 
+/** Reads of a revision already made while handling one request, by revision id. */
+export type RevisionReads = Map<string, Promise<Revision | null>>;
+
+/** Reads a revision at most once per `reads`. A failed read is not remembered. */
+export function readRevisionOnce(
+	db: Kysely<Database>,
+	reads: RevisionReads,
+	id: string,
+): Promise<Revision | null> {
+	let read = reads.get(id);
+	if (!read) {
+		read = new RevisionRepository(db).findById(id);
+		reads.set(id, read);
+		read.catch(() => reads.delete(id));
+	}
+	return read;
+}
+
 /**
  * Revision repository for version history
  *

@@ -72,7 +72,11 @@ import { CommentRepository } from "./database/repositories/comment.js";
 import type { CommentStatus } from "./database/repositories/comment.js";
 import { ContentRepository } from "./database/repositories/content.js";
 import { MediaRepository } from "./database/repositories/media.js";
-import { RevisionRepository } from "./database/repositories/revision.js";
+import {
+	readRevisionOnce,
+	RevisionRepository,
+	type RevisionReads,
+} from "./database/repositories/revision.js";
 import { selectTaxonomyDefs } from "./database/repositories/taxonomy-def.js";
 import { ContentMutationConflictError } from "./database/repositories/types.js";
 import type {
@@ -3771,8 +3775,15 @@ export class EmDashRuntime {
 		referenceOptions?: { includeDrafts: boolean },
 		draftOptions?: { includeStagedSlug?: boolean },
 	) {
-		const result = await handleContentGet(this.db, collection, id, locale, referenceOptions);
-		return this.hydrateDraftData(result, draftOptions);
+		const revisionReads: RevisionReads = new Map();
+		const result = await handleContentGet(
+			this.db,
+			collection,
+			id,
+			locale,
+			referenceOptions && { ...referenceOptions, revisionReads },
+		);
+		return this.hydrateDraftData(result, { ...draftOptions, revisionReads });
 	}
 
 	async handleContentGetIncludingTrashed(collection: string, id: string, locale?: string) {
@@ -3792,7 +3803,7 @@ export class EmDashRuntime {
 	 */
 	private async hydrateDraftData<T>(
 		result: T,
-		options: { includeStagedSlug?: boolean; strict?: boolean } = {},
+		options: { includeStagedSlug?: boolean; strict?: boolean; revisionReads?: RevisionReads } = {},
 	): Promise<T> {
 		if (!result || typeof result !== "object") return result;
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- shape probed below
@@ -3805,7 +3816,11 @@ export class EmDashRuntime {
 		const draftRevisionId = typeof item.draftRevisionId === "string" ? item.draftRevisionId : null;
 		if (!draftRevisionId) return result;
 		try {
-			const revision = await new RevisionRepository(this.db).findById(draftRevisionId);
+			const revision = await readRevisionOnce(
+				this.db,
+				options.revisionReads ?? new Map(),
+				draftRevisionId,
+			);
 			if (!revision) {
 				if (options.strict) throw new Error(`Draft revision not found: ${draftRevisionId}`);
 				return result;

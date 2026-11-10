@@ -7,6 +7,8 @@ import { sql } from "kysely";
 
 import { after } from "../../after.js";
 import type { ContentFieldFilters } from "../../content-list-query.js";
+import { runConcurrently } from "../../database/concurrent.js";
+import { ContentDatetimeNormalizer } from "../../database/content-datetime.js";
 import { isSqlite } from "../../database/dialect-helpers.js";
 import { BylineRepository } from "../../database/repositories/byline.js";
 import type { ContentBylineInput } from "../../database/repositories/byline.js";
@@ -20,7 +22,11 @@ import { EntryLockRepository } from "../../database/repositories/entry-locks.js"
 import { OptionsRepository } from "../../database/repositories/options.js";
 import { RedirectRepository, redirectPathVariants } from "../../database/repositories/redirect.js";
 import { RelationRepository } from "../../database/repositories/relation.js";
-import { RevisionRepository } from "../../database/repositories/revision.js";
+import {
+	readRevisionOnce,
+	RevisionRepository,
+	type RevisionReads,
+} from "../../database/repositories/revision.js";
 import { SeoRepository } from "../../database/repositories/seo.js";
 import { TaxonomyRepository } from "../../database/repositories/taxonomy.js";
 import {
@@ -405,23 +411,23 @@ async function hydrateReferences(
 	collection: string,
 	item: ContentItem,
 	includeDrafts: boolean,
+	revisionReads: RevisionReads,
 ): Promise<void> {
 	if (!item.translationGroup) return;
 
-	const collectionRow = await db
-		.selectFrom("_emdash_collections")
-		.select("id")
-		.where("slug", "=", collection)
-		.executeTakeFirst();
-	if (!collectionRow) return;
-
-	const fields = await db
-		.selectFrom("_emdash_fields")
-		.select(["slug", "validation"])
-		.where("collection_id", "=", collectionRow.id)
-		.where("type", "=", "reference")
+	const rows = await db
+		.selectFrom("_emdash_collections as collection")
+		.leftJoin("_emdash_fields as field", (join) =>
+			join.onRef("field.collection_id", "=", "collection.id").on("field.type", "=", "reference"),
+		)
+		.select(["field.slug as slug", "field.validation as validation"])
+		.where("collection.slug", "=", collection)
 		.execute();
+	if (rows.length === 0) return;
 
+	const fields = rows.flatMap((row) =>
+		row.slug === null ? [] : [{ slug: row.slug, validation: row.validation }],
+	);
 	const references: NonNullable<ContentItem["references"]> = {};
 	if (fields.length === 0) {
 		item.references = references;
@@ -434,7 +440,7 @@ async function hydrateReferences(
 	const staged =
 		includeDrafts && item.draftRevisionId
 			? readStagedReferences(
-					(await new RevisionRepository(db).findById(item.draftRevisionId))?.data,
+					(await readRevisionOnce(db, revisionReads, item.draftRevisionId))?.data,
 				)
 			: undefined;
 
@@ -479,9 +485,14 @@ async function hydrateReferences(
 		// A field on the child end of its relation selects parents, which carry no
 		// order of their own — `sort_order` positions children within one parent.
 		const onChildSide = validation.relationSide === "child";
-		const edges = onChildSide
-			? await repo.getParentsPage(relation, item.translationGroup)
-			: await repo.getChildrenPage(relation, item.translationGroup);
+		const translationGroup = item.translationGroup;
+		const [edges, titleField] = await runConcurrently(db, [
+			() =>
+				onChildSide
+					? repo.getParentsPage(relation, translationGroup)
+					: repo.getChildrenPage(relation, translationGroup),
+			() => getReferenceTitleField(db, targetCollection),
+		]);
 		const children = await resolveEntries(
 			content,
 			targetCollection,
@@ -489,7 +500,7 @@ async function hydrateReferences(
 			(e) => (onChildSide ? e.parentGroup : e.childGroup),
 			item.locale,
 			includeDrafts,
-			await getReferenceTitleField(db, targetCollection),
+			titleField,
 		);
 		references[field.slug] = {
 			children,
@@ -1030,16 +1041,20 @@ export async function handleContentList(
 			);
 		}
 
-		const result = await repo.findMany(collection, {
-			cursor: params.cursor,
-			offset,
-			limit,
-			where: Object.keys(where).length > 0 ? where : undefined,
-			orderBy: params.orderBy
-				? { field: params.orderBy, direction: params.order || "desc" }
-				: undefined,
-			sortableExtras,
-		});
+		const [result, hasSeo] = await runConcurrently(db, [
+			() =>
+				repo.findMany(collection, {
+					cursor: params.cursor,
+					offset,
+					limit,
+					where: Object.keys(where).length > 0 ? where : undefined,
+					orderBy: params.orderBy
+						? { field: params.orderBy, direction: params.order || "desc" }
+						: undefined,
+					sortableExtras,
+				}),
+			() => collectionHasSeo(db, collection),
+		]);
 
 		// Unpublished entries have no live data to preserve in the list. Keep the
 		// base columns untouched so discarding a draft can still restore them.
@@ -1049,7 +1064,8 @@ export async function handleContentList(
 		const draftIds = unpublishedDrafts.flatMap((item) =>
 			item.draftRevisionId ? [item.draftRevisionId] : [],
 		);
-		if (draftIds.length > 0) {
+		const overlayDrafts = async () => {
+			if (draftIds.length === 0) return;
 			const revisions = await new RevisionRepository(db).findByIds(collection, draftIds);
 			const byId = new Map(revisions.map((revision) => [revision.id, revision]));
 			for (const item of unpublishedDrafts) {
@@ -1061,12 +1077,13 @@ export async function handleContentList(
 				);
 				item.data = { ...item.data, ...fields };
 			}
-		}
+		};
 
-		// Hydrate SEO data if the collection has SEO enabled
-		const hasSeo = await collectionHasSeo(db, collection);
-		await hydrateSeoMany(db, collection, result.items, hasSeo);
-		await hydrateBylinesMany(db, collection, result.items);
+		await runConcurrently(db, [
+			overlayDrafts,
+			() => hydrateSeoMany(db, collection, result.items, hasSeo),
+			() => hydrateBylinesMany(db, collection, result.items),
+		]);
 
 		return {
 			success: true,
@@ -1183,7 +1200,7 @@ export async function handleContentGet(
 	collection: string,
 	id: string,
 	locale?: string,
-	referenceOptions?: { includeDrafts: boolean },
+	referenceOptions?: { includeDrafts: boolean; revisionReads?: RevisionReads },
 ): Promise<ApiResult<ContentResponse>> {
 	try {
 		const repo = new ContentRepository(db);
@@ -1203,16 +1220,9 @@ export async function handleContentGet(
 			};
 		}
 
-		// Hydrate SEO data if the collection has SEO enabled
-		const hasSeo = await collectionHasSeo(db, collection);
-		await hydrateSeo(db, collection, item, hasSeo);
-		await hydrateBylines(db, collection, item);
-		// Opt-in: hydration is skipped entirely unless the caller passes
-		// `referenceOptions`, since it can leak draft child ids/slugs — see
-		// `hydrateReferences`'s doc comment.
-		if (referenceOptions) {
-			await hydrateReferences(db, collection, item, referenceOptions.includeDrafts);
-		}
+		// Reading the draft revision normalizes it, so start loading what that needs.
+		if (item.draftRevisionId) new ContentDatetimeNormalizer(db).prefetch(collection);
+		await hydrateContentItem(db, collection, item, referenceOptions);
 
 		return {
 			success: true,
@@ -1228,6 +1238,35 @@ export async function handleContentGet(
 			},
 		};
 	}
+}
+
+async function hydrateContentItem(
+	db: Kysely<Database>,
+	collection: string,
+	item: ContentItem,
+	referenceOptions?: { includeDrafts: boolean; revisionReads?: RevisionReads },
+): Promise<void> {
+	await runConcurrently(db, [
+		async () => {
+			// Hydrate SEO data if the collection has SEO enabled
+			await hydrateSeo(db, collection, item, await collectionHasSeo(db, collection));
+		},
+		() => hydrateBylines(db, collection, item),
+		// Opt-in: hydration is skipped entirely unless the caller passes
+		// `referenceOptions`, since it can leak draft child ids/slugs — see
+		// `hydrateReferences`'s doc comment.
+		async () => {
+			if (referenceOptions) {
+				await hydrateReferences(
+					db,
+					collection,
+					item,
+					referenceOptions.includeDrafts,
+					referenceOptions.revisionReads ?? new Map(),
+				);
+			}
+		},
+	]);
 }
 
 /**
