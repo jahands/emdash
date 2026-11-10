@@ -98,6 +98,20 @@ export async function handleMediaList(
 	}
 }
 
+export async function handleMediaBatchGet(
+	db: Kysely<Database>,
+	ids: string[],
+): Promise<ApiResult<MediaListResponse>> {
+	try {
+		return {
+			success: true,
+			data: { items: await new MediaRepository(db).findByIds(ids.slice(0, 100)) },
+		};
+	} catch {
+		return { success: false, error: { code: "MEDIA_GET_ERROR", message: "Failed to get media" } };
+	}
+}
+
 /**
  * Get single media item
  */

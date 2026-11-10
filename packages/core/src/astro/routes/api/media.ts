@@ -14,6 +14,7 @@ import { canReadMediaUsageCount, requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError, unwrapResult } from "#api/error.js";
 import { GLOBAL_UPLOAD_ALLOWLIST, resolveFieldAllowlist } from "#api/handlers/media-allowlist.js";
 import { handleMediaUsageSummaries } from "#api/handlers/media-usage.js";
+import { handleMediaBatchGet } from "#api/handlers/media.js";
 import { isParseError, parseQuery } from "#api/parse.js";
 import {
 	DEFAULT_MAX_UPLOAD_SIZE,
@@ -58,6 +59,15 @@ export const GET: APIRoute = async ({ request, locals }) => {
 	}
 
 	const url = new URL(request.url);
+	if (url.searchParams.has("ids")) {
+		const ids = [...new Set((url.searchParams.get("ids") ?? "").split(",").filter(Boolean))].slice(
+			0,
+			100,
+		);
+		if (ids.some((id) => id.length > 200))
+			return apiError("INVALID_REQUEST", "Invalid media ID", 400);
+		return unwrapResult(await handleMediaBatchGet(emdash.db, ids));
+	}
 	const query = parseQuery(url, mediaListQuery);
 	if (isParseError(query)) return query;
 

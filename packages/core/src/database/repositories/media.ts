@@ -410,6 +410,15 @@ export class MediaRepository {
 		return row ? this.rowToItem(row) : null;
 	}
 
+	async findByIds(ids: string[]): Promise<MediaItem[]> {
+		const items: MediaItem[] = [];
+		for (const batch of chunks([...new Set(ids)], SQL_BATCH_SIZE)) {
+			const rows = await this.db.selectFrom("media").selectAll().where("id", "in", batch).execute();
+			items.push(...rows.map((row) => this.rowToItem(row)));
+		}
+		return items;
+	}
+
 	/**
 	 * Find media by ID
 	 */

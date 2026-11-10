@@ -7,6 +7,7 @@ import { msg } from "@lingui/core/macro";
 
 import {
 	API_BASE,
+	ApiResponseError,
 	apiFetch,
 	parseApiResponse,
 	throwResponseError,
@@ -179,24 +180,92 @@ export async function fetchMediaList(options?: {
 	return parseApiResponse<MediaListResult>(response, i18n._(msg`Failed to fetch media`));
 }
 
+interface PendingMediaRead {
+	id: string;
+	signal?: AbortSignal;
+	resolve: (item: LocalMediaItem) => void;
+	reject: (error: unknown) => void;
+}
+
+let pendingMediaReads: PendingMediaRead[] = [];
+
+async function flushMediaReads(): Promise<void> {
+	const pending = pendingMediaReads;
+	pendingMediaReads = [];
+	const active = pending.filter((read) => {
+		if (!read.signal?.aborted) return true;
+		read.reject(read.signal.reason);
+		return false;
+	});
+	const ids = [...new Set(active.map((read) => read.id))];
+	for (let offset = 0; offset < ids.length; offset += 100) {
+		const batch = ids.slice(offset, offset + 100);
+		const reads = active.filter((read) => batch.includes(read.id));
+		try {
+			const single = batch.length === 1;
+			const response = await apiFetch(
+				single
+					? `${API_BASE}/media/${encodeURIComponent(batch[0]!)}`
+					: `${API_BASE}/media?${new URLSearchParams({ ids: batch.join(",") })}`,
+				{ signal: reads.length === 1 ? reads[0]?.signal : undefined },
+			);
+			const data = await parseApiResponse<{ item?: LocalMediaItem; items?: LocalMediaItem[] }>(
+				response,
+				i18n._(msg`Failed to fetch media item`),
+			);
+			const items = new Map(
+				(single && data.item ? [data.item] : (data.items ?? [])).map((item) => [item.id, item]),
+			);
+			for (const read of reads) {
+				if (read.signal?.aborted) {
+					read.reject(read.signal.reason);
+					continue;
+				}
+				const item = single ? data.item : items.get(read.id);
+				if (item) read.resolve(item);
+				else
+					read.reject(
+						new ApiResponseError(404, "NOT_FOUND", i18n._(msg`Failed to fetch media item`)),
+					);
+			}
+		} catch (error) {
+			for (const read of reads) read.reject(error);
+		}
+	}
+}
+
 /**
  * Fetch a single media item by id.
  *
  * Used to resolve an id-only reference (e.g. a byline's `avatarMediaId`)
  * back into a full media item for display.
  */
-export async function fetchMediaItem(
-	id: string,
-	options?: MediaUploadOptions,
-): Promise<LocalMediaItem> {
-	const response = await apiFetch(`${API_BASE}/media/${encodeURIComponent(id)}`, {
-		signal: options?.signal,
+export function fetchMediaItem(id: string, options?: MediaUploadOptions): Promise<LocalMediaItem> {
+	return new Promise((resolve, reject) => {
+		if (options?.signal?.aborted) {
+			reject(options.signal.reason);
+			return;
+		}
+		if (pendingMediaReads.length === 0)
+			setTimeout(() => {
+				void flushMediaReads();
+			}, 0);
+		const abort = () => reject(options?.signal?.reason);
+		options?.signal?.addEventListener("abort", abort, { once: true });
+		const cleanup = () => options?.signal?.removeEventListener("abort", abort);
+		pendingMediaReads.push({
+			id,
+			signal: options?.signal,
+			resolve: (item) => {
+				cleanup();
+				resolve(item);
+			},
+			reject: (error) => {
+				cleanup();
+				reject(error);
+			},
+		});
 	});
-	const data = await parseApiResponse<{ item: LocalMediaItem }>(
-		response,
-		i18n._(msg`Failed to fetch media item`),
-	);
-	return data.item;
 }
 
 export async function fetchMediaUsageDetails(
