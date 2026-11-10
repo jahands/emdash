@@ -41,12 +41,13 @@ describe("PUT content route — edge cache invalidation", () => {
 			error?: { code: string; message: string };
 		},
 		body: Record<string, unknown> = { data: { title: "Edited" } },
+		query = "",
 	) {
 		const handleContentGet = vi.fn().mockResolvedValue(ownedItem);
 		const handleContentUpdate = vi.fn().mockResolvedValue(updateResult);
 		const invalidate = vi.fn().mockResolvedValue(undefined);
 
-		const request = new Request("http://localhost/_emdash/api/content/posts/c1", {
+		const request = new Request(`http://localhost/_emdash/api/content/posts/c1${query}`, {
 			method: "PUT",
 			headers: { "Content-Type": "application/json" },
 			body: JSON.stringify(body),
@@ -113,4 +114,28 @@ describe("PUT content route — edge cache invalidation", () => {
 		expect(response.status).toBe(409);
 		expect(invalidate).not.toHaveBeenCalled();
 	});
+	it.each(["", "?includeLiveData=false"])(
+		"preserves revision tokens with optional live data (%s)",
+		async (query) => {
+			const result = {
+				success: true,
+				data: {
+					item: { id: "c1", data: { title: "Draft" }, liveData: { title: "Live" } },
+					_rev: "rev2",
+				},
+				liveContentChanged: false,
+			};
+			const { response } = await putWithUpdateResult(
+				result,
+				{ data: { title: "Draft" }, _rev: "rev1" },
+				query,
+			);
+			const json = await response.json();
+			expect(json.data._rev).toBe("rev2");
+			expect(json.data.item.data).toEqual({ title: "Draft" });
+			if (query) expect(json.data.item).not.toHaveProperty("liveData");
+			else expect(json.data.item.liveData).toEqual({ title: "Live" });
+			expect(result.data.item.liveData).toEqual({ title: "Live" });
+		},
+	);
 });

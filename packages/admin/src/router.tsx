@@ -347,6 +347,7 @@ function patchAutosaveQueries(
 	const contentRead = queryClient.isFetching({ queryKey: contentKey }) > 0;
 	queryClient.setQueriesData<ContentItem>({ queryKey: contentKey }, (cached) => ({
 		...savedItem,
+		liveData: savedItem.liveData ?? cached?.liveData,
 		references:
 			savedItem.references ?? withAutosavedReferences(cached?.references, referenceRows, fields),
 	}));
@@ -632,10 +633,24 @@ function ContentListPage() {
 		enabled: !!manifest,
 	});
 
+	const listConfig = manifest?.collections[collection];
+	// Plugin columns can read arbitrary entry fields.
+	const listFields =
+		Object.keys(manifest?.plugins ?? {}).length > 0
+			? undefined
+			: [
+					"title",
+					"name",
+					...(listConfig?.titleField ? [listConfig.titleField] : []),
+					...(listConfig?.dateField ? [listConfig.dateField] : []),
+					...(listConfig?.listColumns ?? []),
+				].filter((field) => !["createdAt", "updatedAt", "publishedAt"].includes(field));
+
 	const contentList = usePagedQuery({
 		scope: ["content", collection],
 		queryKey: [
 			{
+				fields: listFields,
 				locale: activeLocale,
 				sort,
 				search: searchTerm,
@@ -647,6 +662,7 @@ function ContentListPage() {
 		],
 		queryFn: ({ page, perPage }) =>
 			fetchContentList(collection, {
+				fields: listFields,
 				locale: activeLocale,
 				page,
 				limit: perPage,
@@ -1493,7 +1509,7 @@ function ContentEditPage() {
 				collection,
 				targetId,
 				{ ...changes, skipRevision: true, _rev: revisionTokensRef.current.get(targetId) },
-				{ locale: targetLocale },
+				{ locale: targetLocale, includeLiveData: false },
 			);
 			recordWriteRevision(targetId, savedItem);
 			return savedItem;

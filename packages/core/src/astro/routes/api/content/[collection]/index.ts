@@ -35,6 +35,21 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
 
 	const result = await emdash.handleContentList(collection, params_);
 
+	if (result.success && query.fields) {
+		const fields = new Set(query.fields);
+		return unwrapResult({
+			...result,
+			data: {
+				...result.data,
+				items: result.data.items.map((item) => ({
+					...item,
+					data: Object.fromEntries(
+						Object.entries(item.data).filter(([field]) => fields.has(field)),
+					),
+				})),
+			},
+		});
+	}
 	return unwrapResult(result);
 };
 

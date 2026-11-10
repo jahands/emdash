@@ -17,8 +17,8 @@ import {
 } from "#api/authorize.js";
 import { apiError, mapErrorStatus, unwrapResult } from "#api/error.js";
 import { claimEntryLockForWrite } from "#api/handlers/entry-lock.js";
-import { parseBody, isParseError } from "#api/parse.js";
-import { contentUpdateBody } from "#api/schemas.js";
+import { parseBody, parseQuery, isParseError } from "#api/parse.js";
+import { contentUpdateBody, contentUpdateQuery } from "#api/schemas.js";
 import { invalidateRouteCache } from "#cache/route-cache.js";
 
 export const prerender = false;
@@ -77,6 +77,8 @@ export const PUT: APIRoute = async ({ params, request, locals, cache }) => {
 	const collection = params.collection!;
 	const id = params.id!;
 	const locale = new URL(request.url).searchParams.get("locale") || undefined;
+	const query = parseQuery(new URL(request.url), contentUpdateQuery);
+	if (isParseError(query)) return query;
 	const body = await parseBody(request, contentUpdateBody);
 	if (isParseError(body)) return body;
 
@@ -157,6 +159,11 @@ export const PUT: APIRoute = async ({ params, request, locals, cache }) => {
 
 	if (result.liveContentChanged !== false) {
 		await invalidateRouteCache(cache, [collection, resolvedId]);
+	}
+
+	if (query.includeLiveData === "false") {
+		const { liveData: _liveData, ...item } = result.data.item;
+		return unwrapResult({ ...result, data: { ...result.data, item } });
 	}
 
 	return unwrapResult(result);

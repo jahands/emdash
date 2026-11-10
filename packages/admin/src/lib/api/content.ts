@@ -44,6 +44,7 @@ export interface ContentItem {
 	locale: string;
 	translationGroup: string | null;
 	data: Record<string, unknown>;
+	liveData?: Record<string, unknown>;
 	authorId: string | null;
 	primaryBylineId: string | null;
 	byline?: BylineSummary | null;
@@ -168,6 +169,7 @@ export type ContentDateField = "createdAt" | "updatedAt" | "publishedAt";
 export async function fetchContentList(
 	collection: string,
 	options?: {
+		fields?: string[];
 		cursor?: string;
 		/** 1-based page number; use instead of `cursor` for numbered pages with a `total`. */
 		page?: number;
@@ -203,6 +205,7 @@ export async function fetchContentList(
 	},
 ): Promise<FindManyResult<ContentItem>> {
 	const params = new URLSearchParams();
+	if (options?.fields) params.set("fields", options.fields.join(","));
 	if (options?.cursor) params.set("cursor", options.cursor);
 	if (options?.page !== undefined) params.set("page", String(options.page));
 	if (options?.limit) params.set("limit", String(options.limit));
@@ -315,9 +318,10 @@ export async function updateContent(
 	collection: string,
 	id: string,
 	input: UpdateContentInput,
-	options?: { locale?: string },
+	options?: { locale?: string; includeLiveData?: boolean },
 ): Promise<ContentItem> {
 	const params = new URLSearchParams();
+	if (options?.includeLiveData === false) params.set("includeLiveData", "false");
 	if (options?.locale) params.set("locale", options.locale);
 	const query = params.toString() ? `?${params}` : "";
 	const response = await apiFetch(`${API_BASE}/content/${collection}/${id}${query}`, {

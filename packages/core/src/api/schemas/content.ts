@@ -156,8 +156,25 @@ const pageParam = z.coerce
 	.optional()
 	.meta({ description: "1-based page number, for numbered pages instead of a cursor" });
 
+export const contentUpdateQuery = z.object({
+	includeLiveData: z.enum(["true", "false"]).optional().meta({
+		description:
+			"Set to false to omit the published field values from the update response. Included by default.",
+	}),
+});
+
 export const contentListQuery = cursorPaginationQuery
 	.extend({
+		fields: z
+			.string()
+			.max(4096)
+			.regex(/^[a-z][a-z0-9_]*(,[a-z][a-z0-9_]*)*$/)
+			.transform((value) => value.split(","))
+			.optional()
+			.meta({
+				description:
+					"Comma-separated custom field slugs to include in each item’s data. Omit to return all fields.",
+			}),
 		page: pageParam,
 		/** Filter by status; `all` (like omitting it) lists every status. */
 		status: z

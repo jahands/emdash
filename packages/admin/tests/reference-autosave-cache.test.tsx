@@ -179,6 +179,7 @@ function createMockServer(options: {
 				data: {
 					item: {
 						...makePost("post_1", savedData, revision),
+						liveData: { title: "Published title" },
 						references: { authors: { children: savedAuthors.map((id) => AUTHORS[id]) } },
 					},
 					_rev: `rev-${revision}`,
@@ -284,7 +285,7 @@ async function renderAdmin(open: (router: ReturnType<typeof createAdminRouter>) 
 			</ThemeProvider>
 		</I18nProvider>,
 	);
-	return { screen, router };
+	return { screen, router, queryClient };
 }
 
 async function renderPost() {
@@ -367,12 +368,16 @@ describe("reference field after a save", () => {
 
 	it("still lists the saved entries when the entry is reopened after a text autosave", async () => {
 		server = createMockServer({ initialAuthors: ["author_ada"] });
-		const { screen, router } = await renderPost();
+		const { screen, router, queryClient } = await renderPost();
 		await expect.element(screen.getByText("Ada Lovelace")).toBeVisible();
 
 		await screen.getByRole("textbox", { name: "Title" }).fill("Edited title");
 		await vi.advanceTimersByTimeAsync(2500);
 		expect(autosaves(server.requests)).toHaveLength(1);
+		expect(
+			queryClient.getQueryData<ContentItem>(["content", "posts", "post_1", { locale: undefined }])
+				?.liveData,
+		).toEqual({ title: "Published title" });
 
 		await reopenPost(router);
 

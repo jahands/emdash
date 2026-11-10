@@ -44,6 +44,7 @@ import {
 	contentTrashQuery,
 	contentTranslationsResponseSchema,
 	contentUpdateBody,
+	contentUpdateQuery,
 	trashedContentListResponseSchema,
 } from "../schemas/content.js";
 import {
@@ -361,7 +362,7 @@ const contentPaths = {
 					collection: z.string().meta({ description: "Collection slug" }),
 					id: z.string().meta({ description: "Content ID or slug" }),
 				}),
-				query: z.object({
+				query: contentUpdateQuery.extend({
 					locale: z.string().optional().meta({ description: "Locale filter" }),
 				}),
 			},
