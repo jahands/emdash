@@ -321,7 +321,7 @@ describe("ContentEditor mobile action bar", () => {
 		expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
 	});
 
-	it("shows a dismissible full-width save error below the bar on mobile and desktop", async () => {
+	it("shows a dismissible save error below the bar on mobile and desktop", async () => {
 		function SaveErrorHarness() {
 			const [error, setError] = React.useState<{ message: string; token: number } | undefined>({
 				message: "The server rejected this save.",
@@ -376,7 +376,8 @@ describe("ContentEditor mobile action bar", () => {
 					return (
 						barRect.width === width &&
 						bannerRect.top >= barRect.bottom - 1 &&
-						Math.abs(bannerRect.width - barRect.width) < 1
+						bannerRect.left >= 0 &&
+						bannerRect.right <= width
 					);
 				})
 				.toBe(true);

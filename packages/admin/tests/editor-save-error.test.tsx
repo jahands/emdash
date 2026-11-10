@@ -283,6 +283,46 @@ describe("ContentEditPage save error wiring", () => {
 		await vi.waitFor(() => expect(screen.getByRole("alert").query()).toBeNull());
 	});
 
+	it("shows a failed save over the canvas without moving the page", async () => {
+		server = createMockServer([500, 200]);
+		const { screen } = await renderEditPage();
+		const title = screen.getByRole("textbox", { name: "Title" });
+		const titleTop = () => title.element().getBoundingClientRect().top;
+		await title.fill("Rejected once");
+		const before = titleTop();
+		await screen.getByRole("button", { name: "Save", exact: true }).click();
+		const dismiss = screen.getByRole("button", { name: "Dismiss save error" });
+		await expect.element(dismiss).toBeVisible();
+		expect(titleTop()).toBe(before);
+		const { left, top, width, height } = dismiss.element().getBoundingClientRect();
+		expect(
+			dismiss.element().contains(document.elementFromPoint(left + width / 2, top + height / 2)),
+		).toBe(true);
+
+		await title.fill("Accepted");
+		await screen.getByRole("button", { name: "Save", exact: true }).click();
+		await vi.waitFor(() => expect(screen.getByRole("alert").query()).toBeNull());
+		expect(titleTop()).toBe(before);
+	});
+
+	it("shows a failed autosave on a phone without moving the page", async () => {
+		await page.viewport(390, 800);
+		server = createMockServer([500]);
+		const { screen } = await renderEditPage();
+		const title = screen.getByRole("textbox", { name: "Title" });
+		const titleTop = () => title.element().getBoundingClientRect().top;
+		await title.fill("Autosave rejected");
+		const before = titleTop();
+		await expect.poll(() => screen.getByRole("alert").query(), { timeout: 6000 }).not.toBeNull();
+		await expect.element(screen.getByRole("alert")).toBeVisible();
+		expect(titleTop()).toBe(before);
+		const settings = screen.getByRole("button", { name: "Settings", exact: true }).element();
+		const { left, top, width, height } = settings.getBoundingClientRect();
+		expect(settings.contains(document.elementFromPoint(left + width / 2, top + height / 2))).toBe(
+			true,
+		);
+	});
+
 	it("does not show an editor banner for a failed or retried auxiliary write", async () => {
 		server = createMockServer([], [500, 200]);
 		const { screen } = await renderEditPage();

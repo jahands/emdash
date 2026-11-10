@@ -2117,15 +2117,47 @@ export function ContentEditor({
 					</Button>
 				</div>
 			</div>
-			{saveError && (
-				<EditorSaveError
-					key={`${item?.id ?? "new"}:${item?.locale ?? entryLocale}:${saveError.token}`}
-					message={saveError.message}
-					title={saveError.title}
-				/>
-			)}
 		</div>
 	);
+
+	const showSaveConflict = hasSaveConflict && !isViewing;
+	// Takes no space, so it covers the top of the page instead of pushing it down under the
+	// writer, and sticks to the top of the canvas once the page scrolls.
+	const saveStatus =
+		showSaveConflict || saveError ? (
+			<div className="pointer-events-none sticky top-0 z-20 h-0 shrink-0">
+				<div className="mx-auto grid w-full max-w-[52rem] gap-2 px-4 pt-3 sm:px-13">
+					{showSaveConflict && (
+						<div className="pointer-events-auto rounded-lg bg-kumo-base shadow-lg">
+							<Banner
+								variant="error"
+								role="alert"
+								title={t`This entry changed somewhere else after you opened it.`}
+								description={t`What you typed is still here. Saving replaces the newer version.`}
+								action={
+									<Button
+										size="sm"
+										variant="secondary"
+										type="button"
+										disabled={readOnly}
+										onClick={submitSave}
+									>
+										{t`Save anyway`}
+									</Button>
+								}
+							/>
+						</div>
+					)}
+					{saveError && (
+						<EditorSaveError
+							key={`${item?.id ?? "new"}:${item?.locale ?? entryLocale}:${saveError.token}`}
+							message={saveError.message}
+							title={saveError.title}
+						/>
+					)}
+				</div>
+			</div>
+		) : null;
 
 	const form = (
 		<form
@@ -2186,6 +2218,7 @@ export function ContentEditor({
 							    to fit its widest field. */}
 							<ScrollArea.Content className="flex min-h-full flex-col" style={{ minWidth: 0 }}>
 								{!pinEditorBar && editorBar}
+								{saveStatus}
 								<div
 									className={cn(
 										"emdash-editor-page mx-auto w-full max-w-[52rem] space-y-6 pt-8 sm:pt-12",
@@ -2217,19 +2250,6 @@ export function ContentEditor({
 															`${field.label ?? name}: ${field.unsupportedType?.type ?? field.kind}`,
 													)
 													.join(", ")}
-											/>
-										)}
-										{hasSaveConflict && (
-											<Banner
-												variant="error"
-												role="alert"
-												title={t`This entry changed somewhere else after you opened it.`}
-												description={t`What you typed is still here. Saving replaces the newer version.`}
-												action={
-													<Button size="sm" variant="secondary" type="button" onClick={submitSave}>
-														{t`Save anyway`}
-													</Button>
-												}
 											/>
 										)}
 										<div className="space-y-6 [&_input]:text-base [&_input]:font-normal [&_textarea]:text-base [&_textarea]:font-normal [&_[role=combobox]]:text-base">
@@ -2705,24 +2725,25 @@ function EditorSaveError({ message, title }: { message: string; title?: string }
 	const [dismissed, setDismissed] = React.useState(false);
 	if (dismissed) return null;
 	return (
-		<Banner
-			variant="error"
-			role="alert"
-			className="rounded-none"
-			title={title ?? t`Failed to save`}
-			description={message}
-			action={
-				<Button
-					type="button"
-					variant="ghost"
-					shape="square"
-					size="sm"
-					aria-label={t`Dismiss save error`}
-					onClick={() => setDismissed(true)}
-					icon={<X />}
-				/>
-			}
-		/>
+		<div className="pointer-events-auto rounded-lg bg-kumo-base shadow-lg">
+			<Banner
+				variant="error"
+				role="alert"
+				title={title ?? t`Failed to save`}
+				description={message}
+				action={
+					<Button
+						type="button"
+						variant="ghost"
+						shape="square"
+						size="sm"
+						aria-label={t`Dismiss save error`}
+						onClick={() => setDismissed(true)}
+						icon={<X />}
+					/>
+				}
+			/>
+		</div>
 	);
 }
 

@@ -7,6 +7,8 @@ import { userEvent } from "@vitest/browser/context";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import "../dist/styles.css";
+
 import { ThemeProvider } from "../src/components/ThemeProvider";
 import type { AdminManifest, ContentItem } from "../src/lib/api";
 import { createAdminRouter } from "../src/router";
@@ -232,6 +234,24 @@ describe("ContentEditPage save conflict", () => {
 			data: { title: "Writer copy" },
 			_rev: "rev-moved",
 		});
+	});
+
+	it("shows the conflict over the canvas without moving the page", async () => {
+		server = conflictOnFirstPut();
+		const screen = await renderEditPage();
+		const title = screen.getByRole("textbox", { name: "Title" });
+		const titleTop = () => title.element().getBoundingClientRect().top;
+		await title.fill("Writer copy");
+		const before = titleTop();
+		await vi.advanceTimersByTimeAsync(2500);
+
+		const saveAnyway = screen.getByRole("button", { name: "Save anyway", exact: true });
+		await expect.element(saveAnyway).toBeVisible();
+		expect(titleTop()).toBe(before);
+		const { left, top, width, height } = saveAnyway.element().getBoundingClientRect();
+		expect(
+			saveAnyway.element().contains(document.elementFromPoint(left + width / 2, top + height / 2)),
+		).toBe(true);
 	});
 
 	it("reports the failure when it cannot read the newer version", async () => {
