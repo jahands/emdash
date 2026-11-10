@@ -7,7 +7,15 @@ const contextOptions = { timezoneId: "America/New_York" };
 const touchScreenTests = "tests/**/*.touch.test.{ts,tsx}";
 
 export default defineConfig({
-	resolve: { dedupe: ["react", "react-dom"] },
+	resolve: {
+		dedupe: ["react", "react-dom"],
+		alias: [
+			// As pre-bundle entries beside the root package, the ~1,500 per-icon modules
+			// split it into one chunk per icon, which every test file then requests.
+			// Each module exports the same components as the root package.
+			{ find: /^@phosphor-icons\/react\/dist\/csr\/[^/]+$/, replacement: "@phosphor-icons/react" },
+		],
+	},
 	optimizeDeps: {
 		include: [
 			"@cloudflare/kumo/primitives/scroll-area",
@@ -20,7 +28,6 @@ export default defineConfig({
 			"@codemirror/state",
 			"@codemirror/view",
 			"@lezer/highlight",
-			"@phosphor-icons/react/dist/csr/*",
 			"react-image-crop",
 			"date-fns",
 			"react-day-picker/locale/*",
