@@ -50,7 +50,7 @@ import {
 } from "./state.js";
 import { useAdvanceLoop } from "./useAdvanceLoop.js";
 
-const RECENT_IMPORTS = 10;
+export const RECENT_IMPORTS = 10;
 
 export function ImportSection({ capabilities }: { capabilities: TransferCapabilities }) {
 	const { t, i18n } = useLingui();

@@ -32,7 +32,7 @@ import {
 import { replaceOperation } from "./state.js";
 import { useAdvanceLoop } from "./useAdvanceLoop.js";
 
-const RECENT_EXPORTS = 10;
+export const RECENT_EXPORTS = 10;
 const START_RETRIES = 3;
 /** Above this size, a browser without streaming saves holds too much in memory. */
 const LARGE_IN_MEMORY_BYTES = 500 * 1024 * 1024;

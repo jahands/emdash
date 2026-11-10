@@ -183,6 +183,26 @@ describe("TransferSettings", () => {
 		expect(api.fetchTransferCapabilities).not.toHaveBeenCalled();
 	});
 
+	it("shows one loading state until exports and imports have both arrived", async () => {
+		setup({});
+		let resolveExports!: (value: { items: never[] }) => void;
+		api.fetchTransferExports.mockReturnValue(
+			new Promise((resolve) => {
+				resolveExports = resolve;
+			}),
+		);
+		const screen = await render(<TransferSettings />);
+		await vi.waitFor(() => expect(api.fetchTransferImports).toHaveBeenCalled());
+		await new Promise((settle) => setTimeout(settle, 50));
+		expect(screen.getByText("Loading...").query()).not.toBeNull();
+		expect(screen.getByRole("button", { name: "Choose package file" }).query()).toBeNull();
+		expect(screen.getByRole("heading", { name: "Approval requests" }).query()).toBeNull();
+
+		resolveExports({ items: [] });
+		await expect.element(screen.getByRole("button", { name: "Export site" })).toBeVisible();
+		await expect.element(screen.getByRole("button", { name: "Choose package file" })).toBeVisible();
+	});
+
 	it("offers a package file on an empty site", async () => {
 		setup({});
 		const screen = await render(<TransferSettings />);
