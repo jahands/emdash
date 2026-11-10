@@ -66,12 +66,17 @@ export default defineConfig({
 			},
 		},
 		{
-			name: "nav-icon-table-failure",
+			name: "load-failure-fixtures",
 			configureServer(server) {
 				let failNextTableRequest = false;
 				server.middlewares.use((request, response, next) => {
 					if (request.method === "POST" && request.url === "/__test/fail-nav-icon-table") {
 						failNextTableRequest = true;
+						response.end();
+						return;
+					}
+					if (request.url?.startsWith("/__test/missing-chunk/")) {
+						response.statusCode = 404;
 						response.end();
 						return;
 					}

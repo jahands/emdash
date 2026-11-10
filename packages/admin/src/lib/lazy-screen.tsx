@@ -1,4 +1,7 @@
+import { useQueryClient, type QueryClient } from "@tanstack/react-query";
 import * as React from "react";
+
+import { reloadPage } from "./page-reload.js";
 
 const CHUNK_URL = /https?:\/\/[^\s]+/;
 
@@ -17,6 +20,28 @@ async function isMissingChunk(error: unknown): Promise<boolean> {
 			signal: AbortSignal.timeout(1500),
 		});
 		return response.status === 404 || response.status === 410;
+	} catch {
+		return false;
+	}
+}
+
+function whenMutationsSettle(queryClient: QueryClient): Promise<void> {
+	return new Promise((resolve) => {
+		const unsubscribe = queryClient.getMutationCache().subscribe(() => {
+			if (queryClient.isMutating() > 0) return;
+			unsubscribe();
+			resolve();
+		});
+	});
+}
+
+/** Allows one reload per missing chunk, so a chunk that stays missing shows the error instead. */
+function claimReload(failure: unknown): boolean {
+	try {
+		const key = `emdash:chunk-reload:${failure instanceof Error ? failure.message : window.location.pathname}`;
+		if (sessionStorage.getItem(key)) return false;
+		sessionStorage.setItem(key, "1");
+		return true;
 	} catch {
 		return false;
 	}
@@ -52,19 +77,22 @@ export function lazyRouteComponent<T extends Record<string, unknown>, K extends 
 				failure = error;
 				failedScreens.add(reset);
 			}));
+	let waitingForMutations: Promise<void> | undefined;
+	let reloading: Promise<never> | undefined;
 	function LazyScreen(props: Record<string, unknown>) {
+		const queryClient = useQueryClient();
 		if (missing) {
-			let shouldReload = false;
-			try {
-				const key = `emdash:chunk-reload:${failure instanceof Error ? failure.message : window.location.pathname}`;
-				shouldReload = !sessionStorage.getItem(key);
-				if (shouldReload) sessionStorage.setItem(key, "1");
-			} catch {
-				shouldReload = false;
+			if (reloading) throw reloading;
+			// A reload aborts requests in flight, such as a save sent as the editor was left.
+			if (queryClient.isMutating() > 0) {
+				throw (waitingForMutations ??= whenMutationsSettle(queryClient).finally(() => {
+					waitingForMutations = undefined;
+				}));
 			}
-			if (shouldReload) {
-				window.location.reload();
-				throw new Promise(() => {});
+			if (claimReload(failure)) {
+				reloading = new Promise<never>(() => {});
+				reloadPage();
+				throw reloading;
 			}
 		}
 		if (failure) throw failure;
