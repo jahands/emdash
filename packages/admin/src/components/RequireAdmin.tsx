@@ -15,7 +15,7 @@ export function RequireAdmin({
 	minimumRole?: number;
 }) {
 	const { t } = useLingui();
-	const { data: currentUser, isPending, isError, isFetching, refetch } = useCurrentUser();
+	const { data: currentUser, isPending, isError, error, isFetching, refetch } = useCurrentUser();
 
 	if (!currentUser && (isPending || isFetching)) {
 		return (
@@ -26,7 +26,7 @@ export function RequireAdmin({
 	}
 
 	if (!currentUser && isError) {
-		return <QueryErrorState onRetry={() => void refetch()} />;
+		return <QueryErrorState error={error} onRetry={() => void refetch()} />;
 	}
 
 	if (!currentUser || currentUser.role < minimumRole) {

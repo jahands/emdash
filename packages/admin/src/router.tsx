@@ -42,6 +42,7 @@ import {
 import { EntryLockNotice } from "./components/EntryLockNotice";
 import { QueryErrorState } from "./components/QueryErrorState.js";
 import { RequireAdmin } from "./components/RequireAdmin.js";
+import { RouterLinkButton } from "./components/RouterLinkButton.js";
 import { Shell } from "./components/Shell";
 import { useAdminBranding } from "./lib/admin-branding-context.js";
 import {
@@ -997,10 +998,6 @@ function ContentListPage() {
 		return <NotFoundPage message={t`Collection "${collection}" not found`} />;
 	}
 
-	if (contentList.query.error) {
-		return <ErrorScreen error={contentList.query.error.message} />;
-	}
-
 	const listColumns = (collectionConfig.listColumns ?? []).flatMap((slug) => {
 		const field = collectionConfig.fields[slug];
 		if (!field) return [];
@@ -1025,6 +1022,11 @@ function ContentListPage() {
 
 	return (
 		<ContentList
+			loadError={
+				contentList.query.error ? (
+					<ErrorScreen embedded error={contentList.query.error} />
+				) : undefined
+			}
 			collection={collection}
 			collectionLabel={collectionConfig.label}
 			items={contentList.items}
@@ -2232,7 +2234,13 @@ function ContentEditPage() {
 					: t`This entry doesn't exist or was deleted.`;
 			return <NotFoundPage message={message} />;
 		}
-		return <ErrorScreen error={itemError.message} />;
+		return (
+			<ErrorScreen
+				error={itemError}
+				title={collectionConfig.label}
+				actions={<Link to="/content/$collection" params={{ collection }}>{t`Back to list`}</Link>}
+			/>
+		);
 	}
 
 	return (
@@ -2574,16 +2582,13 @@ function MediaPage() {
 		[currentUser],
 	);
 
-	if (currentFolderQuery.error && !missingFolder) {
-		return <ErrorScreen error={currentFolderQuery.error.message} />;
-	}
-
-	if (error) {
-		return <ErrorScreen error={error.message} />;
-	}
-
 	return (
 		<MediaLibrary
+			loadError={
+				error || (currentFolderQuery.error && !missingFolder) ? (
+					<ErrorScreen embedded error={error ?? currentFolderQuery.error} />
+				) : undefined
+			}
 			items={isRecoveringPage ? [] : (data?.items ?? [])}
 			isLoading={paginationPending}
 			pagination={{
@@ -3342,7 +3347,21 @@ function ContentTypesListPage() {
 
 	const error = collectionsError || orphansError || blockTypesError;
 	if (error) {
-		return <ErrorScreen error={error.message} />;
+		return (
+			<ErrorScreen
+				error={error}
+				title={t`Content Types`}
+				actions={
+					<>
+						<RouterLinkButton
+							to="/content-types/relations"
+							variant="outline"
+						>{t`Relations`}</RouterLinkButton>
+						<RouterLinkButton to="/content-types/new">{t`New Content Type`}</RouterLinkButton>
+					</>
+				}
+			/>
+		);
 	}
 
 	return (
@@ -3624,7 +3643,18 @@ function ContentTypesEditPage() {
 	});
 
 	if (error) {
-		return <ErrorScreen error={error.message} />;
+		return (
+			<ErrorScreen
+				error={error}
+				title={t`Edit content type`}
+				actions={
+					<RouterLinkButton
+						to="/content-types"
+						variant="outline"
+					>{t`Back to list`}</RouterLinkButton>
+				}
+			/>
+		);
 	}
 
 	if (isLoading) {
@@ -3768,8 +3798,9 @@ export function createAdminRouter(queryClient: QueryClient) {
 		defaultPreload: "intent",
 		defaultPreloadStaleTime: 0,
 		defaultPendingComponent: RouteLoadingScreen,
-		defaultErrorComponent: ({ reset }) => (
-			<QueryErrorState
+		defaultErrorComponent: ({ reset, error }) => (
+			<ErrorScreen
+				error={error}
 				onRetry={() => {
 					retryFailedScreens();
 					reset();
@@ -3816,17 +3847,44 @@ function LoadingScreen() {
 	);
 }
 
-function ErrorScreen({ error: _error }: { error: string }) {
+function ErrorScreen({
+	error,
+	title,
+	actions,
+	embedded,
+	onRetry,
+}: {
+	error: unknown;
+	title?: string;
+	actions?: React.ReactNode;
+	embedded?: boolean;
+	onRetry?: () => void;
+}) {
+	const { t } = useLingui();
+	const routeTitle = useMatches({ select: (matches) => matches.at(-1)?.staticData.pageTitle });
+	const heading = title ?? (routeTitle ? t(routeTitle) : undefined);
 	const queryClient = useQueryClient();
 	return (
-		<QueryErrorState
-			onRetry={() => {
-				void queryClient.refetchQueries({
-					type: "active",
-					predicate: (query) => query.state.status === "error",
-				});
-			}}
-		/>
+		<div className="space-y-4">
+			{!embedded && heading && (
+				<div className="flex items-center justify-between gap-3">
+					<h1 className="text-2xl font-semibold leading-tight">{heading}</h1>
+					{actions}
+				</div>
+			)}
+			<QueryErrorState
+				error={error}
+				onRetry={
+					onRetry ??
+					(() => {
+						void queryClient.refetchQueries({
+							type: "active",
+							predicate: (query) => query.state.status === "error",
+						});
+					})
+				}
+			/>
+		</div>
 	);
 }
 

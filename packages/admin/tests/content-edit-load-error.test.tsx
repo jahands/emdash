@@ -150,6 +150,8 @@ describe("ContentEditPage when the entry fails to load", () => {
 		const screen = await openEntry();
 
 		await expect.element(screen.getByRole("alert")).toBeVisible();
+		await expect.element(screen.getByRole("heading", { name: "Posts", exact: true })).toBeVisible();
+		await expect.element(screen.getByRole("link", { name: "Back to list" })).toBeVisible();
 		await expect
 			.element(screen.getByRole("heading", { name: "Something went wrong" }))
 			.toBeVisible();

@@ -95,6 +95,7 @@ import { RouterLinkButton } from "./RouterLinkButton.js";
 import { TableToolbar, TableToolbarSearch } from "./TableToolbar.js";
 
 export interface MediaLibraryProps {
+	loadError?: React.ReactNode;
 	items?: MediaItem[];
 	isLoading?: boolean;
 	onUpload?: (file: File, options?: MediaUploadOptions) => Promise<void> | void;
@@ -186,6 +187,7 @@ const MEDIA_DRAG_OVERLAY_MODIFIERS = [centerMediaOverlayOnCursor];
  * Media library component with upload, provider tabs, and grid view
  */
 export function MediaLibrary({
+	loadError,
 	items = [],
 	isLoading,
 	onUpload,
@@ -854,455 +856,469 @@ export function MediaLibrary({
 					)}
 				</div>
 			</div>
-			{activeProvider === "local" && setupIncomplete && !awaitingFirstResults ? (
-				<Banner
-					variant="alert"
-					title={
-						setupStatus.state === "expanded"
-							? t`Set up media usage tracking`
-							: progressQuery.isError || setupProgress?.status === "needs_attention"
-								? t`Media usage tracking needs attention`
-								: setupStatus.state === "active"
-									? t`Media usage tracking is indexing existing content`
-									: t`Media usage tracking is setting up`
-					}
-					description={t`Index existing content and keep Used in results up to date.`}
-					action={
-						<RouterLinkButton to="/settings/media-usage" size="sm" variant="secondary">
-							{setupStatus.state === "expanded" ? t`Open setup` : t`View setup`}
-						</RouterLinkButton>
-					}
-				/>
-			) : null}
-
-			{/* Provider tabs (only when an external provider is configured) */}
-			{providerTabs.length > 1 && (
-				<Tabs
-					variant="underline"
-					value={activeProvider}
-					onValueChange={(v) => {
-						if (!v) return;
-						cancelPendingDetailOpen();
-						setActiveProvider(v);
-						onActiveProviderChange?.(v);
-						setIsDetailOpen(false);
-						setDetailItem(null);
-						setSearchQuery("");
-					}}
-					tabs={providerTabs.map((tab) => ({
-						value: tab.id,
-						label: (
-							<span className="flex items-center gap-2">
-								{tab.icon &&
-									(tab.icon.startsWith("data:") ? (
-										<img src={tab.icon} alt="" className="h-4 w-4" aria-hidden="true" />
-									) : (
-										<span aria-hidden="true">{tab.icon}</span>
-									))}
-								{tab.name}
-							</span>
-						),
-					}))}
-				/>
-			)}
-
-			{/* Toolbar: search + type filter (start) · view toggle (end).
-			    Local library search/filter is handled server-side. */}
-			{showToolbar && (
-				<TableToolbar
-					className="flex-row flex-nowrap gap-2"
-					trailing={
-						<div role="group" aria-label={t`View mode`}>
-							<Tabs
-								variant="segmented"
-								value={viewMode}
-								onValueChange={(v) => {
-									if (v === "grid" || v === "list") setViewMode(v);
-								}}
-								tabs={[
-									{
-										value: "grid",
-										label: (
-											<>
-												<SquaresFour className="h-4 w-4" aria-hidden="true" />
-												<span className="sr-only">{t`Grid view`}</span>
-											</>
-										),
-									},
-									{
-										value: "list",
-										label: (
-											<>
-												<List className="h-4 w-4" aria-hidden="true" />
-												<span className="sr-only">{t`List view`}</span>
-											</>
-										),
-									},
-								]}
-							/>
-						</div>
-					}
-				>
-					{(canSearch || activeProvider === "local") && (
-						<TableToolbarSearch
-							size="base"
-							placeholder={activeProvider === "local" ? t`Search by filename...` : t`Search...`}
-							aria-label={t`Search media`}
-							value={searchQuery}
-							onChange={handleSearchChange}
-							maxLength={MEDIA_SEARCH_MAX_LENGTH}
-							className="w-auto flex-1 sm:w-72"
-						/>
-					)}
-					{activeProvider === "local" && (
-						<Select
-							size="base"
-							value={localTypeFilter}
-							onValueChange={(v) => {
-								const next = v ?? "all";
-								setLocalTypeFilter(next);
-								onLocalMimeFilterChange?.(mimeForMediaTypeFilter(next));
-							}}
-							items={{
-								all: t`All types`,
-								image: t`Images`,
-								video: t`Video`,
-								audio: t`Audio`,
-								document: t`Documents`,
-							}}
-							aria-label={t`Filter by type`}
-						/>
-					)}
-				</TableToolbar>
-			)}
-
-			{activeProvider === "local" && (
-				<span aria-live="polite" aria-atomic="true" className="sr-only">
-					{!hasFolderSurface || foldersError
-						? ""
-						: foldersLoading || isLoadingMoreFolders
-							? t`Loading folders`
-							: plural(visibleFolders.length, {
-									one: "# folder loaded",
-									other: "# folders loaded",
-								})}
-				</span>
-			)}
-
-			{hasFolderSurface && viewMode === "grid" && !awaitingFirstResults && (
-				<section
-					aria-labelledby="media-folders-heading"
-					aria-busy={Boolean(foldersLoading || isLoadingMoreFolders) || undefined}
-					className="space-y-3"
-				>
-					<div className="flex items-center justify-between gap-3">
-						<h2 id="media-folders-heading" className="text-lg font-semibold">
-							{t`Folders`}
-						</h2>
-						{foldersError && onRetryFolders && (
-							<Button variant="outline" size="sm" onClick={onRetryFolders}>
-								{t`Retry`}
-							</Button>
-						)}
-					</div>
-					{foldersError && (
-						<div role="alert" className="rounded-md bg-kumo-danger/10 p-3 text-sm text-kumo-danger">
-							{t`Folders could not be loaded.`}
-						</div>
-					)}
-					{foldersLoading && visibleFolders.length === 0 ? (
-						<div className="flex justify-center py-6">
-							<Loader />
-						</div>
-					) : (
-						<Grid variant="4up" gap="sm" className="2xl:grid-cols-6">
-							{visibleFolders.map((folder) => (
-								<MediaFolderCard
-									key={folder.id}
-									folder={folder}
-									canEdit={folderActionsAvailable}
-									canDrop={dragDropAvailable && !moveMutation.isPending}
-									activeDragItem={activeDragItem}
-									onOpen={onOpenFolder ? () => openFolder(folder) : undefined}
-									onEdit={(trigger) => openEditFolder(folder, trigger)}
-								/>
-							))}
-						</Grid>
-					)}
-					{hasMoreFolders && onLoadMoreFolders && (
-						<div className="flex justify-center">
-							<Button
-								variant="outline"
-								onClick={onLoadMoreFolders}
-								disabled={isLoadingMoreFolders}
-								loading={isLoadingMoreFolders}
-							>
-								{t`Load more folders`}
-							</Button>
-						</div>
-					)}
-					{visibleFolders.length > 0 && currentItems.length > 0 && (
-						<div className="border-t border-kumo-line" />
-					)}
-				</section>
-			)}
-
-			{/* Content */}
-			{awaitingFirstResults ||
-			(currentLoading && currentItems.length === 0 && currentProviderItems.length === 0) ? (
-				<div className="flex items-center justify-center py-12">
-					<Loader />
-				</div>
-			) : activeProvider === "local" && currentItems.length === 0 && !folderResultsMayFillView ? (
-				hasActiveQuery ? (
-					<MediaEmptyState
-						hero={MagnifyingGlass}
-						title={t`No matching media`}
-						description={
-							searchQuery.trim()
-								? t`Try another filename, or clear your search and filters.`
-								: t`Try a broader media type or clear your filters.`
-						}
-						action={
-							<Button variant="outline" onClick={clearLocalQuery}>
-								{searchQuery.trim() ? t`Clear search` : t`Clear filters`}
-							</Button>
-						}
-					/>
-				) : folderId ? (
-					<MediaEmptyState
-						hero={Folder}
-						title={t`This folder is empty`}
-						description={t`Upload files here or move media here from Media Details.`}
-						action={
-							<div className="flex flex-wrap justify-center gap-2">
-								<Button onClick={openUploadDialog} icon={<Upload />}>
-									{t`Upload Files`}
-								</Button>
-								<Button variant="outline" onClick={backToMain}>
-									{t`Back to Main library`}
-								</Button>
-							</div>
-						}
-					/>
-				) : (
-					<MediaEmptyState
-						hero={Images}
-						title={t`Your media library is empty`}
-						description={t`Upload images, videos, and documents to keep reusable assets in one place.`}
-						action={
-							<Button onClick={openUploadDialog} icon={<Upload />}>
-								{t`Upload Files`}
-							</Button>
-						}
-					/>
-				)
-			) : activeProvider !== "local" && currentProviderItems.length === 0 ? (
-				canSearch && searchQuery.trim() ? (
-					<MediaEmptyState
-						hero={MagnifyingGlass}
-						title={t`No matching media`}
-						description={t`Try another filename or clear your search.`}
-						action={
-							<Button variant="outline" onClick={() => setSearchQuery("")}>
-								{t`Clear search`}
-							</Button>
-						}
-					/>
-				) : canUpload ? (
-					<MediaEmptyState
-						hero={Images}
-						title={t`Your media library is empty`}
-						description={t`Upload media to keep reusable assets in one place.`}
-						action={
-							<Button onClick={openUploadDialog} icon={<Upload />}>
-								{t`Upload Files`}
-							</Button>
-						}
-					/>
-				) : (
-					<MediaEmptyState
-						hero={Images}
-						title={t`No media found`}
-						description={t`No media available from this provider.`}
-					/>
-				)
-			) : viewMode === "grid" ? (
-				<Grid
-					variant="4up"
-					gap="sm"
-					className="2xl:grid-cols-6"
-					data-media-grid
-					inert={currentLoading || undefined}
-				>
-					{activeProvider === "local"
-						? currentItems.map((item) => (
-								<MediaGridItem
-									key={item.id}
-									item={item}
-									selected={detailItem?.id === item.id}
-									draggable={
-										dragDropAvailable &&
-										!moveMutation.isPending &&
-										isLocalMediaItem(item) &&
-										canMoveMedia?.(item) === true
-									}
-									isMoving={moveMutation.isPending && moveMutation.variables?.item.id === item.id}
-									onClick={() => openDetail(item)}
-								/>
-							))
-						: currentProviderItems.map((item) => (
-								<ProviderGridItem
-									key={item.id}
-									item={item}
-									selected={detailItem?.id === item.id}
-									onClick={() => {
-										// Merge loaded dimensions if provider didn't return them
-										const dims = loadedDimensions[item.id];
-										const itemWithDims = dims
-											? {
-													...item,
-													width: item.width ?? dims.width,
-													height: item.height ?? dims.height,
-												}
-											: item;
-										openDetail(providerItemToMediaItem(activeProvider, itemWithDims));
-									}}
-									onDimensionsLoaded={(width, height) => {
-										setLoadedDimensions((prev) => ({
-											...prev,
-											[item.id]: { width, height },
-										}));
-									}}
-								/>
-							))}
-				</Grid>
+			{loadError ? (
+				loadError
 			) : (
-				<DataTable
-					inert={currentLoading || undefined}
-					aria-busy={
-						(showFolderResults && Boolean(foldersLoading || isLoadingMoreFolders)) || undefined
-					}
-				>
-					<thead>
-						<tr>
-							<th scope="col" className="w-0">
-								{t`Preview`}
-							</th>
-							<th scope="col">{t`Filename`}</th>
-							<th scope="col" {...tertiaryColumn}>
-								{t`Type`}
-							</th>
-							<th scope="col" {...tertiaryColumn}>
-								{t`Size`}
-							</th>
-							<th scope="col" className="text-end" {...tertiaryColumn}>
-								{t`Alt text`}
-							</th>
-						</tr>
-					</thead>
-					<tbody>
-						{showFolderResults && foldersLoading && visibleFolders.length === 0 && (
-							<DataTableMessage colSpan={5}>
-								<span className="inline-flex items-center gap-2">
-									<Loader size="sm" />
-									{t`Loading folders`}
-								</span>
-							</DataTableMessage>
-						)}
-						{showFolderResults && foldersError && visibleFolders.length === 0 && (
-							<MediaFolderErrorRow onRetry={onRetryFolders} />
-						)}
-						{activeProvider === "local" &&
-							visibleFolders.map((folder) => (
-								<MediaFolderListItem
-									key={folder.id}
-									folder={folder}
-									canEdit={folderActionsAvailable}
-									canDrop={dragDropAvailable && !moveMutation.isPending}
-									activeDragItem={activeDragItem}
-									onOpen={onOpenFolder ? () => openFolder(folder) : undefined}
-									onEdit={(trigger) => openEditFolder(folder, trigger)}
+				<>
+					{activeProvider === "local" && setupIncomplete && !awaitingFirstResults ? (
+						<Banner
+							variant="alert"
+							title={
+								setupStatus.state === "expanded"
+									? t`Set up media usage tracking`
+									: progressQuery.isError || setupProgress?.status === "needs_attention"
+										? t`Media usage tracking needs attention`
+										: setupStatus.state === "active"
+											? t`Media usage tracking is indexing existing content`
+											: t`Media usage tracking is setting up`
+							}
+							description={t`Index existing content and keep Used in results up to date.`}
+							action={
+								<RouterLinkButton to="/settings/media-usage" size="sm" variant="secondary">
+									{setupStatus.state === "expanded" ? t`Open setup` : t`View setup`}
+								</RouterLinkButton>
+							}
+						/>
+					) : null}
+
+					{/* Provider tabs (only when an external provider is configured) */}
+					{providerTabs.length > 1 && (
+						<Tabs
+							variant="underline"
+							value={activeProvider}
+							onValueChange={(v) => {
+								if (!v) return;
+								cancelPendingDetailOpen();
+								setActiveProvider(v);
+								onActiveProviderChange?.(v);
+								setIsDetailOpen(false);
+								setDetailItem(null);
+								setSearchQuery("");
+							}}
+							tabs={providerTabs.map((tab) => ({
+								value: tab.id,
+								label: (
+									<span className="flex items-center gap-2">
+										{tab.icon &&
+											(tab.icon.startsWith("data:") ? (
+												<img src={tab.icon} alt="" className="h-4 w-4" aria-hidden="true" />
+											) : (
+												<span aria-hidden="true">{tab.icon}</span>
+											))}
+										{tab.name}
+									</span>
+								),
+							}))}
+						/>
+					)}
+
+					{/* Toolbar: search + type filter (start) · view toggle (end).
+			    Local library search/filter is handled server-side. */}
+					{showToolbar && (
+						<TableToolbar
+							className="flex-row flex-nowrap gap-2"
+							trailing={
+								<div role="group" aria-label={t`View mode`}>
+									<Tabs
+										variant="segmented"
+										value={viewMode}
+										onValueChange={(v) => {
+											if (v === "grid" || v === "list") setViewMode(v);
+										}}
+										tabs={[
+											{
+												value: "grid",
+												label: (
+													<>
+														<SquaresFour className="h-4 w-4" aria-hidden="true" />
+														<span className="sr-only">{t`Grid view`}</span>
+													</>
+												),
+											},
+											{
+												value: "list",
+												label: (
+													<>
+														<List className="h-4 w-4" aria-hidden="true" />
+														<span className="sr-only">{t`List view`}</span>
+													</>
+												),
+											},
+										]}
+									/>
+								</div>
+							}
+						>
+							{(canSearch || activeProvider === "local") && (
+								<TableToolbarSearch
+									size="base"
+									placeholder={activeProvider === "local" ? t`Search by filename...` : t`Search...`}
+									aria-label={t`Search media`}
+									value={searchQuery}
+									onChange={handleSearchChange}
+									maxLength={MEDIA_SEARCH_MAX_LENGTH}
+									className="w-auto flex-1 sm:w-72"
 								/>
-							))}
-						{showFolderResults && foldersError && visibleFolders.length > 0 && (
-							<MediaFolderErrorRow onRetry={onRetryFolders} />
-						)}
-						{showFolderResults && hasMoreFolders && onLoadMoreFolders && (
-							<tr>
-								<td colSpan={5}>
+							)}
+							{activeProvider === "local" && (
+								<Select
+									size="base"
+									value={localTypeFilter}
+									onValueChange={(v) => {
+										const next = v ?? "all";
+										setLocalTypeFilter(next);
+										onLocalMimeFilterChange?.(mimeForMediaTypeFilter(next));
+									}}
+									items={{
+										all: t`All types`,
+										image: t`Images`,
+										video: t`Video`,
+										audio: t`Audio`,
+										document: t`Documents`,
+									}}
+									aria-label={t`Filter by type`}
+								/>
+							)}
+						</TableToolbar>
+					)}
+
+					{activeProvider === "local" && (
+						<span aria-live="polite" aria-atomic="true" className="sr-only">
+							{!hasFolderSurface || foldersError
+								? ""
+								: foldersLoading || isLoadingMoreFolders
+									? t`Loading folders`
+									: plural(visibleFolders.length, {
+											one: "# folder loaded",
+											other: "# folders loaded",
+										})}
+						</span>
+					)}
+
+					{hasFolderSurface && viewMode === "grid" && !awaitingFirstResults && (
+						<section
+							aria-labelledby="media-folders-heading"
+							aria-busy={Boolean(foldersLoading || isLoadingMoreFolders) || undefined}
+							className="space-y-3"
+						>
+							<div className="flex items-center justify-between gap-3">
+								<h2 id="media-folders-heading" className="text-lg font-semibold">
+									{t`Folders`}
+								</h2>
+								{foldersError && onRetryFolders && (
+									<Button variant="outline" size="sm" onClick={onRetryFolders}>
+										{t`Retry`}
+									</Button>
+								)}
+							</div>
+							{foldersError && (
+								<div
+									role="alert"
+									className="rounded-md bg-kumo-danger/10 p-3 text-sm text-kumo-danger"
+								>
+									{t`Folders could not be loaded.`}
+								</div>
+							)}
+							{foldersLoading && visibleFolders.length === 0 ? (
+								<div className="flex justify-center py-6">
+									<Loader />
+								</div>
+							) : (
+								<Grid variant="4up" gap="sm" className="2xl:grid-cols-6">
+									{visibleFolders.map((folder) => (
+										<MediaFolderCard
+											key={folder.id}
+											folder={folder}
+											canEdit={folderActionsAvailable}
+											canDrop={dragDropAvailable && !moveMutation.isPending}
+											activeDragItem={activeDragItem}
+											onOpen={onOpenFolder ? () => openFolder(folder) : undefined}
+											onEdit={(trigger) => openEditFolder(folder, trigger)}
+										/>
+									))}
+								</Grid>
+							)}
+							{hasMoreFolders && onLoadMoreFolders && (
+								<div className="flex justify-center">
 									<Button
 										variant="outline"
-										className="mx-auto"
 										onClick={onLoadMoreFolders}
 										disabled={isLoadingMoreFolders}
 										loading={isLoadingMoreFolders}
 									>
 										{t`Load more folders`}
 									</Button>
-								</td>
-							</tr>
-						)}
-						{activeProvider === "local"
-							? currentItems.map((item) => (
-									<MediaListItem
-										key={item.id}
-										item={item}
-										selected={detailItem?.id === item.id}
-										draggable={
-											dragDropAvailable &&
-											!moveMutation.isPending &&
-											isLocalMediaItem(item) &&
-											canMoveMedia?.(item) === true
-										}
-										isMoving={moveMutation.isPending && moveMutation.variables?.item.id === item.id}
-										onClick={() => openDetail(item)}
-									/>
-								))
-							: currentProviderItems.map((item) => (
-									<ProviderListItem
-										key={item.id}
-										item={item}
-										selected={detailItem?.id === item.id}
-										onClick={() => {
-											const dims = loadedDimensions[item.id];
-											const itemWithDims = dims
-												? {
-														...item,
-														width: item.width ?? dims.width,
-														height: item.height ?? dims.height,
-													}
-												: item;
-											openDetail(providerItemToMediaItem(activeProvider, itemWithDims));
-										}}
-										onDimensionsLoaded={(width, height) => {
-											setLoadedDimensions((prev) => ({
-												...prev,
-												[item.id]: { width, height },
-											}));
-										}}
-									/>
-								))}
-					</tbody>
-				</DataTable>
-			)}
+								</div>
+							)}
+							{visibleFolders.length > 0 && currentItems.length > 0 && (
+								<div className="border-t border-kumo-line" />
+							)}
+						</section>
+					)}
 
-			{activeProvider === "local" && pagination && pagination.totalCount > 0 && (
-				<ListPaginationFooter
-					pagination={pagination}
-					pageSizes={MEDIA_BROWSER_PAGE_SIZES}
-					label={t`Media pagination`}
-				/>
-			)}
+					{/* Content */}
+					{awaitingFirstResults ||
+					(currentLoading && currentItems.length === 0 && currentProviderItems.length === 0) ? (
+						<div className="flex items-center justify-center py-12">
+							<Loader />
+						</div>
+					) : activeProvider === "local" &&
+					  currentItems.length === 0 &&
+					  !folderResultsMayFillView ? (
+						hasActiveQuery ? (
+							<MediaEmptyState
+								hero={MagnifyingGlass}
+								title={t`No matching media`}
+								description={
+									searchQuery.trim()
+										? t`Try another filename, or clear your search and filters.`
+										: t`Try a broader media type or clear your filters.`
+								}
+								action={
+									<Button variant="outline" onClick={clearLocalQuery}>
+										{searchQuery.trim() ? t`Clear search` : t`Clear filters`}
+									</Button>
+								}
+							/>
+						) : folderId ? (
+							<MediaEmptyState
+								hero={Folder}
+								title={t`This folder is empty`}
+								description={t`Upload files here or move media here from Media Details.`}
+								action={
+									<div className="flex flex-wrap justify-center gap-2">
+										<Button onClick={openUploadDialog} icon={<Upload />}>
+											{t`Upload Files`}
+										</Button>
+										<Button variant="outline" onClick={backToMain}>
+											{t`Back to Main library`}
+										</Button>
+									</div>
+								}
+							/>
+						) : (
+							<MediaEmptyState
+								hero={Images}
+								title={t`Your media library is empty`}
+								description={t`Upload images, videos, and documents to keep reusable assets in one place.`}
+								action={
+									<Button onClick={openUploadDialog} icon={<Upload />}>
+										{t`Upload Files`}
+									</Button>
+								}
+							/>
+						)
+					) : activeProvider !== "local" && currentProviderItems.length === 0 ? (
+						canSearch && searchQuery.trim() ? (
+							<MediaEmptyState
+								hero={MagnifyingGlass}
+								title={t`No matching media`}
+								description={t`Try another filename or clear your search.`}
+								action={
+									<Button variant="outline" onClick={() => setSearchQuery("")}>
+										{t`Clear search`}
+									</Button>
+								}
+							/>
+						) : canUpload ? (
+							<MediaEmptyState
+								hero={Images}
+								title={t`Your media library is empty`}
+								description={t`Upload media to keep reusable assets in one place.`}
+								action={
+									<Button onClick={openUploadDialog} icon={<Upload />}>
+										{t`Upload Files`}
+									</Button>
+								}
+							/>
+						) : (
+							<MediaEmptyState
+								hero={Images}
+								title={t`No media found`}
+								description={t`No media available from this provider.`}
+							/>
+						)
+					) : viewMode === "grid" ? (
+						<Grid
+							variant="4up"
+							gap="sm"
+							className="2xl:grid-cols-6"
+							data-media-grid
+							inert={currentLoading || undefined}
+						>
+							{activeProvider === "local"
+								? currentItems.map((item) => (
+										<MediaGridItem
+											key={item.id}
+											item={item}
+											selected={detailItem?.id === item.id}
+											draggable={
+												dragDropAvailable &&
+												!moveMutation.isPending &&
+												isLocalMediaItem(item) &&
+												canMoveMedia?.(item) === true
+											}
+											isMoving={
+												moveMutation.isPending && moveMutation.variables?.item.id === item.id
+											}
+											onClick={() => openDetail(item)}
+										/>
+									))
+								: currentProviderItems.map((item) => (
+										<ProviderGridItem
+											key={item.id}
+											item={item}
+											selected={detailItem?.id === item.id}
+											onClick={() => {
+												// Merge loaded dimensions if provider didn't return them
+												const dims = loadedDimensions[item.id];
+												const itemWithDims = dims
+													? {
+															...item,
+															width: item.width ?? dims.width,
+															height: item.height ?? dims.height,
+														}
+													: item;
+												openDetail(providerItemToMediaItem(activeProvider, itemWithDims));
+											}}
+											onDimensionsLoaded={(width, height) => {
+												setLoadedDimensions((prev) => ({
+													...prev,
+													[item.id]: { width, height },
+												}));
+											}}
+										/>
+									))}
+						</Grid>
+					) : (
+						<DataTable
+							inert={currentLoading || undefined}
+							aria-busy={
+								(showFolderResults && Boolean(foldersLoading || isLoadingMoreFolders)) || undefined
+							}
+						>
+							<thead>
+								<tr>
+									<th scope="col" className="w-0">
+										{t`Preview`}
+									</th>
+									<th scope="col">{t`Filename`}</th>
+									<th scope="col" {...tertiaryColumn}>
+										{t`Type`}
+									</th>
+									<th scope="col" {...tertiaryColumn}>
+										{t`Size`}
+									</th>
+									<th scope="col" className="text-end" {...tertiaryColumn}>
+										{t`Alt text`}
+									</th>
+								</tr>
+							</thead>
+							<tbody>
+								{showFolderResults && foldersLoading && visibleFolders.length === 0 && (
+									<DataTableMessage colSpan={5}>
+										<span className="inline-flex items-center gap-2">
+											<Loader size="sm" />
+											{t`Loading folders`}
+										</span>
+									</DataTableMessage>
+								)}
+								{showFolderResults && foldersError && visibleFolders.length === 0 && (
+									<MediaFolderErrorRow onRetry={onRetryFolders} />
+								)}
+								{activeProvider === "local" &&
+									visibleFolders.map((folder) => (
+										<MediaFolderListItem
+											key={folder.id}
+											folder={folder}
+											canEdit={folderActionsAvailable}
+											canDrop={dragDropAvailable && !moveMutation.isPending}
+											activeDragItem={activeDragItem}
+											onOpen={onOpenFolder ? () => openFolder(folder) : undefined}
+											onEdit={(trigger) => openEditFolder(folder, trigger)}
+										/>
+									))}
+								{showFolderResults && foldersError && visibleFolders.length > 0 && (
+									<MediaFolderErrorRow onRetry={onRetryFolders} />
+								)}
+								{showFolderResults && hasMoreFolders && onLoadMoreFolders && (
+									<tr>
+										<td colSpan={5}>
+											<Button
+												variant="outline"
+												className="mx-auto"
+												onClick={onLoadMoreFolders}
+												disabled={isLoadingMoreFolders}
+												loading={isLoadingMoreFolders}
+											>
+												{t`Load more folders`}
+											</Button>
+										</td>
+									</tr>
+								)}
+								{activeProvider === "local"
+									? currentItems.map((item) => (
+											<MediaListItem
+												key={item.id}
+												item={item}
+												selected={detailItem?.id === item.id}
+												draggable={
+													dragDropAvailable &&
+													!moveMutation.isPending &&
+													isLocalMediaItem(item) &&
+													canMoveMedia?.(item) === true
+												}
+												isMoving={
+													moveMutation.isPending && moveMutation.variables?.item.id === item.id
+												}
+												onClick={() => openDetail(item)}
+											/>
+										))
+									: currentProviderItems.map((item) => (
+											<ProviderListItem
+												key={item.id}
+												item={item}
+												selected={detailItem?.id === item.id}
+												onClick={() => {
+													const dims = loadedDimensions[item.id];
+													const itemWithDims = dims
+														? {
+																...item,
+																width: item.width ?? dims.width,
+																height: item.height ?? dims.height,
+															}
+														: item;
+													openDetail(providerItemToMediaItem(activeProvider, itemWithDims));
+												}}
+												onDimensionsLoaded={(width, height) => {
+													setLoadedDimensions((prev) => ({
+														...prev,
+														[item.id]: { width, height },
+													}));
+												}}
+											/>
+										))}
+							</tbody>
+						</DataTable>
+					)}
 
-			{activeProvider === "local" && !pagination && hasMore && onLoadMore && (
-				<div className="flex justify-center">
-					<Button variant="outline" onClick={onLoadMore} disabled={isLoading}>
-						{isLoading ? t`Loading...` : t`Load More`}
-					</Button>
-				</div>
-			)}
+					{activeProvider === "local" && pagination && pagination.totalCount > 0 && (
+						<ListPaginationFooter
+							pagination={pagination}
+							pageSizes={MEDIA_BROWSER_PAGE_SIZES}
+							label={t`Media pagination`}
+						/>
+					)}
 
+					{activeProvider === "local" && !pagination && hasMore && onLoadMore && (
+						<div className="flex justify-center">
+							<Button variant="outline" onClick={onLoadMore} disabled={isLoading}>
+								{isLoading ? t`Loading...` : t`Load More`}
+							</Button>
+						</div>
+					)}
+				</>
+			)}
 			<MediaUploadDialog
 				open={uploadDialogOpen}
 				providerName={uploadTarget?.name ?? activeProviderInfo?.name ?? t`Library`}

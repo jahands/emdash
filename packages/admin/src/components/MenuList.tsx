@@ -79,6 +79,7 @@ export function MenuList() {
 		data: menus,
 		isLoading,
 		isError,
+		error: queryError,
 		refetch,
 	} = useQuery({
 		queryKey: ["menus", activeLocale],
@@ -256,7 +257,7 @@ export function MenuList() {
 			</header>
 
 			{isError ? (
-				<QueryErrorState onRetry={() => void refetch()} />
+				<QueryErrorState error={queryError} onRetry={() => void refetch()} />
 			) : !menus || menus.length === 0 ? (
 				<LayerCard className="flex flex-col items-center px-6 py-16 text-center">
 					<span className="mb-5 flex size-14 items-center justify-center rounded-xl bg-kumo-tint text-kumo-brand">

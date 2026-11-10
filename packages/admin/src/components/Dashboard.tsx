@@ -64,6 +64,7 @@ export function Dashboard({ manifest }: DashboardProps) {
 		data: stats,
 		isLoading,
 		isError,
+		error,
 		refetch,
 	} = useQuery({
 		queryKey: ["dashboard-stats"],
@@ -83,7 +84,7 @@ export function Dashboard({ manifest }: DashboardProps) {
 
 			<CoreUpdateBanner />
 
-			{isError && <QueryErrorState onRetry={() => void refetch()} />}
+			{isError && <QueryErrorState error={error} onRetry={() => void refetch()} />}
 
 			{showDashboardData && (
 				<>

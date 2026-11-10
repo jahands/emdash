@@ -122,6 +122,7 @@ export const EMPTY_DATE_FILTER: ContentDateFilter = { field: "createdAt", from: 
 type RowRequest = (id: string) => Promise<unknown> | void;
 
 export interface ContentListProps {
+	loadError?: React.ReactNode;
 	collection: string;
 	collectionLabel: string;
 	items: ContentItem[];
@@ -278,6 +279,7 @@ function formatDateOnly(date: Date | undefined): string {
  * Content list view with table display and trash tab
  */
 export function ContentList({
+	loadError,
 	collection,
 	collectionLabel,
 	items,
@@ -565,439 +567,445 @@ export function ContentList({
 				</RouterLinkButton>
 			</div>
 
-			{/* Tabs */}
-			<Tabs
-				variant="underline"
-				value={activeTab}
-				onValueChange={(v) => {
-					if (v === "all" || v === "trash") setActiveTab(v);
-				}}
-				tabs={[
-					{ value: "all", label: t`All` },
-					{
-						value: "trash",
-						label: (
-							<span className="flex items-center gap-2">
-								<Trash className="h-4 w-4" aria-hidden="true" />
-								{t`Trash`}
-								{trashedCount > 0 && <Badge variant="secondary">{trashedCount}</Badge>}
-							</span>
-						),
-					},
-				]}
-			/>
-
-			{/* Content based on active tab */}
-			{activeTab === "all" ? (
-				<>
-					{(serverSearch || items.length > 0 || onStatusFilterChange) && (
-						<TableToolbar>
-							{(serverSearch || items.length > 0) && (
-								<TableToolbarSearch
-									placeholder={t`Search ${inlineLabel(collectionLabel, lingui.locale)}...`}
-									aria-label={t`Search ${inlineLabel(collectionLabel, lingui.locale)}`}
-									value={searchQuery}
-									onChange={handleSearchChange}
-								/>
-							)}
-							{onStatusFilterChange && (
-								<FilterBar
-									statusFilter={statusFilter}
-									onStatusFilterChange={onStatusFilterChange}
-									authors={authors}
-									authorFilter={authorFilter}
-									onAuthorFilterChange={onAuthorFilterChange}
-									dateFilter={dateFilter}
-									onDateFilterChange={onDateFilterChange}
-									bylineFilter={bylineFilter}
-									onBylineFilterChange={onBylineFilterChange}
-									locale={activeLocale ?? undefined}
-								/>
-							)}
-						</TableToolbar>
-					)}
-
-					{/* Bulk action toolbar — appears once one or more rows are selected */}
-					{bulkEnabled && selectedCount > 0 && (
-						<DataTableBulkBar
-							selectedCount={selectedCount}
-							busy={bulkBusy}
-							onClear={clearSelection}
-						>
-							{onBulkPublish && (
-								<Button
-									size="sm"
-									variant="secondary"
-									disabled={bulkBusy}
-									onClick={() => runBulk(onBulkPublish)}
-									icon={<Upload />}
-								>
-									{t`Publish`}
-								</Button>
-							)}
-							{onBulkUnpublish && (
-								<Button
-									size="sm"
-									variant="secondary"
-									disabled={bulkBusy}
-									onClick={() => runBulk(onBulkUnpublish)}
-									icon={<CircleDashed aria-hidden="true" />}
-								>
-									{t`Set to draft`}
-								</Button>
-							)}
-							{bulkTagEnabled && (
-								<Button
-									size="sm"
-									variant="secondary"
-									disabled={bulkBusy || selectedCount > 50}
-									icon={<Tag aria-hidden="true" />}
-									onClick={() => {
-										setBulkTagSelection(
-											Array.from(selectedIds, (id) => {
-												const item =
-													items.find((candidate) => candidate.id === id) ??
-													selectedRowsRef.current.get(id);
-												return {
-													collection,
-													id,
-													title: item ? getEntryTitle(item, titleField) : id,
-													locale: item?.locale,
-												};
-											}),
-										);
-										setBulkTagOpen(true);
-									}}
-								>
-									{soleBulkTagTaxonomy
-										? t`Add ${inlineLabel(soleBulkTagTaxonomy.labelSingular || soleBulkTagTaxonomy.label, lingui.locale)}`
-										: t`Add term`}
-								</Button>
-							)}
-							{bulkTagEnabled && selectedCount > 50 && (
-								<span role="status" className="text-sm text-kumo-danger">
-									{t`Select up to 50 posts at a time.`}
-								</span>
-							)}
-							{onBulkDelete && (
-								<LayerDialog.Root
-									open={bulkTrashOpen}
-									onOpenChange={setBulkTrashOpen}
-									disablePointerDismissal
-								>
-									<LayerDialog.Trigger
-										render={(p) => (
-											<Button
-												{...p}
-												size="sm"
-												variant="destructive"
-												icon={<Trash />}
-												disabled={bulkBusy}
-											>
-												{t`Move to trash`}
-											</Button>
-										)}
-									/>
-									<LayerDialog.Content size="sm">
-										<LayerDialog.Title>{t`Move to Trash?`}</LayerDialog.Title>
-										<LayerDialog.Description>
-											{plural(selectedCount, {
-												one: "Move # item to trash? You can restore it later.",
-												other: "Move # items to trash? You can restore them later.",
-											})}
-										</LayerDialog.Description>
-										<LayerDialog.Body>{null}</LayerDialog.Body>
-										<LayerDialog.Actions dismissLabel={t`Cancel`}>
-											<LayerDialog.Action
-												variant="destructive"
-												onClick={() => {
-													setBulkTrashOpen(false);
-													runBulk(onBulkDelete);
-												}}
-											>
-												{t`Move to Trash`}
-											</LayerDialog.Action>
-										</LayerDialog.Actions>
-									</LayerDialog.Content>
-								</LayerDialog.Root>
-							)}
-						</DataTableBulkBar>
-					)}
-					<BulkTagDialog
-						taxonomies={bulkTagTaxonomies}
-						open={bulkTagOpen}
-						selected={bulkTagSelection ?? undefined}
-						activeLocale={activeLocale}
-						defaultLocale={i18n?.defaultLocale}
-						onClose={() => setBulkTagOpen(false)}
-						onClosed={() => setBulkTagSelection(null)}
-						onApplied={(results) => {
-							setSelectedIds(
-								new Set(
-									results.flatMap((result) =>
-										(result.status === "failed" || result.status === "unmatched") &&
-										"id" in result.input
-											? [result.input.id]
-											: [],
-									),
-								),
-							);
-						}}
-					/>
-
-					{/* Table */}
-					<DataTable
-						aria-busy={pagination?.isPending || undefined}
-						className="@2xl:min-w-(--content-table-min-width)"
-						style={{ "--content-table-min-width": tableMinWidth } as React.CSSProperties}
-					>
-						<thead>
-							<tr>
-								{bulkEnabled && (
-									<th scope="col" className="w-12" inert={pagination?.isPending || undefined}>
-										<Checkbox
-											checked={allPageSelected}
-											onCheckedChange={togglePage}
-											aria-label={t`Select all on this page`}
-										/>
-									</th>
-								)}
-								{/* The Title/Date columns sort by the collection's configured
-								    titleField/dateField when set */}
-								<SortableTh
-									field={titleSortField}
-									sort={sort}
-									onSortChange={onSortChange}
-									label={t`Title`}
-								/>
-								{listColumns.map((column) => (
-									<th key={column.slug} scope="col" className="w-48" {...tertiaryColumn}>
-										{column.label}
-									</th>
-								))}
-								<SortableTh
-									field="status"
-									sort={sort}
-									onSortChange={onSortChange}
-									label={t`Status`}
-									className="w-44"
-									{...tertiaryColumn}
-								/>
-								{i18n && (
-									<SortableTh
-										field="locale"
-										sort={sort}
-										onSortChange={onSortChange}
-										label={t`Locale`}
-										className="w-24"
-										{...tertiaryColumn}
-									/>
-								)}
-								<SortableTh
-									field={dateSortField}
-									sort={sort}
-									onSortChange={onSortChange}
-									label={t`Date`}
-									className="w-36"
-									{...tertiaryColumn}
-								/>
-								{extensionColumns.map((column) => (
-									<ExtensionColumnHeader
-										key={`${column.pluginId}:${column.extension.id}`}
-										column={column}
-										collection={collection}
-										locale={activeLocale}
-										className="w-48"
-										{...tertiaryColumn}
-									/>
-								))}
-								<th scope="col" className="w-16" aria-label={t`Actions`}>
-									{onSortChange && (
-										// The negative margin keeps the header row as tall as a line of header text.
-										<div className="-my-0.75 @2xl:hidden">
-											<SortMenu
-												fields={sortFields}
-												sort={sort}
-												onSortChange={onSortChange}
-												defaultField={dateSortField}
-											/>
-										</div>
-									)}
-								</th>
-							</tr>
-						</thead>
-						<tbody inert={pagination?.isPending || undefined}>
-							{items.length === 0 && (isLoading || pagination?.isPending) ? (
-								<DataTableMessage colSpan={colSpan}>
-									<span className="inline-flex items-center gap-2">
-										<Loader size="sm" />
-										{t`Loading...`}
-									</span>
-								</DataTableMessage>
-							) : items.length === 0 ? (
-								<DataTableMessage colSpan={colSpan}>
-									{activeSearch ? (
-										t`No results for "${activeSearch}"`
-									) : (
-										<>
-											{t`No ${inlineLabel(collectionLabel, lingui.locale)} yet.`}{" "}
-											<Link
-												to="/content/$collection/new"
-												params={{ collection }}
-												search={{ locale: activeLocale }}
-												className="text-kumo-link underline"
-											>
-												{t`Create your first one`}
-											</Link>
-										</>
-									)}
-								</DataTableMessage>
-							) : paginatedItems.length === 0 ? (
-								<DataTableMessage colSpan={colSpan}>
-									{t`No results for "${activeSearch}"`}
-								</DataTableMessage>
-							) : (
-								paginatedItems.map((item) => (
-									<ContentListItem
-										key={item.id}
-										item={item}
-										visibleItems={paginatedItems}
-										collection={collection}
-										onDelete={deleteRow}
-										onDuplicate={!canDuplicate || canDuplicate(item) ? onDuplicate : undefined}
-										showLocale={!!i18n}
-										i18n={i18n}
-										urlPattern={urlPattern}
-										titleField={titleField}
-										dateField={dateField}
-										listColumns={listColumns}
-										selectable={bulkEnabled}
-										selected={selectedIds.has(item.id)}
-										onToggleSelect={toggleOne}
-										extensionColumns={extensionColumns}
-									/>
-								))
-							)}
-						</tbody>
-					</DataTable>
-
-					{/* Pagination */}
-					{!pagination && totalPages > 1 && (
-						<div className="flex items-center justify-between">
-							<span className="text-sm text-kumo-subtle">
-								{renderItemCount({
-									searchQuery: activeSearch,
-									filteredCount: filteredItems.length,
-									total,
-									hasMore,
-									serverSearch,
-								})}
-							</span>
-							<div className="flex items-center gap-2">
-								<Button
-									variant="outline"
-									shape="square"
-									disabled={clampedPage === 0}
-									onClick={() => setPage(clampedPage - 1)}
-									aria-label={t`Previous page`}
-								>
-									<CaretPrev className="h-4 w-4" aria-hidden="true" />
-								</Button>
-								<span className="text-sm">
-									{clampedPage + 1} / {totalPages}
-								</span>
-								<Button
-									variant="outline"
-									shape="square"
-									disabled={clampedPage >= totalPages - 1}
-									onClick={() => setPage(clampedPage + 1)}
-									aria-label={t`Next page`}
-								>
-									<CaretNext className="h-4 w-4" aria-hidden="true" />
-								</Button>
-							</div>
-						</div>
-					)}
-
-					{/* Load more */}
-					{!pagination && hasMore && (
-						<div className="flex justify-center">
-							<Button variant="outline" onClick={onLoadMore} disabled={isLoading}>
-								{isLoading ? t`Loading...` : t`Load More`}
-							</Button>
-						</div>
-					)}
-
-					{pagination && pagination.totalCount > 0 && (
-						<ListPaginationFooter
-							key="all"
-							pagination={pagination}
-							pageSizes={CONTENT_LIST_PAGE_SIZES}
-							label={t`${collectionLabel} pagination`}
-						/>
-					)}
-				</>
+			{loadError ? (
+				loadError
 			) : (
 				<>
-					{/* Trash Table */}
-					<DataTable aria-busy={trashPagination?.isPending || undefined}>
-						<thead>
-							<tr>
-								<th scope="col">{t`Title`}</th>
-								{i18n && (
-									<th scope="col" {...tertiaryColumn}>
-										{t`Locale`}
-									</th>
-								)}
-								<th scope="col" {...tertiaryColumn}>
-									{t`Deleted`}
-								</th>
-								<th scope="col" className="w-0">
-									<span className="sr-only">{t`Actions`}</span>
-								</th>
-							</tr>
-						</thead>
-						<tbody inert={trashPagination?.isPending || undefined}>
-							{trashedItems.length === 0 && (isTrashedLoading || trashPagination?.isPending) ? (
-								<DataTableMessage colSpan={trashColSpan}>
-									<span className="inline-flex items-center gap-2">
-										<Loader size="sm" />
-										{t`Loading...`}
+					{/* Tabs */}
+					<Tabs
+						variant="underline"
+						value={activeTab}
+						onValueChange={(v) => {
+							if (v === "all" || v === "trash") setActiveTab(v);
+						}}
+						tabs={[
+							{ value: "all", label: t`All` },
+							{
+								value: "trash",
+								label: (
+									<span className="flex items-center gap-2">
+										<Trash className="h-4 w-4" aria-hidden="true" />
+										{t`Trash`}
+										{trashedCount > 0 && <Badge variant="secondary">{trashedCount}</Badge>}
 									</span>
-								</DataTableMessage>
-							) : trashedItems.length === 0 ? (
-								<DataTableMessage colSpan={trashColSpan}>{t`Trash is empty`}</DataTableMessage>
-							) : (
-								trashedItems.map((item) => (
-									<TrashedListItem
-										key={item.id}
-										item={item}
-										titleField={titleField}
-										showLocale={!!i18n}
-										onRestore={onRestore}
-										onPermanentDelete={onPermanentDelete}
-									/>
-								))
+								),
+							},
+						]}
+					/>
+
+					{/* Content based on active tab */}
+					{activeTab === "all" ? (
+						<>
+							{(serverSearch || items.length > 0 || onStatusFilterChange) && (
+								<TableToolbar>
+									{(serverSearch || items.length > 0) && (
+										<TableToolbarSearch
+											placeholder={t`Search ${inlineLabel(collectionLabel, lingui.locale)}...`}
+											aria-label={t`Search ${inlineLabel(collectionLabel, lingui.locale)}`}
+											value={searchQuery}
+											onChange={handleSearchChange}
+										/>
+									)}
+									{onStatusFilterChange && (
+										<FilterBar
+											statusFilter={statusFilter}
+											onStatusFilterChange={onStatusFilterChange}
+											authors={authors}
+											authorFilter={authorFilter}
+											onAuthorFilterChange={onAuthorFilterChange}
+											dateFilter={dateFilter}
+											onDateFilterChange={onDateFilterChange}
+											bylineFilter={bylineFilter}
+											onBylineFilterChange={onBylineFilterChange}
+											locale={activeLocale ?? undefined}
+										/>
+									)}
+								</TableToolbar>
 							)}
-						</tbody>
-					</DataTable>
 
-					{/* Load more trashed */}
-					{!trashPagination && hasMoreTrashed && (
-						<div className="flex justify-center">
-							<Button variant="outline" onClick={onLoadMoreTrashed} disabled={isTrashedLoading}>
-								{isTrashedLoading ? t`Loading...` : t`Load More`}
-							</Button>
-						</div>
-					)}
+							{/* Bulk action toolbar — appears once one or more rows are selected */}
+							{bulkEnabled && selectedCount > 0 && (
+								<DataTableBulkBar
+									selectedCount={selectedCount}
+									busy={bulkBusy}
+									onClear={clearSelection}
+								>
+									{onBulkPublish && (
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={bulkBusy}
+											onClick={() => runBulk(onBulkPublish)}
+											icon={<Upload />}
+										>
+											{t`Publish`}
+										</Button>
+									)}
+									{onBulkUnpublish && (
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={bulkBusy}
+											onClick={() => runBulk(onBulkUnpublish)}
+											icon={<CircleDashed aria-hidden="true" />}
+										>
+											{t`Set to draft`}
+										</Button>
+									)}
+									{bulkTagEnabled && (
+										<Button
+											size="sm"
+											variant="secondary"
+											disabled={bulkBusy || selectedCount > 50}
+											icon={<Tag aria-hidden="true" />}
+											onClick={() => {
+												setBulkTagSelection(
+													Array.from(selectedIds, (id) => {
+														const item =
+															items.find((candidate) => candidate.id === id) ??
+															selectedRowsRef.current.get(id);
+														return {
+															collection,
+															id,
+															title: item ? getEntryTitle(item, titleField) : id,
+															locale: item?.locale,
+														};
+													}),
+												);
+												setBulkTagOpen(true);
+											}}
+										>
+											{soleBulkTagTaxonomy
+												? t`Add ${inlineLabel(soleBulkTagTaxonomy.labelSingular || soleBulkTagTaxonomy.label, lingui.locale)}`
+												: t`Add term`}
+										</Button>
+									)}
+									{bulkTagEnabled && selectedCount > 50 && (
+										<span role="status" className="text-sm text-kumo-danger">
+											{t`Select up to 50 posts at a time.`}
+										</span>
+									)}
+									{onBulkDelete && (
+										<LayerDialog.Root
+											open={bulkTrashOpen}
+											onOpenChange={setBulkTrashOpen}
+											disablePointerDismissal
+										>
+											<LayerDialog.Trigger
+												render={(p) => (
+													<Button
+														{...p}
+														size="sm"
+														variant="destructive"
+														icon={<Trash />}
+														disabled={bulkBusy}
+													>
+														{t`Move to trash`}
+													</Button>
+												)}
+											/>
+											<LayerDialog.Content size="sm">
+												<LayerDialog.Title>{t`Move to Trash?`}</LayerDialog.Title>
+												<LayerDialog.Description>
+													{plural(selectedCount, {
+														one: "Move # item to trash? You can restore it later.",
+														other: "Move # items to trash? You can restore them later.",
+													})}
+												</LayerDialog.Description>
+												<LayerDialog.Body>{null}</LayerDialog.Body>
+												<LayerDialog.Actions dismissLabel={t`Cancel`}>
+													<LayerDialog.Action
+														variant="destructive"
+														onClick={() => {
+															setBulkTrashOpen(false);
+															runBulk(onBulkDelete);
+														}}
+													>
+														{t`Move to Trash`}
+													</LayerDialog.Action>
+												</LayerDialog.Actions>
+											</LayerDialog.Content>
+										</LayerDialog.Root>
+									)}
+								</DataTableBulkBar>
+							)}
+							<BulkTagDialog
+								taxonomies={bulkTagTaxonomies}
+								open={bulkTagOpen}
+								selected={bulkTagSelection ?? undefined}
+								activeLocale={activeLocale}
+								defaultLocale={i18n?.defaultLocale}
+								onClose={() => setBulkTagOpen(false)}
+								onClosed={() => setBulkTagSelection(null)}
+								onApplied={(results) => {
+									setSelectedIds(
+										new Set(
+											results.flatMap((result) =>
+												(result.status === "failed" || result.status === "unmatched") &&
+												"id" in result.input
+													? [result.input.id]
+													: [],
+											),
+										),
+									);
+								}}
+							/>
 
-					{trashPagination && trashPagination.totalCount > 0 && (
-						<ListPaginationFooter
-							key="trash"
-							pagination={trashPagination}
-							pageSizes={CONTENT_LIST_PAGE_SIZES}
-							label={t`Trash pagination`}
-						/>
+							{/* Table */}
+							<DataTable
+								aria-busy={pagination?.isPending || undefined}
+								className="@2xl:min-w-(--content-table-min-width)"
+								style={{ "--content-table-min-width": tableMinWidth } as React.CSSProperties}
+							>
+								<thead>
+									<tr>
+										{bulkEnabled && (
+											<th scope="col" className="w-12" inert={pagination?.isPending || undefined}>
+												<Checkbox
+													checked={allPageSelected}
+													onCheckedChange={togglePage}
+													aria-label={t`Select all on this page`}
+												/>
+											</th>
+										)}
+										{/* The Title/Date columns sort by the collection's configured
+								    titleField/dateField when set */}
+										<SortableTh
+											field={titleSortField}
+											sort={sort}
+											onSortChange={onSortChange}
+											label={t`Title`}
+										/>
+										{listColumns.map((column) => (
+											<th key={column.slug} scope="col" className="w-48" {...tertiaryColumn}>
+												{column.label}
+											</th>
+										))}
+										<SortableTh
+											field="status"
+											sort={sort}
+											onSortChange={onSortChange}
+											label={t`Status`}
+											className="w-44"
+											{...tertiaryColumn}
+										/>
+										{i18n && (
+											<SortableTh
+												field="locale"
+												sort={sort}
+												onSortChange={onSortChange}
+												label={t`Locale`}
+												className="w-24"
+												{...tertiaryColumn}
+											/>
+										)}
+										<SortableTh
+											field={dateSortField}
+											sort={sort}
+											onSortChange={onSortChange}
+											label={t`Date`}
+											className="w-36"
+											{...tertiaryColumn}
+										/>
+										{extensionColumns.map((column) => (
+											<ExtensionColumnHeader
+												key={`${column.pluginId}:${column.extension.id}`}
+												column={column}
+												collection={collection}
+												locale={activeLocale}
+												className="w-48"
+												{...tertiaryColumn}
+											/>
+										))}
+										<th scope="col" className="w-16" aria-label={t`Actions`}>
+											{onSortChange && (
+												// The negative margin keeps the header row as tall as a line of header text.
+												<div className="-my-0.75 @2xl:hidden">
+													<SortMenu
+														fields={sortFields}
+														sort={sort}
+														onSortChange={onSortChange}
+														defaultField={dateSortField}
+													/>
+												</div>
+											)}
+										</th>
+									</tr>
+								</thead>
+								<tbody inert={pagination?.isPending || undefined}>
+									{items.length === 0 && (isLoading || pagination?.isPending) ? (
+										<DataTableMessage colSpan={colSpan}>
+											<span className="inline-flex items-center gap-2">
+												<Loader size="sm" />
+												{t`Loading...`}
+											</span>
+										</DataTableMessage>
+									) : items.length === 0 ? (
+										<DataTableMessage colSpan={colSpan}>
+											{activeSearch ? (
+												t`No results for "${activeSearch}"`
+											) : (
+												<>
+													{t`No ${inlineLabel(collectionLabel, lingui.locale)} yet.`}{" "}
+													<Link
+														to="/content/$collection/new"
+														params={{ collection }}
+														search={{ locale: activeLocale }}
+														className="text-kumo-link underline"
+													>
+														{t`Create your first one`}
+													</Link>
+												</>
+											)}
+										</DataTableMessage>
+									) : paginatedItems.length === 0 ? (
+										<DataTableMessage colSpan={colSpan}>
+											{t`No results for "${activeSearch}"`}
+										</DataTableMessage>
+									) : (
+										paginatedItems.map((item) => (
+											<ContentListItem
+												key={item.id}
+												item={item}
+												visibleItems={paginatedItems}
+												collection={collection}
+												onDelete={deleteRow}
+												onDuplicate={!canDuplicate || canDuplicate(item) ? onDuplicate : undefined}
+												showLocale={!!i18n}
+												i18n={i18n}
+												urlPattern={urlPattern}
+												titleField={titleField}
+												dateField={dateField}
+												listColumns={listColumns}
+												selectable={bulkEnabled}
+												selected={selectedIds.has(item.id)}
+												onToggleSelect={toggleOne}
+												extensionColumns={extensionColumns}
+											/>
+										))
+									)}
+								</tbody>
+							</DataTable>
+
+							{/* Pagination */}
+							{!pagination && totalPages > 1 && (
+								<div className="flex items-center justify-between">
+									<span className="text-sm text-kumo-subtle">
+										{renderItemCount({
+											searchQuery: activeSearch,
+											filteredCount: filteredItems.length,
+											total,
+											hasMore,
+											serverSearch,
+										})}
+									</span>
+									<div className="flex items-center gap-2">
+										<Button
+											variant="outline"
+											shape="square"
+											disabled={clampedPage === 0}
+											onClick={() => setPage(clampedPage - 1)}
+											aria-label={t`Previous page`}
+										>
+											<CaretPrev className="h-4 w-4" aria-hidden="true" />
+										</Button>
+										<span className="text-sm">
+											{clampedPage + 1} / {totalPages}
+										</span>
+										<Button
+											variant="outline"
+											shape="square"
+											disabled={clampedPage >= totalPages - 1}
+											onClick={() => setPage(clampedPage + 1)}
+											aria-label={t`Next page`}
+										>
+											<CaretNext className="h-4 w-4" aria-hidden="true" />
+										</Button>
+									</div>
+								</div>
+							)}
+
+							{/* Load more */}
+							{!pagination && hasMore && (
+								<div className="flex justify-center">
+									<Button variant="outline" onClick={onLoadMore} disabled={isLoading}>
+										{isLoading ? t`Loading...` : t`Load More`}
+									</Button>
+								</div>
+							)}
+
+							{pagination && pagination.totalCount > 0 && (
+								<ListPaginationFooter
+									key="all"
+									pagination={pagination}
+									pageSizes={CONTENT_LIST_PAGE_SIZES}
+									label={t`${collectionLabel} pagination`}
+								/>
+							)}
+						</>
+					) : (
+						<>
+							{/* Trash Table */}
+							<DataTable aria-busy={trashPagination?.isPending || undefined}>
+								<thead>
+									<tr>
+										<th scope="col">{t`Title`}</th>
+										{i18n && (
+											<th scope="col" {...tertiaryColumn}>
+												{t`Locale`}
+											</th>
+										)}
+										<th scope="col" {...tertiaryColumn}>
+											{t`Deleted`}
+										</th>
+										<th scope="col" className="w-0">
+											<span className="sr-only">{t`Actions`}</span>
+										</th>
+									</tr>
+								</thead>
+								<tbody inert={trashPagination?.isPending || undefined}>
+									{trashedItems.length === 0 && (isTrashedLoading || trashPagination?.isPending) ? (
+										<DataTableMessage colSpan={trashColSpan}>
+											<span className="inline-flex items-center gap-2">
+												<Loader size="sm" />
+												{t`Loading...`}
+											</span>
+										</DataTableMessage>
+									) : trashedItems.length === 0 ? (
+										<DataTableMessage colSpan={trashColSpan}>{t`Trash is empty`}</DataTableMessage>
+									) : (
+										trashedItems.map((item) => (
+											<TrashedListItem
+												key={item.id}
+												item={item}
+												titleField={titleField}
+												showLocale={!!i18n}
+												onRestore={onRestore}
+												onPermanentDelete={onPermanentDelete}
+											/>
+										))
+									)}
+								</tbody>
+							</DataTable>
+
+							{/* Load more trashed */}
+							{!trashPagination && hasMoreTrashed && (
+								<div className="flex justify-center">
+									<Button variant="outline" onClick={onLoadMoreTrashed} disabled={isTrashedLoading}>
+										{isTrashedLoading ? t`Loading...` : t`Load More`}
+									</Button>
+								</div>
+							)}
+
+							{trashPagination && trashPagination.totalCount > 0 && (
+								<ListPaginationFooter
+									key="trash"
+									pagination={trashPagination}
+									pageSizes={CONTENT_LIST_PAGE_SIZES}
+									label={t`Trash pagination`}
+								/>
+							)}
+						</>
 					)}
 				</>
 			)}
