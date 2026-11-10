@@ -3,6 +3,7 @@ import { describe, it, expect, vi } from "vitest";
 
 import { RepeaterField } from "../../src/components/RepeaterField";
 import { render } from "../utils/render.tsx";
+import { loadedPreview } from "../utils/seo-image-field.js";
 
 describe("RepeaterField", () => {
 	describe("datetime sub-field", () => {
@@ -198,7 +199,7 @@ describe("RepeaterField sub-field types", () => {
 							id: "m1",
 							provider: "local",
 							alt: "",
-							meta: { storageKey: "01ABC.png" },
+							meta: { storageKey: "repeater-preview.png" },
 						},
 					},
 				]}
@@ -207,10 +208,13 @@ describe("RepeaterField sub-field types", () => {
 			/>,
 		);
 
-		// MediaValue with a storageKey renders the local-media preview image.
-		await expect
-			.element(screen.container.querySelector('img[src="/_emdash/api/media/file/01ABC.png"]'))
-			.toBeInTheDocument();
+		const image = await loadedPreview(screen);
+		const request = new URL(image.src);
+		expect(request.pathname).toBe("/_image");
+		expect(new URL(request.searchParams.get("href")!).pathname).toBe(
+			"/_emdash/api/media/file/repeater-preview.png",
+		);
+		expect(image.naturalWidth).toBeGreaterThan(0);
 	});
 
 	it("initializes image sub-fields as null when adding an item", async () => {

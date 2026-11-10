@@ -27,6 +27,7 @@ import {
 	canonicalMediaProviderId,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
+	getMediaThumbnailUrl,
 	localMediaFileUrl,
 	metaString,
 	syncMediaCaption,
@@ -237,7 +238,7 @@ export function ImageFieldRenderer({
 		canonicalMediaProviderId(objectValue.provider) === "local"
 			? objectValue.id
 			: null;
-	const { data: currentMedia } = useQuery({
+	const { data: currentMedia, isError: currentMediaError } = useQuery({
 		queryKey: ["media", currentMediaId],
 		queryFn: ({ signal }) => fetchMediaItem(currentMediaId!, { signal }),
 		enabled: currentMediaId !== null,
@@ -248,7 +249,7 @@ export function ImageFieldRenderer({
 		canonicalMediaProviderId(darkValue.provider) === "local"
 			? darkValue.id
 			: null;
-	const { data: currentDarkMedia } = useQuery({
+	const { data: currentDarkMedia, isError: currentDarkMediaError } = useQuery({
 		queryKey: ["media", currentDarkMediaId],
 		queryFn: ({ signal }) => fetchMediaItem(currentDarkMediaId!, { signal }),
 		enabled: currentDarkMediaId !== null,
@@ -269,6 +270,18 @@ export function ImageFieldRenderer({
 	const darkDisplayUrl = storedDarkDisplayUrl
 		? getMediaPreviewUrl(storedDarkDisplayUrl, darkContentHash)
 		: undefined;
+
+	const darkPreviewUrl =
+		variant === "featured" && storedDarkDisplayUrl
+			? !currentDarkMediaId || currentDarkMedia || currentDarkMediaError
+				? getMediaThumbnailUrl(
+						storedDarkDisplayUrl,
+						currentDarkMedia?.mimeType ?? darkValue?.mimeType ?? "image/jpeg",
+						384,
+						darkContentHash,
+					)
+				: undefined
+			: darkDisplayUrl;
 
 	React.useEffect(() => {
 		setImageBroken(false);
@@ -549,7 +562,7 @@ export function ImageFieldRenderer({
 								</div>
 							) : (
 								<img
-									src={darkDisplayUrl}
+									src={darkPreviewUrl}
 									alt=""
 									className="h-full w-full object-cover"
 									style={{ objectPosition: darkObjectPosition }}
@@ -659,6 +672,25 @@ export function ImageFieldRenderer({
 		</div>
 	);
 
+	const previewMimeType =
+		objectValue?.mimeType ??
+		(storedDisplayUrl?.split("?")[0]?.toLowerCase().endsWith(".svg")
+			? "image/svg+xml"
+			: "image/jpeg");
+	const fieldPreviewUrl = storedDisplayUrl
+		? getMediaThumbnailUrl(storedDisplayUrl, previewMimeType, 768, primaryContentHash)
+		: undefined;
+
+	const featuredPreviewUrl =
+		displayUrl && (!currentMediaId || currentMedia || currentMediaError)
+			? getMediaThumbnailUrl(
+					storedDisplayUrl!,
+					currentMedia?.mimeType ?? previewMimeType,
+					384,
+					primaryContentHash,
+				)
+			: undefined;
+
 	const featuredCard = displayUrl ? (
 		<LayerCard className="grid w-full grid-cols-[5rem_minmax(0,1fr)_auto] items-center rounded-xl p-0 @lg/featured:grid-cols-[12rem_minmax(0,1fr)] @lg/featured:items-stretch">
 			<div
@@ -679,7 +711,7 @@ export function ImageFieldRenderer({
 					</div>
 				) : (
 					<img
-						src={displayUrl}
+						src={featuredPreviewUrl}
 						alt=""
 						className="emdash-media-transparency-grid h-full w-full object-cover"
 						style={{ objectPosition }}
@@ -886,7 +918,7 @@ export function ImageFieldRenderer({
 					) : (
 						// Its size is known before it loads, so a block opening around it animates to its full height.
 						<img
-							src={displayUrl}
+							src={fieldPreviewUrl}
 							alt=""
 							className={cn(
 								IMAGE_EDGE,
@@ -921,9 +953,9 @@ export function ImageFieldRenderer({
 				) : (
 					<div className="grid gap-2">
 						<img
-							src={displayUrl}
+							src={fieldPreviewUrl}
 							alt=""
-							className="emdash-media-transparency-grid max-h-48 min-h-20 rounded-lg border object-cover"
+							className="emdash-media-transparency-grid h-48 w-full rounded-lg border object-cover"
 							style={{ objectPosition }}
 							onError={() => setImageBroken(true)}
 						/>

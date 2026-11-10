@@ -34,6 +34,26 @@ export default defineConfig({
 		],
 	},
 	plugins: [
+		{
+			name: "repeater-image-fixture",
+			configureServer(server) {
+				server.middlewares.use((request, response, next) => {
+					const url = new URL(request.url ?? "/", "http://localhost");
+					if (
+						url.pathname !== "/_image" ||
+						!url.searchParams.get("href")?.endsWith("/_emdash/api/media/file/repeater-preview.png")
+					)
+						return next();
+					response.setHeader("Content-Type", "image/png");
+					response.end(
+						Buffer.from(
+							"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+							"base64",
+						),
+					);
+				});
+			},
+		},
 		react({
 			babel: {
 				plugins: [

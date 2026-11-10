@@ -220,14 +220,19 @@ describe("ImageFieldRenderer", () => {
 		expect(removeButton.element()).toHaveTextContent("Remove");
 
 		const image = screen.container.querySelector("img");
-		expect(image).toHaveAttribute("src", "/_emdash/api/media/file/featured-image.jpg");
-		expect(image?.style.objectPosition).toBe("25% 75%");
 		expect(getComputedStyle(image!.parentElement!).aspectRatio).toBe("16 / 9");
+		await expect.element(image!).toHaveAttribute("src", expect.stringContaining("/_image?"));
+		expect(new URL(image!.getAttribute("src")!, location.origin).searchParams.get("w")).toBe("384");
+		expect(image?.style.objectPosition).toBe("25% 75%");
 	});
 
 	it("previews a local image whose storage key contains slashes (#2871)", async () => {
-		// Keep the current-item refresh pending so the preview comes from the stored value.
-		vi.mocked(fetchMediaItem).mockReturnValue(new Promise(() => {}));
+		let release!: (item: LocalMediaItem) => void;
+		vi.mocked(fetchMediaItem).mockReturnValue(
+			new Promise((resolve) => {
+				release = resolve;
+			}),
+		);
 		const screen = await render(
 			<ImageFieldRenderer
 				label="Featured image"
@@ -239,7 +244,18 @@ describe("ImageFieldRenderer", () => {
 
 		await expect.element(screen.getByText("notes-on-simplicity.jpg")).toBeVisible();
 		const image = screen.container.querySelector("img");
-		expect(image).toHaveAttribute("src", "/_emdash/api/media/file/2026/08/photo.jpg");
+		expect(image).not.toHaveAttribute("src");
+		release({
+			id: selectedImage.id,
+			mimeType: "image/jpeg",
+			contentHash: "latest",
+		} as LocalMediaItem);
+		await expect.element(image!).toHaveAttribute("src", expect.stringContaining("/_image?"));
+		const params = new URL(image!.getAttribute("src")!, location.origin).searchParams;
+		expect(params.get("href")).toBe(
+			`${location.origin}/_emdash/api/media/file/2026/08/photo.jpg?_emdash_media=latest`,
+		);
+		expect(params.get("w")).toBe("384");
 	});
 
 	it("refreshes a featured local preview from the current media item", async () => {
@@ -277,7 +293,7 @@ describe("ImageFieldRenderer", () => {
 			.element(screen.container.querySelector("img")!)
 			.toHaveAttribute(
 				"src",
-				"/_emdash/api/media/file/featured-image.jpg?_emdash_media=sha256%3Acropped",
+				`/_image?${new URLSearchParams({ href: `${location.origin}/_emdash/api/media/file/featured-image.jpg?_emdash_media=sha256%3Acropped`, w: "384", f: "webp" })}`,
 			);
 		await expect.element(screen.getByText("449 × 299 · image/jpeg")).toBeVisible();
 	});
@@ -330,7 +346,7 @@ describe("ImageFieldRenderer", () => {
 			.element(screen.container.querySelectorAll("img")[1]!)
 			.toHaveAttribute(
 				"src",
-				"/_emdash/api/media/file/featured-dark.jpg?_emdash_media=sha256%3Adark-cropped",
+				`/_image?${new URLSearchParams({ href: `${location.origin}/_emdash/api/media/file/featured-dark.jpg?_emdash_media=sha256%3Adark-cropped`, w: "384", f: "webp" })}`,
 			);
 	});
 
@@ -363,7 +379,10 @@ describe("ImageFieldRenderer", () => {
 		);
 
 		const image = screen.container.querySelector("img");
-		expect(image).toHaveAttribute("src", "/_emdash/api/media/file/featured%3Fdraft%231.jpg");
+		await expect.element(image!).toHaveAttribute("src", expect.stringContaining("/_image?"));
+		expect(new URL(image!.getAttribute("src")!, location.origin).searchParams.get("href")).toBe(
+			`${location.origin}/_emdash/api/media/file/featured%3Fdraft%231.jpg`,
+		);
 	});
 
 	it("copies metadata and the library caption when a replacement is selected", async () => {
@@ -800,7 +819,8 @@ describe("ImageFieldRenderer", () => {
 		const screen = await render(<Harness />);
 		const sources: string[] = [];
 		const observer = new MutationObserver(() => {
-			for (const image of screen.container.querySelectorAll("img")) sources.push(image.src);
+			for (const image of screen.container.querySelectorAll("img"))
+				sources.push(new URL(image.src).searchParams.get("href") ?? image.src);
 		});
 		observer.observe(screen.container, {
 			attributes: true,
@@ -848,9 +868,10 @@ describe("ImageFieldRenderer", () => {
 		const screen = await render(<Harness />);
 		const refreshedSource =
 			"/_emdash/api/media/file/featured-image.jpg?_emdash_media=sha256%3Areplaced-original";
-		const sources: string[] = [];
+		const sources = new Map<HTMLImageElement, string>();
 		const observer = new MutationObserver(() => {
-			for (const image of screen.container.querySelectorAll("img")) sources.push(image.src);
+			for (const image of screen.container.querySelectorAll("img"))
+				sources.set(image, new URL(image.src).searchParams.get("href") ?? image.src);
 		});
 		observer.observe(screen.container, {
 			attributes: true,
@@ -863,7 +884,9 @@ describe("ImageFieldRenderer", () => {
 		await screen.getByRole("button", { name: "Refresh original asset" }).click();
 
 		await vi.waitFor(() => {
-			expect(sources.filter((source) => source.endsWith(refreshedSource))).toHaveLength(2);
+			expect(
+				[...sources.values()].filter((source) => source.endsWith(refreshedSource)),
+			).toHaveLength(2);
 		});
 		observer.disconnect();
 		expect(onChange).toHaveBeenCalledWith(
