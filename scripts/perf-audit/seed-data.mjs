@@ -237,8 +237,15 @@ export function writeAuditSeed({ dir, uploadsDir, baseSeedPath }) {
 			},
 			bylines: [{ byline: seed.bylines[index % seed.bylines.length].id }],
 			taxonomies: {
-				category: [categories[index % categories.length].slug],
-				tag: [tags[index % tags.length].slug, tags[(index * 7) % tags.length].slug],
+				category: [
+					categories[index % categories.length].slug,
+					...(index < 60 ? ["development"] : []),
+				],
+				tag: [
+					tags[index % tags.length].slug,
+					tags[(index * 7) % tags.length].slug,
+					...(index < 60 ? ["webdev"] : []),
+				],
 			},
 		});
 	}

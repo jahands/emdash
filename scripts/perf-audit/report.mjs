@@ -22,7 +22,9 @@ function table(headers, rows) {
 }
 
 function comparable(entries) {
-	return entries.filter((entry) => entry.metrics && !entry.status.startsWith("redirected"));
+	return entries.filter(
+		(entry) => !entry.fixtureOnly && entry.metrics && !entry.status.startsWith("redirected"),
+	);
 }
 
 const VISIBILITY_THRESHOLD = 0.0005;
@@ -50,7 +52,7 @@ function median(values) {
 export function compareDbLatency(baseline, current) {
 	const beforeByKey = new Map(baseline.entries.map((entry) => [entry.key, entry]));
 	const paired = current.entries.filter(
-		(entry) => entry.metrics && beforeByKey.get(entry.key)?.metrics,
+		(entry) => !entry.fixtureOnly && entry.metrics && beforeByKey.get(entry.key)?.metrics,
 	);
 
 	const publicPages = paired

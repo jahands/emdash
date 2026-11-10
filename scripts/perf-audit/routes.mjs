@@ -97,7 +97,14 @@ export function discoverTargets(params) {
 			continue;
 		}
 		for (const path of paths) {
-			targets.push({ id: `public:${path}`, pattern, url: path, kind: "route", auth: false });
+			targets.push({
+				id: `public:${path}`,
+				fixtureOnly: path.includes("contributors-naive") || path.startsWith("/related"),
+				pattern,
+				url: path,
+				kind: "route",
+				auth: false,
+			});
 		}
 	}
 
