@@ -62,6 +62,23 @@ export EMDASH_SITE_URL=https://example.com
 
 Set the variable both where `npm run build` runs and where the server runs. The build uses it to enable image optimization for locally stored media. If it is missing at build time, images are served as unoptimized originals instead of through Astro's `/_image` endpoint. See [`siteUrl`](/reference/configuration/#siteurl) for how EmDash resolves the public origin.
 
+### Response compression
+
+For a standalone Node.js deployment, enable response compression in your reverse proxy or hosting platform. The standalone server sends JavaScript, CSS, and HTML uncompressed. Compression reduces the transfer size of admin assets on a first visit.
+
+For example, this Caddy configuration enables gzip for eligible responses and forwards requests to the Node.js server. Replace `example.com` with your public hostname.
+
+```plain title="Caddyfile"
+example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:4321
+}
+```
+
+See [Caddy's `encode` directive](https://caddyserver.com/docs/caddyfile/directives/encode) for response matching and other encodings. Keep the upstream `Cache-Control` headers: the admin HTML is private, while hashed assets can be cached.
+
+After deploying, disable your browser's cache and inspect a JavaScript response under `/_astro/` in the Network panel. For a request that accepts gzip, confirm that the response includes `Content-Encoding: gzip` and `Vary: Accept-Encoding`.
+
 ## Build and run
 
 1. Build the project:
