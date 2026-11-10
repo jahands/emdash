@@ -607,6 +607,8 @@ export interface ContentEditorProps {
 	currentUser?: CurrentUserInfo;
 	/** Available users for author selection (only shown to editors+) */
 	users?: UserListItem[];
+	/** Whether `users` is still loading for the first time. */
+	usersLoading?: boolean;
 	/** Callback when author is changed */
 	onAuthorChange?: (authorId: string | null) => void;
 	/** Available byline profiles */
@@ -690,6 +692,7 @@ export function ContentEditor({
 	supportsPreview = false,
 	currentUser,
 	users,
+	usersLoading,
 	onAuthorChange,
 	availableBylines,
 	availableBylinesLoaded,
@@ -2436,6 +2439,7 @@ export function ContentEditor({
 										isDeleting={isDeleting}
 										currentUser={currentUser}
 										users={users}
+										usersLoading={usersLoading}
 										onAuthorChange={onAuthorChange}
 										activeBylines={activeBylines}
 										inferredByline={resolvedItemBylines.inferredByline}

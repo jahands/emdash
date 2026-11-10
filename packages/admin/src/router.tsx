@@ -1439,8 +1439,8 @@ function ContentEditPage() {
 		};
 	}, [rawItem, draftRevision]);
 
-	// Listing users requires users:read, even when the entry itself is editable.
-	const { data: usersData } = useQuery({
+	// Users for the author selector. Listing users needs an administrator.
+	const { data: usersData, isLoading: usersLoading } = useQuery({
 		queryKey: ["users"],
 		queryFn: () => fetchUsers({ limit: 100 }),
 		enabled: !!currentUser && currentUser.role >= ROLE_ADMIN,
@@ -2275,6 +2275,7 @@ function ContentEditPage() {
 			supportsPreview={collectionConfig.supports.includes("preview")}
 			currentUser={currentUser}
 			users={usersData?.items}
+			usersLoading={usersLoading}
 			onAuthorChange={handleAuthorChange}
 			i18n={i18n}
 			translations={translationsData?.translations}

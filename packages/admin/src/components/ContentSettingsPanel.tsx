@@ -134,6 +134,7 @@ function PublishingVersionRelationship({
 	locale,
 	onDiscardDraft,
 	discardDisabled,
+	discardAfterChanges,
 }: {
 	publishingState: ContentPublishingState;
 	isNew?: boolean;
@@ -142,6 +143,8 @@ function PublishingVersionRelationship({
 	locale: string;
 	onDiscardDraft?: () => Promise<unknown> | void;
 	discardDisabled?: boolean;
+	/** Discarding is offered once the published entry has draft changes. */
+	discardAfterChanges?: boolean;
 }) {
 	const { t } = useLingui();
 	const formattedSchedule = scheduledAt
@@ -189,12 +192,24 @@ function PublishingVersionRelationship({
 			);
 			break;
 		case "published":
+			// Laid out like the draft-changes state, so the first save doesn't push the sections below.
 			rows = (
-				<PublishingVersionRow
-					iconState="published"
-					title={t`Live version`}
-					description={t`Visitors see this published version`}
-				/>
+				<>
+					<PublishingVersionRow
+						iconState="published"
+						title={t`Live version`}
+						description={t`Visitors see this published version`}
+						connectToNext
+					/>
+					<PublishingVersionRow
+						iconState="draft"
+						title={t`No draft changes`}
+						description={t`Edits you save become a draft first`}
+						action={
+							discardAfterChanges ? <DiscardDraftDialog triggerSize="sm" disabled /> : undefined
+						}
+					/>
+				</>
 			);
 			break;
 		case "published-with-changes":
@@ -790,6 +805,8 @@ export interface ContentSettingsPanelProps {
 	isDeleting?: boolean;
 	currentUser?: CurrentUserInfo;
 	users?: UserListItem[];
+	/** Whether `users` is still loading for the first time. */
+	usersLoading?: boolean;
 	onAuthorChange?: (authorId: string | null) => void;
 	activeBylines: BylineCreditInput[];
 	inferredByline?: BylineSummary | null;
@@ -853,6 +870,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	isDeleting,
 	currentUser,
 	users,
+	usersLoading,
 	onAuthorChange,
 	activeBylines,
 	inferredByline,
@@ -949,6 +967,8 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	const usesImplicitEnglish = manifest?.contentLocale?.implicit === true && contentLocale === "en";
 	const publicationEntryKey = `${item?.id ?? "new"}:${activeEntryLocale ?? ""}`;
 	const showPublishingRelationship = supportsDrafts || Boolean(item?.scheduledAt);
+	// A published entry's draft actions stay in place, unavailable until it has draft changes.
+	const awaitingDraftChanges = supportsDrafts && !isNew && resolvedPublishingState === "published";
 	React.useEffect(() => setDatesOpen(false), [item?.id, item?.locale]);
 
 	if (blockSidebarPanel) {
@@ -1012,6 +1032,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 										locale={lingui.locale}
 										onDiscardDraft={showDiscard ? onDiscardDraft : undefined}
 										discardDisabled={viewingRevision}
+										discardAfterChanges={awaitingDraftChanges && !!onDiscardDraft}
 									/>
 								) : null}
 
@@ -1107,10 +1128,10 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 						) : null}
 						<ScheduleActions
 							publishingState={resolvedPublishingState}
-							canSchedule={canSchedule}
+							canSchedule={canSchedule || awaitingDraftChanges}
 							isScheduling={isScheduling}
 							isUnscheduling={isUnscheduling}
-							disabled={publishingDisabled}
+							disabled={publishingDisabled || awaitingDraftChanges}
 							onOpenSchedule={onOpenSchedule}
 							onUnschedule={onUnschedule}
 						/>
@@ -1151,7 +1172,8 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 					</div>
 				</SortableContentSettingsSection>
 
-				{currentUser && currentUser.role >= ROLE_EDITOR && users && users.length > 0 && (
+				{/* Laid out while the users load, so the sections below don't move when they arrive. */}
+				{currentUser && currentUser.role >= ROLE_EDITOR && (usersLoading || !!users?.length) && (
 					<SortableContentSettingsSection id="ownership" label={t`Ownership`}>
 						<div className="p-4">
 							<Text as="h3" DANGEROUS_className="mb-4 font-semibold">
@@ -1159,7 +1181,8 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 							</Text>
 							<AuthorSelector
 								authorId={item?.authorId || null}
-								users={users}
+								users={users ?? []}
+								loading={usersLoading}
 								onChange={onAuthorChange}
 							/>
 						</div>
@@ -1397,11 +1420,25 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 interface AuthorSelectorProps {
 	authorId: string | null;
 	users: UserListItem[];
+	loading?: boolean;
 	onChange?: (authorId: string | null) => void;
 }
 
-function AuthorSelector({ authorId, users, onChange }: AuthorSelectorProps) {
+function AuthorSelector({ authorId, users, loading, onChange }: AuthorSelectorProps) {
 	const { t } = useLingui();
+	if (loading) {
+		return (
+			<div className="space-y-2">
+				<Select aria-label={t`Author`} className="w-full" value={null} disabled loading />
+				{/* Holds the line the author's email takes once the users arrive. */}
+				{authorId && (
+					<p className="text-xs" aria-hidden="true">
+						&nbsp;
+					</p>
+				)}
+			</div>
+		);
+	}
 	const currentAuthor = users.find((u) => u.id === authorId);
 
 	const authorItems: Record<string, string> = { unassigned: t`Unassigned` };

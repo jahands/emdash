@@ -115,7 +115,7 @@ function createMockServer(options: MockServerOptions = {}) {
 			return jsonResponse({ data: MANIFEST });
 		}
 		if (method === "GET" && url === "/_emdash/api/auth/me") {
-			return jsonResponse({ data: { id: "user_1", role: 40 } });
+			return jsonResponse({ data: { id: "user_1", role: 50 } });
 		}
 		if (method === "GET" && url.startsWith("/_emdash/api/bylines")) {
 			return jsonResponse({ data: { items: [] } });
