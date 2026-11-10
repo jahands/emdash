@@ -482,3 +482,58 @@ describe("Content list sort menu", () => {
 		).not.toBeVisible();
 	});
 });
+
+describe("Content list column stability", () => {
+	const shortRow = (id: string, status = "draft"): ContentItem => ({
+		id,
+		type: "posts",
+		slug: id,
+		status,
+		data: { title: `Post ${id}` },
+		authorId: "user-1",
+		createdAt: "2026-01-01T00:00:00Z",
+		updatedAt: "2026-01-02T00:00:00Z",
+		publishedAt: null,
+		scheduledAt: null,
+		liveRevisionId: null,
+		draftRevisionId: "rev-1",
+	});
+
+	function columnEdges() {
+		return Array.from(document.querySelectorAll("thead th"), (header) => {
+			const { left, right } = header.getBoundingClientRect();
+			return [Math.round(left), Math.round(right)];
+		});
+	}
+
+	function list(items: ContentItem[], dir: "ltr" | "rtl", isLoading: boolean) {
+		return (
+			<div dir={dir} style={{ width: 1100 }}>
+				<ContentList
+					collection="posts"
+					collectionLabel="Posts"
+					items={items}
+					isLoading={isLoading}
+				/>
+			</div>
+		);
+	}
+
+	it.each(["ltr", "rtl"] as const)("keeps %s columns put as rows load and change", async (dir) => {
+		await page.viewport(1400, 800);
+		const screen = await render(list([], dir, true));
+		const loadingEdges = columnEdges();
+
+		const longTitles = [
+			shortRow("a", "published"),
+			{ ...shortRow("b", "scheduled"), data: { title: "An extremely long post title ".repeat(6) } },
+		];
+		await screen.rerender(list(longTitles, dir, false));
+		await expect.element(screen.getByText("Post a")).toBeInTheDocument();
+		expect(columnEdges()).toEqual(loadingEdges);
+
+		await screen.rerender(list([shortRow("c")], dir, false));
+		await expect.element(screen.getByText("Post c")).toBeInTheDocument();
+		expect(columnEdges()).toEqual(loadingEdges);
+	});
+});

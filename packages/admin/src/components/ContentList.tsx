@@ -506,6 +506,16 @@ export function ContentList({
 		...(i18n ? [{ field: "locale", label: t`Locale` }] : []),
 		{ field: dateSortField, label: t`Date` },
 	];
+	// Past this width the table scrolls instead of squeezing the title column to nothing.
+	const fixedColumnsRem =
+		(bulkEnabled ? 3 : 0) +
+		listColumns.length * 12 +
+		11 +
+		(i18n ? 6 : 0) +
+		9 +
+		extensionColumns.length * 12 +
+		4;
+	const tableMinWidth = `${fixedColumnsRem + 16}rem`;
 	const tabPagination = activeTab === "all" ? pagination : trashPagination;
 	const showPaginationFooter = !!tabPagination && tabPagination.totalCount > 0;
 
@@ -721,11 +731,15 @@ export function ContentList({
 					/>
 
 					{/* Table */}
-					<DataTable aria-busy={pagination?.isPending || undefined}>
+					<DataTable
+						aria-busy={pagination?.isPending || undefined}
+						className="@2xl:min-w-(--content-table-min-width)"
+						style={{ "--content-table-min-width": tableMinWidth } as React.CSSProperties}
+					>
 						<thead>
 							<tr>
 								{bulkEnabled && (
-									<th scope="col" className="w-10" inert={pagination?.isPending || undefined}>
+									<th scope="col" className="w-12" inert={pagination?.isPending || undefined}>
 										<Checkbox
 											checked={allPageSelected}
 											onCheckedChange={togglePage}
@@ -742,7 +756,7 @@ export function ContentList({
 									label={t`Title`}
 								/>
 								{listColumns.map((column) => (
-									<th key={column.slug} scope="col" {...tertiaryColumn}>
+									<th key={column.slug} scope="col" className="w-48" {...tertiaryColumn}>
 										{column.label}
 									</th>
 								))}
@@ -751,6 +765,7 @@ export function ContentList({
 									sort={sort}
 									onSortChange={onSortChange}
 									label={t`Status`}
+									className="w-44"
 									{...tertiaryColumn}
 								/>
 								{i18n && (
@@ -759,6 +774,7 @@ export function ContentList({
 										sort={sort}
 										onSortChange={onSortChange}
 										label={t`Locale`}
+										className="w-24"
 										{...tertiaryColumn}
 									/>
 								)}
@@ -767,6 +783,7 @@ export function ContentList({
 									sort={sort}
 									onSortChange={onSortChange}
 									label={t`Date`}
+									className="w-36"
 									{...tertiaryColumn}
 								/>
 								{extensionColumns.map((column) => (
@@ -775,10 +792,11 @@ export function ContentList({
 										column={column}
 										collection={collection}
 										locale={activeLocale}
+										className="w-48"
 										{...tertiaryColumn}
 									/>
 								))}
-								<th scope="col" className="w-0" aria-label={t`Actions`}>
+								<th scope="col" className="w-16" aria-label={t`Actions`}>
 									{onSortChange && (
 										// The negative margin keeps the header row as tall as a line of header text.
 										<div className="-my-0.75 @2xl:hidden">
@@ -1387,6 +1405,7 @@ function ExtensionColumnHeader({
 	column,
 	collection,
 	locale,
+	className,
 	...props
 }: ExtensionColumnHeaderProps) {
 	const { i18n } = useLingui();
@@ -1398,7 +1417,7 @@ function ExtensionColumnHeader({
 		<th
 			scope="col"
 			aria-label={label}
-			className={extension.align === "end" ? "text-end" : "text-start"}
+			className={cn(extension.align === "end" ? "text-end" : "text-start", className)}
 			{...props}
 		>
 			<ContentListColumnBoundary
@@ -1531,7 +1550,7 @@ const ContentListItem = React.memo(function ContentListItem({
 					to="/content/$collection/$id"
 					params={{ collection, id: item.id }}
 					search={{ locale: item.locale }}
-					className={rowTitleClassName}
+					className={cn(rowTitleClassName, "wrap-anywhere")}
 				>
 					{title}
 				</Link>
