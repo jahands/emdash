@@ -121,6 +121,8 @@ import {
 	bulkCommentAction,
 	type CommentStatus,
 } from "./lib/api/comments";
+import { fetchCurrentUser } from "./lib/api/current-user.js";
+import { fetchDashboardStats } from "./lib/api/dashboard.js";
 import { runBulkAction } from "./lib/bulk";
 import { parseCalendarSearch } from "./lib/calendar";
 import {
@@ -585,6 +587,16 @@ const adminLayoutRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	id: "_admin",
 	component: RootComponent,
+	loader: ({ context: { queryClient } }) =>
+		Promise.all([
+			queryClient.prefetchQuery({ queryKey: ["manifest"], queryFn: fetchManifest }),
+			queryClient.prefetchQuery({
+				queryKey: ["currentUser"],
+				queryFn: fetchCurrentUser,
+				staleTime: 5 * 60 * 1000,
+				retry: false,
+			}),
+		]),
 });
 
 // Isomorphic requestIdleCallback polyfill
@@ -642,7 +654,11 @@ const dashboardRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/",
 	component: DashboardPage,
-	loader: () => Dashboard.preload!(),
+	loader: ({ context: { queryClient } }) =>
+		Promise.all([
+			import("./components/Dashboard.js"),
+			queryClient.prefetchQuery({ queryKey: ["dashboard-stats"], queryFn: fetchDashboardStats }),
+		]),
 	staticData: { pageTitle: msg`Dashboard` },
 });
 
@@ -3637,6 +3653,7 @@ export function createAdminRouter(queryClient: QueryClient) {
 		context: { queryClient },
 		basepath: "/_emdash/admin",
 		defaultPreload: "intent",
+		defaultPreloadStaleTime: 0,
 		defaultPendingComponent: RouteLoadingScreen,
 	});
 }

@@ -17,7 +17,7 @@ export interface CurrentUser {
 	isFirstLogin?: boolean;
 }
 
-async function fetchCurrentUser(): Promise<CurrentUser> {
+export async function fetchCurrentUser(): Promise<CurrentUser> {
 	const response = await apiFetch("/_emdash/api/auth/me");
 	return parseApiResponse<CurrentUser>(response, i18n._(msg`Failed to fetch user`));
 }
