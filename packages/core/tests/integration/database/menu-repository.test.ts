@@ -8,7 +8,7 @@
  * explicit item cleanup for D1 safety).
  */
 
-import type { Kysely } from "kysely";
+import { UpdateQueryNode, type Kysely, type KyselyPlugin } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { MenuGoneError, MenuRepository } from "../../../src/database/repositories/menu.js";
@@ -539,4 +539,82 @@ describeEachDialect("MenuRepository.deleteItem() with nested items", (dialect) =
 			expect((await repo.findItems(footer.id)).map((item) => item.label)).toEqual(["Footer item"]);
 		},
 	);
+});
+
+describeEachDialect("MenuRepository.reorderItems", (dialect) => {
+	let ctx: DialectTestContext;
+
+	beforeEach(async () => {
+		ctx = await setupForDialect(dialect);
+	});
+
+	afterEach(async () => {
+		await teardownForDialect(ctx);
+	});
+
+	async function seedItems(repo: MenuRepository, count: number) {
+		const menu = await repo.create({ name: "primary", label: "Primary" });
+		await repo.setItems(
+			menu.id,
+			menu.locale,
+			Array.from({ length: count }, (_, index) => ({
+				type: "custom",
+				customUrl: `/item-${index}`,
+				label: `Item ${index}`,
+			})),
+		);
+		return { menu, items: await repo.findItems(menu.id) };
+	}
+
+	function countingRepo(): { repo: MenuRepository; updates: () => number } {
+		let updates = 0;
+		const counter: KyselyPlugin = {
+			transformQuery({ node }) {
+				if (UpdateQueryNode.is(node)) updates++;
+				return node;
+			},
+			transformResult: async ({ result }) => result,
+		};
+		return { repo: new MenuRepository(ctx.db.withPlugin(counter)), updates: () => updates };
+	}
+
+	it("writes a reorder in statements proportional to batches, not items", async () => {
+		const seeded = new MenuRepository(ctx.db);
+		const { menu, items } = await seedItems(seeded, 45);
+		const { repo, updates } = countingRepo();
+
+		await repo.reorderItems(
+			menu.id,
+			items.map((item, index) => ({ id: item.id, parentId: null, sortOrder: 44 - index })),
+		);
+
+		expect(updates()).toBeLessThanOrEqual(3);
+		const reordered = await seeded.findItems(menu.id);
+		expect(reordered.map((item) => item.id)).toEqual(items.map((item) => item.id).toReversed());
+	});
+
+	it("applies parents, leaves foreign items alone, and keeps the last entry for a repeated id", async () => {
+		const repo = new MenuRepository(ctx.db);
+		const { menu, items } = await seedItems(repo, 3);
+		const other = await repo.create({ name: "footer", label: "Footer" });
+		await repo.setItems(other.id, other.locale, [
+			{ type: "custom", customUrl: "/foreign", label: "Foreign" },
+		]);
+		const [foreign] = await repo.findItems(other.id);
+
+		await repo.reorderItems(menu.id, [
+			{ id: items[0]!.id, parentId: null, sortOrder: 9 },
+			{ id: items[0]!.id, parentId: null, sortOrder: 5 },
+			{ id: items[1]!.id, parentId: items[0]!.id, sortOrder: 1 },
+			{ id: items[2]!.id, parentId: null, sortOrder: 0 },
+			{ id: foreign!.id, parentId: null, sortOrder: 7 },
+		]);
+
+		const updated = await repo.findItems(menu.id);
+		expect(updated.find((item) => item.id === items[0]!.id)?.sortOrder).toBe(5);
+		expect(updated.find((item) => item.id === items[1]!.id)?.parentId).toBe(items[0]!.id);
+		expect(updated.find((item) => item.id === items[2]!.id)?.sortOrder).toBe(0);
+		const [foreignAfter] = await repo.findItems(other.id);
+		expect(foreignAfter?.sortOrder).toBe(foreign!.sortOrder);
+	});
 });

@@ -13,7 +13,7 @@
  * single menu item survives content translations.
  */
 
-import type { Compilable, Insertable, Kysely, Selectable } from "kysely";
+import { sql, type Compilable, type Insertable, type Kysely, type Selectable } from "kysely";
 import { ulid } from "ulidx";
 
 import { localeMatches, localeOrder } from "../../i18n/query.js";
@@ -247,6 +247,9 @@ export interface SetMenuItem {
 	cssClasses?: string;
 	parentIndex?: number;
 }
+
+/** Each item binds five parameters, so a batch stays within D1's limit of 100. */
+const REORDER_BATCH_SIZE = 19;
 
 export interface ReorderItem {
 	id: string;
@@ -763,14 +766,29 @@ export class MenuRepository {
 	 * malicious payload cannot move foreign items into this menu's siblings.
 	 */
 	async reorderItems(menuId: string, items: ReorderItem[]): Promise<MenuItem[]> {
+		// A later entry for the same id wins, as it did when each ran in turn.
+		const latest = [...new Map(items.map((item) => [item.id, item])).values()];
 		await executeMenuWrite(
 			this.db,
 			(target) =>
-				items.map((item) =>
+				chunks(latest, REORDER_BATCH_SIZE).map((batch) =>
 					target
 						.updateTable("_emdash_menu_items")
-						.set({ parent_id: item.parentId, sort_order: item.sortOrder })
-						.where("id", "=", item.id)
+						.set({
+							parent_id: sql<string | null>`CASE id ${sql.join(
+								batch.map((item) => sql`WHEN ${item.id} THEN CAST(${item.parentId} AS text)`),
+								sql` `,
+							)} END`,
+							sort_order: sql<number>`CASE id ${sql.join(
+								batch.map((item) => sql`WHEN ${item.id} THEN CAST(${item.sortOrder} AS integer)`),
+								sql` `,
+							)} END`,
+						})
+						.where(
+							"id",
+							"in",
+							batch.map((item) => item.id),
+						)
 						.where("menu_id", "=", menuId),
 				),
 			(target) => validateItemParents(target, menuId, items),
