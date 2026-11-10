@@ -40,6 +40,9 @@ const DASHBOARD_STATUS_STATES: Record<string, ContentStatusState> = {
 	archived: "archived",
 };
 
+/** The server's page size for recent activity. */
+const RECENT_ACTIVITY_LIMIT = 10;
+
 const ROLE_ADMIN = 50;
 const ROLE_EDITOR = 40;
 const ROLE_CONTRIBUTOR = 20;
@@ -89,6 +92,7 @@ export function Dashboard({ manifest }: DashboardProps) {
 					<SummaryMetrics
 						stats={stats}
 						loading={isLoading}
+						role={user?.role ?? 0}
 						linkCalendar={
 							(user?.role ?? 0) >= ROLE_CONTRIBUTOR &&
 							!manifest.admin?.hiddenNavItems?.includes("calendar")
@@ -362,29 +366,40 @@ function QuickActions({ manifest }: { manifest: AdminManifest }) {
 
 // --- Summary metrics ---
 
+function metricsGridClass(count: number) {
+	if (count >= 4) return "grid gap-4 sm:grid-cols-2 lg:grid-cols-4";
+	if (count === 3) return "grid gap-4 sm:grid-cols-3";
+	return "grid gap-4 sm:grid-cols-2";
+}
+
 function SummaryMetrics({
 	stats,
 	loading,
+	role,
 	linkCalendar,
 }: {
 	stats?: DashboardStats;
 	loading: boolean;
+	role: number;
 	/** Link the Scheduled count to the calendar, for roles that can open it. */
 	linkCalendar: boolean;
 }) {
 	if (loading) {
+		// Drafts and media are always shown, and users only to admins. Scheduled
+		// appears only when something is scheduled, so it can't be predicted here.
+		const skeletonCount = role >= ROLE_ADMIN ? 3 : 2;
 		return (
-			<div className="grid gap-4 sm:grid-cols-3">
-				{[1, 2, 3].map((i) => (
+			<div className={metricsGridClass(skeletonCount)}>
+				{Array.from({ length: skeletonCount }, (_, i) => (
 					<LayerCard key={i}>
 						<LayerCard.Secondary>
-							<DashboardCardInset>
-								<SkeletonLine minWidth={45} maxWidth={70} />
+							<DashboardCardInset className="w-full">
+								<SkeletonText minWidth={45} maxWidth={70} />
 							</DashboardCardInset>
 						</LayerCard.Secondary>
 						<LayerCard.Primary className="text-3xl font-semibold leading-none">
 							<DashboardCardInset>
-								<SkeletonLine minWidth={20} maxWidth={35} />
+								<SkeletonText minWidth={20} maxWidth={35} />
 							</DashboardCardInset>
 						</LayerCard.Primary>
 					</LayerCard>
@@ -432,15 +447,7 @@ function SummaryMetrics({
 	];
 
 	return (
-		<div
-			className={
-				metrics.length === 4
-					? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-					: metrics.length === 3
-						? "grid gap-4 sm:grid-cols-3"
-						: "grid gap-4 sm:grid-cols-2"
-			}
-		>
+		<div className={metricsGridClass(metrics.length)}>
 			{metrics.map((metric) => (
 				<LayerCard key={metric.label} data-testid="dashboard-metric">
 					<DashboardCardHeading>
@@ -470,13 +477,27 @@ function SummaryMetrics({
 	);
 }
 
+/** A skeleton exactly as tall as one line of the surrounding text. */
+function SkeletonText({ minWidth, maxWidth }: { minWidth: number; maxWidth: number }) {
+	return (
+		<span className="relative block" aria-hidden="true">
+			{"\u00a0"}
+			<span className="absolute inset-0 flex items-center">
+				<SkeletonLine minWidth={minWidth} maxWidth={maxWidth} className="w-full" />
+			</span>
+		</span>
+	);
+}
+
 function SkeletonRows({ count }: { count: number }) {
 	return (
-		<DashboardCardInset className="space-y-3">
+		<div className="space-y-1">
 			{Array.from({ length: count }, (_, i) => (
-				<SkeletonLine key={i} blockHeight={40} minWidth={65} maxWidth={95} />
+				<div key={i} className="px-3 py-2 text-base leading-5">
+					<SkeletonText minWidth={65} maxWidth={95} />
+				</div>
 			))}
-		</DashboardCardInset>
+		</div>
 	);
 }
 
@@ -499,7 +520,7 @@ function CollectionList({
 			<DashboardCardHeading>{t`Content`}</DashboardCardHeading>
 			<LayerCard.Primary className="flex-1">
 				{loading ? (
-					<SkeletonRows count={3} />
+					<SkeletonRows count={visibleCollectionEntries(manifest.collections).length} />
 				) : visibleCollections.length === 0 ? (
 					<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
 						{t`No collections configured`}
@@ -578,7 +599,7 @@ function RecentActivity({ items, loading }: { items: RecentItem[]; loading: bool
 			<DashboardCardHeading>{t`Recent Activity`}</DashboardCardHeading>
 			<LayerCard.Primary className="flex-1">
 				{loading ? (
-					<SkeletonRows count={5} />
+					<SkeletonRows count={RECENT_ACTIVITY_LIMIT} />
 				) : items.length === 0 ? (
 					<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
 						{t`No recent activity`}
