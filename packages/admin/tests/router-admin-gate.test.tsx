@@ -281,3 +281,29 @@ describe("read permission gates when the user lookup fails", () => {
 		}
 	});
 });
+
+describe("management links opened directly", () => {
+	it.each([
+		"/menus",
+		"/menus/main",
+		"/taxonomies/category",
+		"/bylines",
+		"/widgets",
+		"/sections",
+		"/sections/main",
+	])("refuses an author before mounting %s", async (to) => {
+		const mockFetch = createMockFetch();
+		mockFetch
+			.on("GET", "/_emdash/api/manifest", { data: MANIFEST })
+			.on("GET", "/_emdash/api/auth/me", { data: { id: "author", role: 30 } });
+		try {
+			const { router, TestApp } = buildRouter();
+			await router.navigate({ to });
+			const screen = await render(<TestApp />);
+			await expect.element(screen.getByRole("heading", { name: "Access denied" })).toBeVisible();
+			expect(document.querySelector("main input")).toBeNull();
+		} finally {
+			mockFetch.restore();
+		}
+	});
+});

@@ -2761,7 +2761,7 @@ function CommentsPage() {
 		return (
 			<div className="flex items-center justify-center min-h-[50vh]">
 				<div className="text-center">
-					<h1 className="text-2xl font-semibold leading-tight">{t`Access Denied`}</h1>
+					<h1 className="text-2xl font-semibold leading-tight">{t`Access denied`}</h1>
 					<p className="mt-2 text-sm text-kumo-subtle">{t`You need Editor permissions to moderate comments.`}</p>
 				</div>
 			</div>
@@ -3121,14 +3121,22 @@ const wordpressImportRoute = createRoute({
 const menuListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/menus",
-	component: MenuList,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<MenuList />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Menus` },
 });
 
 const menuEditorRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/menus/$name",
-	component: MenuEditor,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<MenuEditor />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Edit menu` },
 	validateSearch: (search: Record<string, unknown>) => {
 		return {
@@ -3141,7 +3149,11 @@ const menuEditorRoute = createRoute({
 const taxonomyRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/taxonomies/$taxonomy",
-	component: TaxonomyPage,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<TaxonomyPage />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Taxonomies` },
 });
 
@@ -3155,7 +3167,11 @@ function TaxonomyPage() {
 const widgetsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/widgets",
-	component: Widgets,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<Widgets />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Widgets` },
 });
 
@@ -3174,14 +3190,22 @@ const redirectsRoute = createRoute({
 const sectionsListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/sections",
-	component: Sections,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<Sections />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Sections` },
 });
 
 const sectionEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/sections/$slug",
-	component: SectionEditor,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<SectionEditor />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Edit section` },
 });
 
@@ -3215,7 +3239,11 @@ export function parseBylinesLocaleSearch(search: Record<string, unknown>): {
 const bylinesRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/bylines",
-	component: BylinesPage,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<BylinesPage />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Bylines` },
 	validateSearch: parseBylinesLocaleSearch,
 });
