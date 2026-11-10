@@ -472,7 +472,7 @@ export async function runMeasurement({
 		const graph = JSON.parse(
 			readFileSync(
 				new URL(
-					`../../fixtures/perf-site/.perf-audit/dist-${options.db}/client/perf-initial-js.json`,
+					`../../fixtures/perf-site/.perf-audit/dist-${options.db}${options.plugins ? "-plugins" : ""}/client/perf-initial-js.json`,
 					import.meta.url,
 				),
 				"utf8",

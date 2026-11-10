@@ -26,6 +26,7 @@ const USAGE = `Usage: pnpm perf:audit [options]
 
   --max-initial-js-gz <KB> Fail routes exceeding the static entry import graph budget (KiB)
   --react-profile       Build with React profiling and count committed fiber renders
+  --plugins             Build the fixture with the forms plugin and measure its admin pages
   --gzip                Serve the fixture through a local streaming gzip proxy
   --midpoint-ms <ms>     Sample scenario geometry after this delay into each step
   --cold                Restart the server before every route or scenario (TCP-only readiness)
@@ -60,6 +61,7 @@ function readOptions() {
 			"max-initial-js-gz": { type: "string" },
 			"react-profile": { type: "boolean", default: false },
 			gzip: { type: "boolean", default: false },
+			plugins: { type: "boolean", default: false },
 			"midpoint-ms": { type: "string", default: "0" },
 			cold: { type: "boolean", default: false },
 			role: { type: "string", default: "admin" },
@@ -123,6 +125,7 @@ function readOptions() {
 		dbLatency,
 		cold: values.cold,
 		gzip: values.gzip,
+		plugins: values.plugins,
 		midpointMs: Number(values["midpoint-ms"]),
 		reactProfile: values["react-profile"],
 		maxInitialJsGz:
@@ -209,7 +212,12 @@ async function main() {
 
 	if (!options.skipBuild && !options.list) {
 		process.stdout.write("Building production fixture...\n");
-		buildSite({ fonts: options.fonts, db: options.db, reactProfile: options.reactProfile });
+		buildSite({
+			fonts: options.fonts,
+			db: options.db,
+			reactProfile: options.reactProfile,
+			plugins: options.plugins,
+		});
 	}
 	process.stdout.write("Preparing seed...\n");
 	const seedDir = await ensureSeed({ reseed: options.reseed });
@@ -225,9 +233,10 @@ async function main() {
 		latencyMs: options.dbLatency,
 		role: options.role,
 		gzip: options.gzip,
+		plugins: options.plugins,
 	});
 
-	const { targets, unreachable } = discoverTargets(site.params);
+	const { targets, unreachable } = discoverTargets(site.params, { plugins: options.plugins });
 	const allTargets = [
 		...targets,
 		...SCENARIOS.map((scenario) => ({ ...scenario, kind: "scenario", auth: true })),
@@ -303,6 +312,7 @@ async function main() {
 		git: gitLabel(),
 		cold: options.cold,
 		gzip: options.gzip,
+		plugins: options.plugins,
 		midpointMs: options.midpointMs,
 		reactProfile: options.reactProfile,
 		role: options.role,

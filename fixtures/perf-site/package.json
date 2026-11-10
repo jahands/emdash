@@ -18,6 +18,7 @@
 		"@astrojs/node": "catalog:",
 		"@astrojs/react": "catalog:",
 		"@emdash-cms/cloudflare": "workspace:*",
+		"@emdash-cms/plugin-forms": "workspace:*",
 		"astro": "catalog:",
 		"emdash": "workspace:*",
 		"kysely": "^0.29.0",

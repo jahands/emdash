@@ -31,7 +31,15 @@ pnpm perf:audit --db-latency 20 --viewport desktop --baseline .perf-audit/result
 
 `summary.md` then ranks public pages, admin API endpoints and admin routes by added time. `waves` counts the sequential groups of queries in each request, so added time is roughly waves multiplied by latency.
 
-Admin routes that need a plugin or marketplace are listed as unreachable in `summary.md`; the fixture does not configure them. `.perf-audit/` is gitignored.
+Admin routes that need a plugin or marketplace are listed as unreachable in `summary.md`; the default fixture does not configure them. `--plugins` builds the fixture with the forms plugin into a separate build directory and measures its admin pages and settings; the marketplace and registry routes stay unreachable. `.perf-audit/` is gitignored.
+
+## State scenarios
+
+`scenarios-states.mjs` adds scenarios for states a plain page load never reaches: editor save, autosave, save failure and edit conflict; failed API requests; offline navigation to a screen that has not loaded; a chunk that is missing after a deploy; empty collections and searches; media uploads; dialogs and toasts. Each scenario saves a screenshot and the boxes of the elements it names at every sample to `.perf-audit/states/`, so movement that CLS excludes, such as a banner that appears right after a click, is still recorded.
+
+```bash
+pnpm perf:audit --only scenario:editor-save-states,scenario:failed-requests --midpoint-ms 120 --screenshots
+```
 
 ## Role, language and theme
 

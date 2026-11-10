@@ -45,15 +45,16 @@ const FINGERPRINT_PATTERN = /"fingerprint":\s*"([0-9a-f]{64})"/;
 const fixtureRequire = createRequire(join(FIXTURE_DIR, "package.json"));
 const fixtureImport = (specifier) => import(pathToFileURL(fixtureRequire.resolve(specifier)).href);
 
-const buildDirFor = (db) => join(FIXTURE_DIR, `.perf-audit/dist-${db}`);
+const buildDirFor = (db, plugins = false) =>
+	join(FIXTURE_DIR, `.perf-audit/dist-${db}${plugins ? "-plugins" : ""}`);
 
-export function buildSite({ fonts, db, reactProfile }) {
+export function buildSite({ fonts, db, reactProfile, plugins = false }) {
 	if (!existsSync(CLI_PATH) || !existsSync(ADMIN_DIST)) {
 		throw new Error("Workspace packages are not built. Run `pnpm build` first.");
 	}
 	const result = spawnSync(
 		join(FIXTURE_DIR, "node_modules/.bin/astro"),
-		["build", "--outDir", buildDirFor(db)],
+		["build", "--outDir", buildDirFor(db, plugins)],
 		{
 			cwd: FIXTURE_DIR,
 			stdio: "pipe",
@@ -62,6 +63,7 @@ export function buildSite({ fonts, db, reactProfile }) {
 				...process.env,
 				EMDASH_FIXTURE_TARGET: db,
 				EMDASH_REACT_PROFILE: reactProfile ? "1" : "",
+				EMDASH_FIXTURE_PLUGINS: plugins ? "1" : "",
 				...(fonts ? { EMDASH_FIXTURE_FONTS: "1" } : {}),
 			},
 		},
@@ -360,8 +362,9 @@ export async function startSite({
 	latencyMs,
 	role = "admin",
 	gzip = false,
+	plugins = false,
 }) {
-	const entryPath = join(buildDirFor(db), "server/entry.mjs");
+	const entryPath = join(buildDirFor(db, plugins), "server/entry.mjs");
 	if (!existsSync(entryPath))
 		throw new Error(`No ${db} build found. Run without --skip-build first.`);
 	const workDir = mkdtempSync(join(tmpdir(), "emdash-perf-audit-"));

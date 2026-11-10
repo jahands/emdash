@@ -1,6 +1,9 @@
+import { STATE_SCENARIOS } from "./scenarios-states.mjs";
+
 const COLLAPSE_SIDEBAR = /^(Collapse|Expand) sidebar$/;
 const ROW_ACTIONS = /Actions|More/;
 const NEXT_PAGE = /Next page|Load more/;
+const SAVE_LABEL = /^Save$/;
 
 const admin = (path) => `/_emdash/admin${path}`;
 
@@ -120,7 +123,12 @@ export const SCENARIOS = [
 					page.getByRole("button", { name: "Exit distraction-free mode" }).click(),
 				);
 			}
-			await step("save", () => page.keyboard.press("ControlOrMeta+s"));
+			// The editor has no save shortcut, and autosave may already have
+			// saved, which disables the button.
+			await step("save", async () => {
+				const save = page.getByRole("button", { name: SAVE_LABEL }).first();
+				if ((await save.isVisible()) && (await save.isEnabled())) await save.click();
+			});
 		},
 	},
 	{
@@ -150,4 +158,5 @@ export const SCENARIOS = [
 			});
 		},
 	},
+	...STATE_SCENARIOS,
 ];

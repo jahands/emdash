@@ -29,6 +29,11 @@ const ADMIN_PARAM_VALUES = {
 	"/content-types/$slug": () => ["/content-types/posts"],
 };
 
+const PLUGIN_PARAM_VALUES = {
+	"/plugins/$pluginId/$": () => ["/plugins/emdash-forms/", "/plugins/emdash-forms/submissions"],
+	"/plugins-manager/$pluginId/settings": () => ["/plugins-manager/emdash-forms/settings"],
+};
+
 const PUBLIC_PARAM_VALUES = {
 	"/posts/[slug]": () => ["/posts/building-for-the-long-term", "/posts/the-long-read"],
 	"/pages/[slug]": () => ["/pages/about"],
@@ -57,7 +62,7 @@ function publicPatternFor(file) {
 	return normalized === "" ? "/" : normalized;
 }
 
-export function discoverTargets(params) {
+export function discoverTargets(params, { plugins = false } = {}) {
 	const targets = [];
 	const unreachable = [];
 
@@ -65,7 +70,8 @@ export function discoverTargets(params) {
 		if (pattern === "$") continue;
 		const auth = parent === "adminLayoutRoute";
 		const prefix = auth ? "admin" : "auth";
-		const paths = pattern.includes("$") ? ADMIN_PARAM_VALUES[pattern]?.(params) : [pattern];
+		const values = plugins ? { ...ADMIN_PARAM_VALUES, ...PLUGIN_PARAM_VALUES } : ADMIN_PARAM_VALUES;
+		const paths = pattern.includes("$") ? values[pattern]?.(params) : [pattern];
 		if (!paths) {
 			unreachable.push({
 				pattern: `${prefix}:${pattern}`,
