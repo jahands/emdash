@@ -1,15 +1,18 @@
 import { i18n } from "@lingui/core";
+import { msg } from "@lingui/core/macro";
 import type { Editor } from "@tiptap/react";
 import * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
 
-import "../../dist/styles.css";
 import {
 	ContentSettingsPanel,
 	type ContentSettingsPanelProps,
 } from "../../src/components/ContentSettingsPanel";
+
+import "../../dist/styles.css";
 import type { ContentItem } from "../../src/lib/api";
+import { loadMessages } from "../../src/locales/loadMessages.js";
 import { render } from "../utils/render.tsx";
 
 vi.mock("../../src/components/RevisionHistory", () => ({
@@ -117,6 +120,39 @@ describe("ContentSettingsPanel publish section", () => {
 				.element(screen.getByRole("button", { name: "Schedule", exact: true }))
 				.toBeEnabled();
 			expect(slug.element().getBoundingClientRect().top).toBe(before);
+		},
+	);
+
+	it.each(["en", "ar"])(
+		"keeps settings in place through scheduling and first publication in %s",
+		async (locale) => {
+			i18n.loadAndActivate({ locale, messages: locale === "en" ? {} : await loadMessages(locale) });
+			const dir = locale === "ar" ? "rtl" : "ltr";
+			const draft = { ...publishedItem, status: "draft", publishedAt: null, liveRevisionId: null };
+			for (const width of [390, 1280]) {
+				await page.viewport(width, 900);
+				const screen = await render(
+					panel(false, dir, { item: draft, status: "draft", isLive: false, canSchedule: true }),
+				);
+				const slug = screen.getByRole("textbox", { name: i18n._(msg`Slug`), exact: true });
+				await expect.element(slug).toBeVisible();
+				const before = slug.element().getBoundingClientRect().top;
+				await screen.rerender(
+					panel(false, dir, {
+						item: { ...draft, scheduledAt: "2027-01-01T10:00:00Z" },
+						status: "draft",
+						isLive: false,
+						canSchedule: true,
+					}),
+				);
+				expect(slug.element().getBoundingClientRect().top).toBe(before);
+				await screen.rerender(panel(false, dir, { onPublishedAtChange: vi.fn() }));
+				expect(slug.element().getBoundingClientRect().top).toBe(before);
+				await screen.rerender(panel(true, dir, { onPublishedAtChange: vi.fn() }));
+				expect(slug.element().getBoundingClientRect().top).toBe(before);
+				await screen.unmount();
+			}
+			i18n.loadAndActivate({ locale: "en", messages: {} });
 		},
 	);
 

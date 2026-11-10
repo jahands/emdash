@@ -171,24 +171,44 @@ function PublishingVersionRelationship({
 	switch (publishingState) {
 		case "draft":
 			rows = (
-				<PublishingVersionRow
-					iconState="draft"
-					title={t`Draft version`}
-					description={
-						isNew
-							? t`Saving creates a draft that stays off the site. You can publish it after the first save.`
-							: t`This version is not visible on the site`
-					}
-				/>
+				<>
+					<PublishingVersionRow
+						iconState="draft"
+						title={t`Draft version`}
+						description={
+							isNew
+								? t`Saving creates a draft that stays off the site. You can publish it after the first save.`
+								: t`This version is not visible on the site`
+						}
+					/>
+					{!isNew && (
+						<div aria-hidden="true" className="invisible">
+							<PublishingVersionRow
+								iconState="draft"
+								title={t`No draft changes`}
+								description={t`Edits you save become a draft first`}
+							/>
+						</div>
+					)}
+				</>
 			);
 			break;
 		case "scheduled":
 			rows = (
-				<PublishingVersionRow
-					iconState="scheduled"
-					title={t`First publication`}
-					description={scheduledSummary ?? t`A publication time has not been selected`}
-				/>
+				<>
+					<PublishingVersionRow
+						iconState="scheduled"
+						title={t`First publication`}
+						description={scheduledSummary ?? t`A publication time has not been selected`}
+					/>
+					<div aria-hidden="true" className="invisible">
+						<PublishingVersionRow
+							iconState="draft"
+							title={t`No draft changes`}
+							description={t`Edits you save become a draft first`}
+						/>
+					</div>
+				</>
 			);
 			break;
 		case "published":
@@ -282,7 +302,13 @@ function PublishingVersionRelationship({
 			);
 	}
 
-	return <div className="grid gap-4 px-3 py-3">{rows}</div>;
+	return (
+		<div
+			className={cn("grid gap-4 px-3 py-3", !isNew && "[&>*]:min-h-14 [&>*:nth-child(2)]:min-h-22")}
+		>
+			{rows}
+		</div>
+	);
 }
 
 function TimestampValue({
@@ -537,7 +563,7 @@ export function PublishActions({
 						icon={<Upload aria-hidden="true" className={compact ? "max-sm:hidden" : undefined} />}
 						className={
 							compact
-								? "max-sm:relative max-sm:w-full max-sm:col-span-2 max-sm:-order-1 max-sm:min-w-0 max-sm:justify-center max-sm:gap-0 max-sm:px-7 max-sm:[&>span.relative]:static max-sm:[&>span.relative]:z-1 max-sm:[&>span.relative]:min-w-0"
+								? `max-sm:relative max-sm:w-full ${isLive ? "" : "max-sm:col-span-2"} max-sm:-order-1 max-sm:min-w-0 max-sm:justify-center max-sm:gap-0 ${isLive ? "max-sm:ps-2 max-sm:pe-7" : "max-sm:px-7"} max-sm:[&>span.relative]:static max-sm:[&>span.relative]:z-1 max-sm:[&>span.relative]:min-w-0`
 								: undefined
 						}
 						loading={isPending}
@@ -1045,7 +1071,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 										)}
 									>
 										{item.publishedAt ? (
-											<dl>
+											<dl className="min-h-9">
 												{canUpdatePublishedDate && onPublishedAtChange ? (
 													<div>
 														<dt className="sr-only">{t`Publication date`}</dt>
@@ -1069,7 +1095,9 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 													</TimestampRow>
 												)}
 											</dl>
-										) : null}
+										) : (
+											<div aria-hidden="true" className="h-9" />
+										)}
 
 										<Collapsible.Root open={datesOpen} onOpenChange={setDatesOpen}>
 											<Collapsible.Trigger
@@ -1079,7 +1107,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 														variant="ghost"
 														className={cn(
 															"-mx-2 h-9 w-[calc(100%+1rem)] min-w-0 justify-between overflow-hidden whitespace-nowrap px-2 py-1.5 font-normal",
-															item.publishedAt && "mt-1",
+															"mt-1",
 														)}
 													/>
 												}

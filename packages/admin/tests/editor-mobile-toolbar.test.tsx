@@ -189,14 +189,32 @@ describe("ContentEditor mobile action bar", () => {
 			const { toolbar } = await renderDirectEditor(entry);
 			expectFourColumnGrid(toolbar);
 			const actions = actionRects(toolbar);
-			const publish = actions.find(({ name }) => name?.startsWith("Publish"))!;
-			expect(publish.rect.width).toBeGreaterThan(actionGrid(toolbar).clientWidth / 4);
+			expectSingleRow(actionGrid(toolbar));
 			for (const { rect } of actions) {
 				expect(rect.left).toBeGreaterThanOrEqual(0);
 				expect(rect.right).toBeLessThanOrEqual(320);
 			}
 		},
 	);
+
+	it.each(["en", "ar"])("keeps the published bar height after autosave in %s", async (locale) => {
+		await page.viewport(390, 800);
+		const { toolbar, screen } = await renderDirectEditor(item(true), locale);
+		const before = toolbar.getBoundingClientRect().height;
+		await screen.unmount();
+		const changed = await renderDirectEditor({ ...item(true), draftRevisionId: "changed" }, locale);
+		expect(changed.toolbar.getBoundingClientRect().height).toBe(before);
+		const publish = changed.screen
+			.getByRole("button", { name: i18n._(msg`Publish changes`), exact: true })
+			.element();
+		const label = [...publish.querySelectorAll<HTMLElement>("span")].find(
+			(span) =>
+				span.childElementCount === 0 &&
+				span.getClientRects().length > 0 &&
+				Boolean(span.textContent),
+		)!;
+		expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth);
+	});
 
 	it("uses four equal action cells for a published post", async () => {
 		await page.viewport(390, 800);
