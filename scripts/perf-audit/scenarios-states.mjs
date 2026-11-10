@@ -147,13 +147,20 @@ export const STATE_SCENARIOS = [
 			const rec = recorder(page, `editor-save-states-${viewportName}`);
 			const editor = page.locator(".ProseMirror").first();
 			const saveButton = page.getByRole("button", { name: SAVE_LABEL }).first();
-			// Saves by button where there is one (wide screens), otherwise by autosave.
+			// Saves by button where there is one (wide screens), otherwise by autosave,
+			// and returns once the save request has been sent.
 			const typeAndSave = async (text) => {
+				const sent = page.waitForRequest(
+					(request) => contentSave(request.url(), request.method()),
+					{
+						timeout: 15_000,
+					},
+				);
 				await editor.focus();
 				await page.keyboard.type(text);
 				await rec.sample(`dirty: ${text}`);
 				if (await saveButton.isVisible()) await saveButton.click();
-				else await page.waitForTimeout(2200);
+				await sent;
 			};
 			await step("load editor", () =>
 				page.goto(admin(`/content/posts/${params.shortPostId}`), { waitUntil: "commit" }),
@@ -205,10 +212,16 @@ export const STATE_SCENARIOS = [
 			await rec.sample("loaded");
 			const editor = page.locator(".ProseMirror").first();
 			await step("type and wait for autosave", async () => {
+				const sent = page.waitForRequest(
+					(request) => contentSave(request.url(), request.method()),
+					{
+						timeout: 15_000,
+					},
+				);
 				await editor.focus();
 				await page.keyboard.type("Waiting for autosave. ");
 				await rec.sample("dirty");
-				await page.waitForTimeout(2300);
+				await sent;
 				await rec.sample("autosave fired");
 			});
 			await rec.sample("autosaved");
@@ -395,7 +408,7 @@ export const STATE_SCENARIOS = [
 				headers: { ...API_HEADERS, Origin: baseUrl },
 				data: { slug, label: "Empty things", labelSingular: "Empty thing" },
 			});
-			if (!created.ok() && created.status() !== 409)
+			if (!created.ok())
 				throw new Error(`Collection create failed (${created.status()}): ${await created.text()}`);
 			await step("open empty collection", () =>
 				page.goto(admin(`/content/${slug}`), { waitUntil: "commit" }),

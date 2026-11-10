@@ -55,7 +55,7 @@ pnpm perf:audit --skip-build --viewport mobile --only scenario:nav-sections
 
 ## State scenarios
 
-`scenarios-states.mjs` adds scenarios for states a plain page load never reaches: editor save, autosave, save failure and edit conflict; failed API requests; offline navigation to a screen that has not loaded; a chunk that is missing after a deploy; empty collections and searches; media uploads; dialogs and toasts. Each scenario saves a screenshot and the boxes of the elements it names at every sample to `.perf-audit/states/`, so movement that CLS excludes, such as a banner that appears right after a click, is still recorded.
+`scenarios-states.mjs` adds scenarios for states a plain page load never reaches: editor save, autosave, save failure and edit conflict; failed API requests; offline navigation to a screen that has not loaded; a chunk that is missing after a deploy; empty collections and searches; media uploads; dialogs and toasts. Each scenario saves a screenshot and the boxes of the elements it names at every sample to `.perf-audit/states/`, so movement that CLS excludes, such as a banner that appears right after a click, is still recorded. Save and autosave steps wait for the save request instead of a fixed delay, so they fail if no save is sent.
 
 ```bash
 pnpm perf:audit --only scenario:editor-save-states,scenario:failed-requests --midpoint-ms 120 --screenshots
