@@ -3389,6 +3389,18 @@ export function calculateReadingTime(text: string): number {
 	);
 }
 
+function readEditorMetrics(editor: Editor) {
+	const storage: { characters: () => number } = editor.storage.characterCount;
+	const text = editor.getText();
+	const words = countNonCjkWords(text);
+	const cjk = countCjkCharacters(text);
+	return {
+		words: words + cjk,
+		characters: storage.characters(),
+		readingTime: Math.ceil(words / WORDS_PER_MINUTE + cjk / CJK_CHARACTERS_PER_MINUTE),
+	};
+}
+
 /**
  * Editor footer showing writing metrics (word count, character count, reading time)
  */
@@ -3399,22 +3411,27 @@ function EditorFooter({
 	editor: Editor;
 	variant?: PortableTextEditorProps["variant"];
 }) {
-	const { words, characters, text } = useEditorState({
-		editor,
-		selector: (ctx) => {
-			const storage: { words: () => number; characters: () => number } =
-				ctx.editor.storage.characterCount;
-			return {
-				words: storage.words(),
-				characters: storage.characters(),
-				text: ctx.editor.getText(),
-			};
-		},
-	});
+	const [metrics, setMetrics] = React.useState(() => readEditorMetrics(editor));
+	React.useEffect(() => {
+		let timer: ReturnType<typeof setTimeout> | undefined;
+		let document = editor.state.doc;
+		setMetrics(readEditorMetrics(editor));
+		const update = () => {
+			if (editor.state.doc === document) return;
+			document = editor.state.doc;
+			clearTimeout(timer);
+			timer = setTimeout(() => setMetrics(readEditorMetrics(editor)), 300);
+		};
+		editor.on("transaction", update);
+		return () => {
+			clearTimeout(timer);
+			editor.off("transaction", update);
+		};
+	}, [editor]);
+	const { words, characters, readingTime } = metrics;
 
 	// Subscribes to locale changes so the plural messages below re-render.
 	useLinguiContext();
-	const readingTime = calculateReadingTime(text);
 
 	if (variant === "document") {
 		if (characters === 0) return null;
@@ -6311,7 +6328,7 @@ const toolbarActiveClassName = "bg-kumo-interact/50 text-kumo-link hover:text-ku
  * Implements WAI-ARIA toolbar pattern with proper keyboard navigation.
  * Arrow keys move focus between buttons, Home/End jump to first/last.
  */
-function EditorToolbar({
+const EditorToolbar = React.memo(function EditorToolbar({
 	toolbarRef,
 	editor,
 	editable,
@@ -6794,7 +6811,7 @@ function EditorToolbar({
 			</div>
 		</TooltipProvider>
 	);
-}
+});
 
 /**
  * Left and Right move focus between a toolbar's enabled buttons and links,

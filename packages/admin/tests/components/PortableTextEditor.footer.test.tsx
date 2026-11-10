@@ -2,7 +2,7 @@ import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { screen } from "@testing-library/react";
 import CharacterCount from "@tiptap/extension-character-count";
-import { useEditor } from "@tiptap/react";
+import { type Editor, useEditor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import * as React from "react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
@@ -72,5 +72,30 @@ describe("EditorFooter in the document layout", () => {
 		await vi.waitFor(() => {
 			expect(screen.getByText("1 Wort")).toBeTruthy();
 		});
+	});
+});
+
+describe("EditorFooter updates", () => {
+	it("coalesces rapid document changes and ignores unrelated renders", async () => {
+		let editor: Editor | null = null;
+		function Harness({ unrelated }: { unrelated: number }) {
+			editor = useEditor({
+				extensions: [StarterKit, CharacterCount.configure({ wordCounter: countWords })],
+				content: "<p>Hello</p>",
+				immediatelyRender: true,
+			});
+			return <div data-unrelated={unrelated}>{editor && <_EditorFooter editor={editor} />}</div>;
+		}
+		const view = await render(<Harness unrelated={0} />);
+		await vi.waitFor(() => expect(screen.getByText("1 Wort")).toBeTruthy());
+		editor!.commands.setTextSelection(editor!.state.doc.content.size - 1);
+		const getText = vi.spyOn(editor!, "getText");
+		await view.rerender(<Harness unrelated={1} />);
+		expect(getText).not.toHaveBeenCalled();
+		for (let i = 0; i < 10; i++) editor!.commands.insertContent(" world");
+		expect(getText).not.toHaveBeenCalled();
+		await vi.waitFor(() => expect(screen.getByText("11 Wörter")).toBeTruthy());
+		expect(getText).toHaveBeenCalledTimes(1);
+		getText.mockRestore();
 	});
 });
