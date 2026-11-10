@@ -1,7 +1,7 @@
 import { Toasty } from "@cloudflare/kumo";
 import { i18n } from "@lingui/core";
 import { I18nProvider } from "@lingui/react";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { focusManager, QueryClientProvider } from "@tanstack/react-query";
 import { RouterContextProvider, RouterProvider } from "@tanstack/react-router";
 import type { Editor } from "@tiptap/react";
 import * as React from "react";
@@ -388,6 +388,7 @@ describe("ContentEditPage background reads with the real editor", () => {
 	});
 	afterEach(() => {
 		server.restore();
+		focusManager.setFocused(undefined);
 		vi.useRealTimers();
 	});
 
@@ -563,7 +564,21 @@ describe("ContentEditPage background reads with the real editor", () => {
 			} else {
 				await title.fill("Writer copy");
 				server.advance();
-				await queryClient.refetchQueries({ queryKey: ["content", "posts", "post_1"] });
+				const readsBefore = server.requests.filter(
+					(request) =>
+						request.method === "GET" && request.url.startsWith("/_emdash/api/content/posts/post_1"),
+				).length;
+				focusManager.setFocused(false);
+				focusManager.setFocused(true);
+				await vi.waitFor(() =>
+					expect(
+						server.requests.filter(
+							(request) =>
+								request.method === "GET" &&
+								request.url.startsWith("/_emdash/api/content/posts/post_1"),
+						).length,
+					).toBeGreaterThan(readsBefore),
+				);
 				await vi.advanceTimersByTimeAsync(0);
 			}
 			await expect.element(title).toHaveValue("Writer copy");

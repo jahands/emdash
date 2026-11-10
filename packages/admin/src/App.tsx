@@ -36,6 +36,10 @@ const queryClient = new QueryClient({
 	},
 });
 
+for (const key of ["manifest", "bylines", "taxonomy-defs", "taxonomy-terms"]) {
+	queryClient.setQueryDefaults([key], { staleTime: 5 * 60 * 1000 });
+}
+
 refetchCurrentUserOnForbidden(queryClient);
 
 // Create the router with query client context
