@@ -511,11 +511,10 @@ export function ContentList({
 
 	return (
 		<div
-			className={
-				showPaginationFooter
-					? "flex min-h-full flex-col gap-4 [&_tbody_*]:scroll-mb-48"
-					: "space-y-4"
-			}
+			className={cn(
+				"flex flex-col gap-4",
+				showPaginationFooter && "min-h-full [&_tbody_*]:scroll-mb-48",
+			)}
 		>
 			{/* Header */}
 			<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
