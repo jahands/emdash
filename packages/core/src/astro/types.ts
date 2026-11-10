@@ -407,6 +407,17 @@ export interface EmDashHandlers {
 
 	handleContentGetIncludingTrashed: (collection: string, id: string) => Promise<HandlerResponse>;
 
+	handleContentGetEntry: (
+		collection: string,
+		id: string,
+		locale?: string,
+	) => Promise<
+		HandlerResponse<{
+			item: { id: string; authorId: string | null; status: string; [key: string]: unknown };
+			_rev?: string;
+		}>
+	>;
+
 	handleContentDuplicate: (
 		collection: string,
 		id: string,

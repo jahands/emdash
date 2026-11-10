@@ -94,6 +94,7 @@ export const GET: APIRoute = async ({ params, locals }) => {
 			taxonomy,
 			locale,
 			defaultLocale,
+			entry.translationGroup,
 		);
 
 		return apiSuccess(assignmentResponse(assignments, locale));

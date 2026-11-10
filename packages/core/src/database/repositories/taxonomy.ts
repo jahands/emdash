@@ -786,8 +786,10 @@ export class TaxonomyRepository {
 		taxonomyName: string,
 		locale: string,
 		defaultLocale: string,
+		entryTranslationGroup?: string | null,
 	): Promise<TaxonomyAssignmentResolution[]> {
-		const entryGroup = await this.resolveEntryTranslationGroup(collection, entryId);
+		const entryGroup =
+			entryTranslationGroup ?? (await this.resolveEntryTranslationGroup(collection, entryId));
 		if (!entryGroup) return [];
 
 		const rows = await this.db

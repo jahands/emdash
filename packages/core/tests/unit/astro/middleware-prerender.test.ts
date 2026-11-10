@@ -58,6 +58,7 @@ const {
 			configuredPlugins: [],
 			handleContentList: ok,
 			handleContentGet: ok,
+			handleContentGetEntry: ok,
 			handleContentAuthors: ok,
 			handleContentCreate: ok,
 			handleContentUpdate: ok,

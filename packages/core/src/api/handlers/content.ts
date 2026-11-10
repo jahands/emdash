@@ -1240,6 +1240,38 @@ export async function handleContentGet(
 	}
 }
 
+/**
+ * Get a content item's row without SEO, bylines or references, for a caller
+ * that only needs its ownership, status and `_rev`.
+ */
+export async function handleContentGetEntry(
+	db: Kysely<Database>,
+	collection: string,
+	id: string,
+	locale?: string,
+): Promise<ApiResult<ContentResponse>> {
+	try {
+		const item = await new ContentRepository(db).findByIdOrSlug(
+			collection,
+			id,
+			locale ? resolveConfiguredLocale(locale) : undefined,
+		);
+		if (!item) {
+			return {
+				success: false,
+				error: { code: "NOT_FOUND", message: `Content item not found: ${id}` },
+			};
+		}
+		return { success: true, data: { item, _rev: encodeRev(item) } };
+	} catch (error) {
+		console.error("Content get error:", error);
+		return {
+			success: false,
+			error: { code: "CONTENT_GET_ERROR", message: "Failed to get content" },
+		};
+	}
+}
+
 async function hydrateContentItem(
 	db: Kysely<Database>,
 	collection: string,

@@ -36,11 +36,11 @@ async function resolveEntry(
 	locale: string | undefined,
 ): Promise<ResolvedEntry | Response> {
 	const { emdash, user } = locals;
-	if (!emdash?.handleContentGet) {
+	if (!emdash?.handleContentGetEntry) {
 		return apiError("NOT_CONFIGURED", "EmDash is not initialized", 500);
 	}
 
-	const existing = await emdash.handleContentGet(collection, id, locale);
+	const existing = await emdash.handleContentGetEntry(collection, id, locale);
 	if (!existing.success) {
 		return apiError(
 			existing.error?.code ?? "UNKNOWN_ERROR",

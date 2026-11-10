@@ -78,7 +78,7 @@ export class EntryLockRepository {
 	): Promise<EntryLockClaim> {
 		for (let attempt = 0; attempt < CLAIM_ATTEMPTS; attempt++) {
 			const claimed = await this.claim(input);
-			if (claimed) return { outcome: "acquired", lock: await this.withHolderName(claimed) };
+			if (claimed) return { outcome: "acquired", lock: toEntryLock(claimed) };
 
 			const holder = await this.findLive(input.collection, input.entryId);
 			if (holder) return { outcome: "held", lock: holder };
@@ -157,7 +157,7 @@ export class EntryLockRepository {
 	 */
 	private async claim(
 		input: LeaseInput & { token: string; takeover?: boolean },
-	): Promise<LockRow | undefined> {
+	): Promise<(LockRow & { user_name: string | null }) | undefined> {
 		const now = this.timestampOffset(0);
 		const expiresAt = this.timestampOffset(input.leaseSeconds);
 		return this.db
@@ -190,6 +190,13 @@ export class EntryLockRepository {
 				);
 			})
 			.returningAll()
+			.returning((eb) =>
+				eb
+					.selectFrom("users")
+					.select("users.name")
+					.whereRef("users.id", "=", "_emdash_entry_locks.user_id")
+					.as("user_name"),
+			)
 			.executeTakeFirst();
 	}
 
@@ -209,22 +216,6 @@ export class EntryLockRepository {
 			.where("_emdash_entry_locks.collection", "=", collection)
 			.where("_emdash_entry_locks.entry_id", "=", entryId)
 			.where(this.leaseIsLive("_emdash_entry_locks.expires_at"));
-	}
-
-	private async withHolderName(row: LockRow): Promise<EntryLock> {
-		const user = await this.db
-			.selectFrom("users")
-			.select("name")
-			.where("id", "=", row.user_id)
-			.executeTakeFirst();
-		return {
-			collection: row.collection,
-			entryId: row.entry_id,
-			userId: row.user_id,
-			userName: user?.name ?? null,
-			acquiredAt: row.acquired_at,
-			expiresAt: row.expires_at,
-		};
 	}
 
 	private leaseIsLive(column: string) {

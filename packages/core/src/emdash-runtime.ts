@@ -213,6 +213,7 @@ interface PageContributions {
 import { after } from "./after.js";
 import { maybeRunScheduledBackup } from "./api/handlers/backup.js";
 import { changedStoragelessDataKeys, storagelessDataKeyError } from "./api/handlers/content.js";
+import { handleContentGetEntry } from "./api/handlers/content.js";
 import { loadBundleFromR2 } from "./api/handlers/marketplace.js";
 import {
 	runSystemCleanup,
@@ -3784,6 +3785,11 @@ export class EmDashRuntime {
 			referenceOptions && { ...referenceOptions, revisionReads },
 		);
 		return this.hydrateDraftData(result, { ...draftOptions, revisionReads });
+	}
+
+	/** The entry's row and `_rev`, without hydration, for authorizing a write. */
+	async handleContentGetEntry(collection: string, id: string, locale?: string) {
+		return handleContentGetEntry(this.db, collection, id, locale);
 	}
 
 	async handleContentGetIncludingTrashed(collection: string, id: string, locale?: string) {
