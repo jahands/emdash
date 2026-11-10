@@ -10,6 +10,8 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 
+import { openFromSidebar } from "./navigation.mjs";
+
 const ROOT = resolve(import.meta.dirname, "../..");
 const STATES_DIR = join(ROOT, ".perf-audit/states");
 const fixtureRequire = createRequire(join(ROOT, "fixtures/perf-site/package.json"));
@@ -317,16 +319,15 @@ export const STATE_SCENARIOS = [
 			});
 			await step("load dashboard", () => page.goto(admin("/"), { waitUntil: "commit" }));
 			await page.context().setOffline(true);
-			const openLink = async (suffix) => {
-				if (viewportName === "mobile") {
-					const expanded = page.locator('.emdash-sidebar[data-state="expanded"]');
-					if ((await expanded.count()) === 0) {
-						await page.locator('header [data-sidebar="trigger"]').first().click();
-						await expanded.waitFor();
-					}
-				}
-				await page.locator(`.emdash-sidebar a[href$='${suffix}']`).first().click({ timeout: 3000 });
-			};
+			const openLink = (suffix) =>
+				openFromSidebar(
+					page,
+					viewportName,
+					page.locator(`.emdash-sidebar a[href$='${suffix}']`).first(),
+					{
+						timeout: 3000,
+					},
+				);
 			await step("open Posts offline (screen loaded before)", async () => {
 				await openLink("/content/posts");
 				await page.waitForTimeout(1500);
@@ -338,9 +339,7 @@ export const STATE_SCENARIOS = [
 			});
 			await rec.sample("settings offline");
 			await page.context().setOffline(false);
-			await step("back online, open Media", async () => {
-				await openLink("/media").catch(() => page.goto(admin("/media"), { waitUntil: "commit" }));
-			});
+			await step("back online, open Media", () => openLink("/media"));
 			await rec.sample("media online");
 			rec.save();
 		},
@@ -369,11 +368,11 @@ export const STATE_SCENARIOS = [
 				return route.fulfill({ status: 404, body: "Not found" });
 			});
 			await step("open Settings after deploy", async () => {
-				if (viewportName === "mobile") {
-					await page.locator('header [data-sidebar="trigger"]').first().click();
-					await page.locator('.emdash-sidebar[data-state="expanded"]').waitFor();
-				}
-				await page.locator(".emdash-sidebar a[href$='/settings']").first().click();
+				await openFromSidebar(
+					page,
+					viewportName,
+					page.locator(".emdash-sidebar a[href$='/settings']").first(),
+				);
 				await page.waitForTimeout(300);
 				await rec.sample("settings 300ms after click");
 				await page.waitForTimeout(1200);

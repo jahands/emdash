@@ -1,3 +1,4 @@
+import { openFromSidebar } from "./navigation.mjs";
 import { STATE_SCENARIOS } from "./scenarios-states.mjs";
 
 const COLLAPSE_SIDEBAR = /^(Collapse|Expand) sidebar$/;
@@ -18,23 +19,15 @@ const sidebarLink = (page, label) =>
 		.filter({ hasText: new RegExp(`^\\s*${label}`) })
 		.first();
 
-async function openSidebarOnMobile(page, viewportName) {
-	const expanded = page.locator('.emdash-sidebar[data-state="expanded"]');
-	if (viewportName !== "mobile" || (await expanded.count()) > 0) return;
-	await sidebarTrigger(page, viewportName).click();
-	await expanded.waitFor();
-}
-
 export const SCENARIOS = [
 	{
 		id: "scenario:nav-sections",
 		async run({ page, step, viewportName }) {
 			await step("load dashboard", () => page.goto(admin("/"), { waitUntil: "commit" }));
 			for (const label of ["Posts", "Pages", "Media", "Comments", "Dashboard"]) {
-				await step(`open ${label}`, async () => {
-					await openSidebarOnMobile(page, viewportName);
-					await sidebarLink(page, label).click();
-				});
+				await step(`open ${label}`, () =>
+					openFromSidebar(page, viewportName, sidebarLink(page, label)),
+				);
 			}
 		},
 	},

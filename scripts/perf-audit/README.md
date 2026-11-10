@@ -45,6 +45,14 @@ Writes are found in the server's query log, so this also covers `--runs`: the se
 pnpm perf:audit --skip-build --only scenario:editor-first-save --max-cls 0.05
 ```
 
+## Phone navigation
+
+Scenarios open sidebar links with `openFromSidebar(page, viewportName, link)` from `navigation.mjs`. On phones it taps the header menu button, waits for the sheet, taps the link and waits for the URL. It then fails unless, within 3 seconds, the sheet has left the screen and the middle of `main` and of its first heading receive taps. The error names what is still in the way, such as the open menu and the part of the screen it covers. `scenario:nav-sections`, `scenario:offline-navigation` and `scenario:stale-chunk` use it.
+
+```bash
+pnpm perf:audit --skip-build --viewport mobile --only scenario:nav-sections
+```
+
 ## State scenarios
 
 `scenarios-states.mjs` adds scenarios for states a plain page load never reaches: editor save, autosave, save failure and edit conflict; failed API requests; offline navigation to a screen that has not loaded; a chunk that is missing after a deploy; empty collections and searches; media uploads; dialogs and toasts. Each scenario saves a screenshot and the boxes of the elements it names at every sample to `.perf-audit/states/`, so movement that CLS excludes, such as a banner that appears right after a click, is still recorded.
@@ -92,7 +100,7 @@ Seed caches publish completed directories atomically. Concurrent first seeds can
 
 Category and tag fixtures paginate at 20 entries and fetch taxonomy terms without counts, matching the blog template's query behavior. Deliberate N+1/reference comparison pages are marked `fixtureOnly` in JSON and excluded from product ranking comparisons. They remain measured as diagnostic controls.
 
-Run the harness regression checks with `node --test scripts/perf-audit/{metrics,documents,harness}.test.mjs` (requires installed Chromium). They deliberately move a table boundary by 31px, replace a row and change scroll, and require the assertions to reject each change. They also verify departed-document export, static import deduplication and concurrent seed publication. Audit scenario errors exit non-zero.
+Run the harness regression checks with `node --test scripts/perf-audit/*.test.mjs` (requires installed Chromium). They deliberately move a table boundary by 31px, replace a row and change scroll, and require the assertions to reject each change. They also verify departed-document export, static import deduplication, concurrent seed publication, which statements count as writes, and that phone navigation rejects a menu or overlay left over the page. Audit scenario errors exit non-zero.
 
 `query-counts` now chooses an available port, but its fixture build/database and D1 state are still shared within a checkout: serialize those runs. Separate worktrees have separate fixture state. The perf harness itself uses per-run databases and ports; avoid concurrent production rebuilds targeting the same database kind.
 
