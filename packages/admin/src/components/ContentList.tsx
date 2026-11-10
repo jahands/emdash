@@ -48,7 +48,7 @@ import {
 } from "../lib/content-list-columns.js";
 import { useConfirmedRequest } from "../lib/dialog-form.js";
 import { getEntryTitle } from "../lib/entryTitle.js";
-import { useDebouncedValue } from "../lib/hooks.js";
+import { useDebouncedValue, useStableCallback } from "../lib/hooks.js";
 import { inlineLabel } from "../lib/inline-label.js";
 import { usePluginAdmins } from "../lib/plugin-context.js";
 import { contentUrl } from "../lib/url.js";
@@ -438,7 +438,7 @@ export function ContentList({
 		if (!paged) return;
 		for (const row of rows) selectedRowsRef.current.set(row.id, row);
 	};
-	const toggleOne = (id: string) => {
+	const toggleOne = useStableCallback((id: string) => {
 		rememberRows(paginatedItems.filter((item) => item.id === id));
 		setSelectedIds((prev) => {
 			const next = new Set(prev);
@@ -446,7 +446,7 @@ export function ContentList({
 			else next.add(id);
 			return next;
 		});
-	};
+	});
 	const pageIds = paginatedItems.map((i) => i.id);
 	const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedIds.has(id));
 	const togglePage = () => {
@@ -458,17 +458,17 @@ export function ContentList({
 			return next;
 		});
 	};
-	const deleteRow = onDelete
-		? (id: string) =>
-				Promise.resolve(onDelete(id)).then(() =>
-					setSelectedIds((prev) => {
-						if (!prev.has(id)) return prev;
-						const next = new Set(prev);
-						next.delete(id);
-						return next;
-					}),
-				)
-		: undefined;
+	const requestDeleteRow = useStableCallback((id: string) =>
+		Promise.resolve(onDelete?.(id)).then(() =>
+			setSelectedIds((prev) => {
+				if (!prev.has(id)) return prev;
+				const next = new Set(prev);
+				next.delete(id);
+				return next;
+			}),
+		),
+	);
+	const deleteRow = onDelete ? requestDeleteRow : undefined;
 	const selectedCount = selectedIds.size;
 	const extensionColumns = React.useMemo(
 		() => resolveContentListColumns(pluginAdmins, collection, userRole, pluginStates),
@@ -1474,7 +1474,7 @@ interface ContentListItemProps {
 	extensionColumns?: ResolvedContentListColumn[];
 }
 
-function ContentListItem({
+const ContentListItem = React.memo(function ContentListItem({
 	item,
 	visibleItems,
 	collection,
@@ -1636,7 +1636,7 @@ function ContentListItem({
 			</td>
 		</tr>
 	);
-}
+});
 
 function ContentListCustomCell({
 	column,
