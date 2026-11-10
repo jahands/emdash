@@ -29,6 +29,18 @@ function largestSessionWindow(shifts) {
  * still visible; the audit reports both.
  */
 export function computeCls(shifts) {
+	if (shifts.some((shift) => shift.documentId)) {
+		const groups = Map.groupBy(shifts, (shift) => shift.documentId);
+		const results = Array.from(groups.values(), (entries) =>
+			computeCls(entries.map(({ documentId: _id, ...entry }) => entry)),
+		);
+		return {
+			cls: Math.max(0, ...results.map((result) => result.cls)),
+			clsAll: Math.max(0, ...results.map((result) => result.clsAll)),
+			shiftCount: results.reduce((sum, result) => sum + result.shiftCount, 0),
+			inputShiftCount: results.reduce((sum, result) => sum + result.inputShiftCount, 0),
+		};
+	}
 	const ordered = shifts.toSorted((a, b) => a.t - b.t);
 	const afterInputFiltered = ordered.filter((shift) => !shift.hadRecentInput);
 	return {
