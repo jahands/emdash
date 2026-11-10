@@ -94,6 +94,8 @@ import {
 	fetchRevision,
 	fetchMediaFolder,
 	fetchMediaFolders,
+	fetchSettings,
+	fetchSiteDomain,
 	createMediaFolder,
 	renameMediaFolder,
 	deleteMediaFolder,
@@ -113,6 +115,7 @@ import {
 	type RevisionListItem,
 	type RevisionListResponse,
 } from "./lib/api";
+import { fetchBackupOverview } from "./lib/api/backups.js";
 import {
 	fetchComments,
 	fetchCommentCounts,
@@ -2871,6 +2874,29 @@ const emailSettingsRoute = createRoute({
 	staticData: { pageTitle: msg`Email Settings` },
 });
 
+/**
+ * Loads an administrator's settings form data with its route, so the form first renders with
+ * its data instead of replacing a shorter loading row. Other roles see "Access denied" and
+ * skip the requests, and a failed request is left for the form to show.
+ */
+async function preloadAdminSettings(
+	queryClient: QueryClient,
+	queries: Array<{ queryKey: string[]; queryFn: () => Promise<unknown>; staleTime?: number }>,
+) {
+	const user = await queryClient
+		.ensureQueryData({
+			queryKey: ["currentUser"],
+			queryFn: fetchCurrentUser,
+			staleTime: 5 * 60 * 1000,
+			retry: false,
+		})
+		.catch(() => null);
+	if (!user || user.role < ROLE_ADMIN) return;
+	await Promise.all(queries.map((query) => queryClient.ensureQueryData(query).catch(() => null)));
+}
+
+const SITE_SETTINGS_QUERY = { queryKey: ["settings"], queryFn: fetchSettings, staleTime: Infinity };
+
 // Backup settings route
 const backupSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
@@ -2880,6 +2906,10 @@ const backupSettingsRoute = createRoute({
 			<BackupSettings />
 		</RequireAdmin>
 	),
+	loader: ({ context: { queryClient } }) =>
+		preloadAdminSettings(queryClient, [
+			{ queryKey: ["backup-overview"], queryFn: fetchBackupOverview },
+		]),
 	staticData: { pageTitle: msg`Backups` },
 });
 
@@ -2906,6 +2936,11 @@ const generalSettingsRoute = createRoute({
 			<GeneralSettings />
 		</RequireAdmin>
 	),
+	loader: ({ context: { queryClient } }) =>
+		preloadAdminSettings(queryClient, [
+			SITE_SETTINGS_QUERY,
+			{ queryKey: ["site-domain"], queryFn: fetchSiteDomain },
+		]),
 	staticData: { pageTitle: msg`General Settings` },
 });
 
@@ -2918,6 +2953,8 @@ const socialSettingsRoute = createRoute({
 			<SocialSettings />
 		</RequireAdmin>
 	),
+	loader: ({ context: { queryClient } }) =>
+		preloadAdminSettings(queryClient, [SITE_SETTINGS_QUERY]),
 	staticData: { pageTitle: msg`Social Settings` },
 });
 
@@ -2930,6 +2967,8 @@ const seoSettingsRoute = createRoute({
 			<SeoSettings />
 		</RequireAdmin>
 	),
+	loader: ({ context: { queryClient } }) =>
+		preloadAdminSettings(queryClient, [SITE_SETTINGS_QUERY]),
 	staticData: { pageTitle: msg`SEO Settings` },
 });
 
