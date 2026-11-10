@@ -1045,7 +1045,7 @@ function ContentListPage() {
 			dateField={collectionConfig.dateField}
 			sort={sort}
 			onSortChange={setSortOverride}
-			initialSearchQuery={searchTerm}
+			searchQuery={searchTerm}
 			onSearchChange={setSearchTerm}
 			statusFilter={statusFilter}
 			onStatusFilterChange={setStatusFilter}

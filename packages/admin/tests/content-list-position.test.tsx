@@ -212,4 +212,32 @@ describe("content list position", () => {
 		await expect.element(screen.getByText("Post p3-0", { exact: true })).toBeInTheDocument();
 		await waitFor(() => expect(router.state.location.search).toMatchObject({ page: 3 }));
 	});
+
+	it("shows the search that produced the rows after Back and Forward within the list", async () => {
+		const { screen, router } = await openList();
+		const input = screen.getByRole("searchbox", { name: "Search Posts" });
+
+		await input.fill("alpha");
+		await waitFor(() => expect(listRequests.at(-1)?.searchParams.get("q")).toBe("alpha"));
+		await screen.getByRole("button", { name: "Next page" }).click();
+		await waitFor(() => expect(router.state.location.search).toMatchObject({ page: 2 }));
+		await input.fill("beta");
+		await waitFor(() => expect(listRequests.at(-1)?.searchParams.get("q")).toBe("beta"));
+		await waitFor(() => expect(router.state.location.search).not.toHaveProperty("page"));
+
+		// Each check waits past the search debounce, so replaced text that came back would show.
+		const settle = () => new Promise((resolve) => setTimeout(resolve, 400));
+
+		router.history.back();
+		await waitFor(() => expect(listRequests.at(-1)?.searchParams.get("q")).toBe("alpha"));
+		await settle();
+		await expect.element(input).toHaveValue("alpha");
+		expect(listRequests.at(-1)?.searchParams.get("q")).toBe("alpha");
+
+		router.history.forward();
+		await waitFor(() => expect(listRequests.at(-1)?.searchParams.get("q")).toBe("beta"));
+		await settle();
+		await expect.element(input).toHaveValue("beta");
+		expect(listRequests.at(-1)?.searchParams.get("q")).toBe("beta");
+	});
 });

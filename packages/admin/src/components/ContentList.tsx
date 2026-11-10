@@ -175,9 +175,12 @@ export interface ContentListProps {
 	 * to already reflect the filter. Without it, the list falls back to
 	 * filtering the loaded page client-side (legacy behavior).
 	 */
-	/** The search box's starting text, such as a search restored from the browser history. */
-	initialSearchQuery?: string;
 	onSearchChange?: (q: string) => void;
+	/**
+	 * The search the caller applies, for server-side search. The search box shows it when it
+	 * changes for another reason than `onSearchChange`, such as Back restoring an earlier search.
+	 */
+	searchQuery?: string;
 	/**
 	 * Filter controls. The whole bar is opt-in: it only renders when
 	 * `onStatusFilterChange` is provided, keeping the component
@@ -301,7 +304,7 @@ export function ContentList({
 	sort,
 	onSortChange,
 	total,
-	initialSearchQuery = "",
+	searchQuery: appliedSearch = "",
 	onSearchChange,
 	statusFilter = "all",
 	onStatusFilterChange,
@@ -324,7 +327,7 @@ export function ContentList({
 	const { t, i18n: lingui } = useLingui();
 	const pluginAdmins = usePluginAdmins();
 	const [activeTab, setActiveTab] = React.useState<ViewTab>("all");
-	const [searchQuery, setSearchQuery] = React.useState(initialSearchQuery);
+	const [searchQuery, setSearchQuery] = React.useState(appliedSearch);
 	const [page, setPage] = React.useState(0);
 	const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
 	const [bulkTagSelection, setBulkTagSelection] = React.useState<SelectedBulkTagPost[] | null>(
@@ -347,6 +350,15 @@ export function ContentList({
 	React.useEffect(() => {
 		if (onSearchChange) onSearchChange(debouncedSearch.trim());
 	}, [debouncedSearch, onSearchChange]);
+
+	// A caller's search that differs from the last one this box reported came from elsewhere,
+	// so the box shows it. The debounced value then catches up to it instead of reporting the
+	// replaced text again.
+	const [seenAppliedSearch, setSeenAppliedSearch] = React.useState(appliedSearch);
+	if (appliedSearch !== seenAppliedSearch) {
+		setSeenAppliedSearch(appliedSearch);
+		if (appliedSearch !== debouncedSearch.trim()) setSearchQuery(appliedSearch);
+	}
 
 	// Reset page when search changes
 	const handleSearchChange = (e: React.ChangeEvent<HTMLInputElement>) => {
