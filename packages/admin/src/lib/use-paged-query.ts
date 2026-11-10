@@ -112,7 +112,10 @@ export function usePagedQuery<T>({
 	React.useEffect(() => {
 		if (isRecovering) setPageState({ resetKey, page: lastPage });
 	}, [isRecovering, lastPage, resetKey]);
-	const isPending = query.isLoading || query.isPlaceholderData || isRecovering;
+	const isPaused = query.fetchStatus === "paused";
+	const settledPosition = React.useRef({ page, perPage });
+	if (query.isSuccess && !query.isPlaceholderData) settledPosition.current = { page, perPage };
+	const isPending = !isPaused && (query.isLoading || query.isPlaceholderData || isRecovering);
 
 	const userChangedPosition = React.useRef(false);
 	const onSyncChange = React.useRef(sync?.onChange);
@@ -126,8 +129,14 @@ export function usePagedQuery<T>({
 	}, [page, perPage, syncedPage, syncedPerPage]);
 
 	const pagination: ListPagination = {
-		page: isRecovering ? lastPage : page,
-		perPage,
+		page:
+			isPaused && query.isPlaceholderData
+				? settledPosition.current.page
+				: isRecovering
+					? lastPage
+					: page,
+		perPage: isPaused && query.isPlaceholderData ? settledPosition.current.perPage : perPage,
+		isPaused,
 		totalCount,
 		isPending,
 		onPageChange(nextPage) {

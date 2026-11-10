@@ -7,6 +7,7 @@ export interface ListPagination {
 	perPage: number;
 	totalCount: number;
 	isPending: boolean;
+	isPaused?: boolean;
 	onPageChange: (page: number) => void;
 	onPageSizeChange: (perPage: number) => void;
 }
@@ -96,8 +97,14 @@ export function ListPaginationFooter({ pagination, pageSizes, label }: ListPagin
 	return (
 		<footer
 			ref={paginationRootRef}
-			className="sticky -bottom-6 z-10 -mx-6 mt-auto -mb-6 flex min-h-12 min-w-0 shrink-0 items-center border-t border-kumo-line bg-kumo-elevated px-6 py-1"
+			className="sticky -bottom-6 z-10 -mx-6 mt-auto -mb-6 flex flex-wrap min-h-12 min-w-0 shrink-0 items-center border-t border-kumo-line bg-kumo-elevated px-6 py-1"
 		>
+			{pagination.isPaused && (
+				<p
+					role="status"
+					className="w-full text-sm text-kumo-subtle"
+				>{t`You’re offline. Showing the last loaded page. We’ll retry when you reconnect.`}</p>
+			)}
 			<Pagination
 				page={pagination.page}
 				setPage={requestPage}
