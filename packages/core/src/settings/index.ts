@@ -456,17 +456,17 @@ async function loadSiteSettingsSnapshot(
 	const typedSettings = settings as Partial<SiteSettings>;
 
 	// Resolve media references
-	if (typedSettings.logo) {
-		typedSettings.logo = await resolveMediaReference(typedSettings.logo, db, storage);
-	}
-	if (typedSettings.favicon) {
-		typedSettings.favicon = await resolveMediaReference(typedSettings.favicon, db, storage);
-	}
+	const [logo, favicon, defaultOgImage] = await Promise.all([
+		typedSettings.logo ? resolveMediaReference(typedSettings.logo, db, storage) : undefined,
+		typedSettings.favicon ? resolveMediaReference(typedSettings.favicon, db, storage) : undefined,
+		typedSettings.seo?.defaultOgImage
+			? resolveMediaReference(typedSettings.seo.defaultOgImage, db, storage)
+			: undefined,
+	]);
+	if (typedSettings.logo) typedSettings.logo = logo;
+	if (typedSettings.favicon) typedSettings.favicon = favicon;
 	if (typedSettings.seo?.defaultOgImage) {
-		typedSettings.seo = {
-			...typedSettings.seo,
-			defaultOgImage: await resolveMediaReference(typedSettings.seo.defaultOgImage, db, storage),
-		};
+		typedSettings.seo = { ...typedSettings.seo, defaultOgImage };
 	}
 
 	return { data: typedSettings, version };
