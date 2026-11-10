@@ -3085,7 +3085,10 @@ function ContentTypesListPage() {
 				onRegisterOrphan={(slug) => registerOrphanMutation.mutate(slug)}
 				onReorder={(slugs) => reorderMutation.mutate(slugs)}
 			/>
-			<BlockTypeList blockTypes={blockTypes ?? []} isLoading={blockTypesLoading} />
+			{/* Waits for the table above, whose height isn't known until its rows arrive. */}
+			{!collectionsLoading && !orphansLoading && (
+				<BlockTypeList blockTypes={blockTypes ?? []} isLoading={blockTypesLoading} />
+			)}
 		</div>
 	);
 }
