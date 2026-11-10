@@ -13,7 +13,7 @@
  * redirects to the admin dashboard since authentication is handled externally.
  */
 
-import { Button, Input, Loader, Select } from "@cloudflare/kumo";
+import { Button, Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -227,17 +227,8 @@ export function LoginPage({ redirectUrl = "/_emdash/admin" }: LoginPageProps) {
 		helpText = t`Use your registered passkey to sign in securely.`;
 	}
 
-	// Show loading state while checking auth mode
-	if (authModeLoading || (authInfo?.authMode && authInfo.authMode !== "passkey")) {
-		return (
-			<div className="min-h-screen flex items-center justify-center bg-kumo-base p-4">
-				<div className="flex flex-col items-center">
-					<BrandLogo logoUrl={brandLogo} siteName={brandSiteName} className="h-10 mb-4" />
-					<Loader />
-				</div>
-			</div>
-		);
-	}
+	const authModePending =
+		authModeLoading || Boolean(authInfo?.authMode && authInfo.authMode !== "passkey");
 
 	return (
 		<div className="min-h-screen flex items-center justify-center bg-kumo-base p-4">
@@ -262,80 +253,94 @@ export function LoginPage({ redirectUrl = "/_emdash/admin" }: LoginPageProps) {
 				)}
 
 				{/* Login Card */}
-				<div className="bg-kumo-base border rounded-lg shadow-sm p-6">
-					{method === "passkey" && !activeProvider && (
-						<div className="space-y-6">
-							{/* Passkey Login */}
-							<PasskeyLogin
-								optionsEndpoint="/_emdash/api/auth/passkey/options"
-								verifyEndpoint="/_emdash/api/auth/passkey/verify"
-								onSuccess={handleSuccess}
-								buttonText={t`Sign in with Passkey`}
-							/>
-
-							{/* Divider */}
-							<div className="relative">
-								<div className="absolute inset-0 flex items-center">
-									<span className="w-full border-t" />
-								</div>
-								<div className="relative flex justify-center text-xs uppercase">
-									<span className="bg-kumo-base px-2 text-kumo-subtle">{t`Or continue with`}</span>
-								</div>
-							</div>
-
-							{/* Auth provider buttons */}
-							{buttonProviders.length > 0 && (
-								<div
-									className={`grid gap-3 ${buttonProviders.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
-								>
-									{buttonProviders.map((provider) => {
-										const Btn = provider.LoginButton!;
-										const hasForm = !!provider.LoginForm;
-										const selectProvider = () => setActiveProvider(provider.id);
-										return (
-											<div key={provider.id} onClick={hasForm ? selectProvider : undefined}>
-												<Btn />
-											</div>
-										);
-									})}
-								</div>
-							)}
-
-							{/* Magic Link Option */}
-							<Button
-								variant="ghost"
-								className="w-full justify-center"
-								type="button"
-								onClick={() => setMethod("magic-link")}
-							>
-								{t`Sign in with email link`}
-							</Button>
+				<div className="relative bg-kumo-base border rounded-lg shadow-sm p-6">
+					{authModePending && (
+						<div
+							role="status"
+							aria-label={t`Loading`}
+							className="absolute inset-6 flex flex-col justify-center gap-3"
+						>
+							<SkeletonLine blockHeight={36} minWidth={100} maxWidth={100} />
+							<SkeletonLine blockHeight={36} minWidth={100} maxWidth={100} />
 						</div>
 					)}
+					{/* Stays in the page while the auth mode loads so the card keeps its final size,
+					    but out of sight: external auth redirects away without showing these controls. */}
+					<div className={authModePending ? "invisible" : undefined} inert={authModePending}>
+						{method === "passkey" && !activeProvider && (
+							<div className="space-y-6">
+								{/* Passkey Login */}
+								<PasskeyLogin
+									optionsEndpoint="/_emdash/api/auth/passkey/options"
+									verifyEndpoint="/_emdash/api/auth/passkey/verify"
+									onSuccess={handleSuccess}
+									buttonText={t`Sign in with Passkey`}
+								/>
 
-					{/* Provider form (full card replacement, like magic link) */}
-					{method === "passkey" &&
-						activeProvider &&
-						(() => {
-							const provider = authProviderList.find((p) => p.id === activeProvider);
-							if (!provider?.LoginForm) return null;
-							const Form = provider.LoginForm;
-							return (
-								<div className="space-y-4">
-									<Form />
-									<Button
-										type="button"
-										variant="ghost"
-										className="w-full justify-center"
-										onClick={() => setActiveProvider(null)}
-									>
-										{t`Back to login`}
-									</Button>
+								{/* Divider */}
+								<div className="relative">
+									<div className="absolute inset-0 flex items-center">
+										<span className="w-full border-t" />
+									</div>
+									<div className="relative flex justify-center text-xs uppercase">
+										<span className="bg-kumo-base px-2 text-kumo-subtle">{t`Or continue with`}</span>
+									</div>
 								</div>
-							);
-						})()}
 
-					{method === "magic-link" && <MagicLinkForm onBack={() => setMethod("passkey")} />}
+								{/* Auth provider buttons */}
+								{buttonProviders.length > 0 && (
+									<div
+										className={`grid gap-3 ${buttonProviders.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
+									>
+										{buttonProviders.map((provider) => {
+											const Btn = provider.LoginButton!;
+											const hasForm = !!provider.LoginForm;
+											const selectProvider = () => setActiveProvider(provider.id);
+											return (
+												<div key={provider.id} onClick={hasForm ? selectProvider : undefined}>
+													<Btn />
+												</div>
+											);
+										})}
+									</div>
+								)}
+
+								{/* Magic Link Option */}
+								<Button
+									variant="ghost"
+									className="w-full justify-center"
+									type="button"
+									onClick={() => setMethod("magic-link")}
+								>
+									{t`Sign in with email link`}
+								</Button>
+							</div>
+						)}
+
+						{/* Provider form (full card replacement, like magic link) */}
+						{method === "passkey" &&
+							activeProvider &&
+							(() => {
+								const provider = authProviderList.find((p) => p.id === activeProvider);
+								if (!provider?.LoginForm) return null;
+								const Form = provider.LoginForm;
+								return (
+									<div className="space-y-4">
+										<Form />
+										<Button
+											type="button"
+											variant="ghost"
+											className="w-full justify-center"
+											onClick={() => setActiveProvider(null)}
+										>
+											{t`Back to login`}
+										</Button>
+									</div>
+								);
+							})()}
+
+						{method === "magic-link" && <MagicLinkForm onBack={() => setMethod("passkey")} />}
+					</div>
 				</div>
 
 				{/* Help text */}

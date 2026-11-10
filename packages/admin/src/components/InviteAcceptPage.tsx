@@ -21,15 +21,23 @@ type InviteStep = "verify" | "register" | "error";
 interface RegisterStepProps {
 	inviteData: InviteVerifyResult;
 	token: string;
+	/** False while the form only holds the card's size during verification. */
+	active: boolean;
 }
+
+const PENDING_INVITE: InviteVerifyResult = { email: "", role: 0, roleName: "" };
 
 function handleInviteSuccess() {
 	window.location.href = "/_emdash/admin";
 }
 
-function RegisterStep({ inviteData, token }: RegisterStepProps) {
+function RegisterStep({ inviteData, token, active }: RegisterStepProps) {
 	const { t } = useLingui();
 	const [name, setName] = React.useState("");
+	const nameInput = React.useRef<HTMLInputElement>(null);
+	React.useEffect(() => {
+		if (active) nameInput.current?.focus();
+	}, [active]);
 	const [passkeyComplete, setPasskeyComplete] = React.useState(false);
 	const buttonProviders = useAuthProviderList().filter((p) => p.LoginButton);
 
@@ -75,7 +83,7 @@ function RegisterStep({ inviteData, token }: RegisterStepProps) {
 				onChange={(e) => setName(e.target.value)}
 				placeholder={t`Jane Doe`}
 				autoComplete="name"
-				autoFocus
+				ref={nameInput}
 			/>
 
 			<div className="pt-4 border-t">
@@ -186,10 +194,12 @@ export function InviteAcceptPage() {
 	const { t } = useLingui();
 	const { logo: brandLogo, siteName: brandSiteName } = useAdminBranding();
 	const { token: urlToken } = useSearch({ strict: false });
-	const [step, setStep] = React.useState<InviteStep>("verify");
-	const [error, setError] = React.useState<string | undefined>();
+	const [step, setStep] = React.useState<InviteStep>(urlToken ? "verify" : "error");
+	const [error, setError] = React.useState<string | undefined>(() =>
+		urlToken ? undefined : t`No invite token provided`,
+	);
 	const [errorCode, setErrorCode] = React.useState<string | undefined>();
-	const [isLoading, setIsLoading] = React.useState(true);
+	const [isLoading, setIsLoading] = React.useState(Boolean(urlToken));
 	const [inviteData, setInviteData] = React.useState<InviteVerifyResult | null>(null);
 	const [token, setToken] = React.useState<string | null>(null);
 
@@ -225,31 +235,37 @@ export function InviteAcceptPage() {
 		}
 	};
 
-	if (isLoading) {
-		return (
-			<div className="min-h-screen flex items-center justify-center bg-kumo-base">
-				<div className="text-center">
-					<Loader />
-					<p className="mt-4 text-kumo-subtle">{t`Verifying your invite...`}</p>
-				</div>
-			</div>
-		);
-	}
-
 	return (
 		<div className="min-h-screen flex items-center justify-center bg-kumo-base p-4">
 			<div className="w-full max-w-md">
 				<div className="text-center mb-8">
 					<BrandLogo logoUrl={brandLogo} siteName={brandSiteName} className="h-10 mx-auto mb-2" />
 					<h1 className="text-2xl font-semibold text-kumo-default">
-						{step === "register" && t`Accept Invite`}
-						{step === "error" && t`Invite Error`}
+						{isLoading || step === "register" ? t`Accept Invite` : t`Invite Error`}
 					</h1>
 				</div>
 
-				<div className="bg-kumo-base border rounded-lg shadow-sm p-6">
-					{step === "register" && inviteData && token && (
-						<RegisterStep inviteData={inviteData} token={token} />
+				<div className="relative bg-kumo-base border rounded-lg shadow-sm p-6">
+					{isLoading && (
+						<div
+							role="status"
+							className="absolute inset-6 flex flex-col items-center justify-center text-center"
+						>
+							<Loader />
+							<p className="mt-4 text-kumo-subtle">{t`Verifying your invite...`}</p>
+						</div>
+					)}
+
+					{/* The form is laid out, out of sight, while the invite is verified, so the
+					    card already has its final size when the form appears. */}
+					{(isLoading || step === "register") && urlToken && (
+						<div className={isLoading ? "invisible" : undefined} inert={isLoading}>
+							<RegisterStep
+								inviteData={inviteData ?? PENDING_INVITE}
+								token={token ?? urlToken}
+								active={!isLoading}
+							/>
+						</div>
 					)}
 
 					{step === "error" && (
