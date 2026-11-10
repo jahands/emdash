@@ -420,7 +420,7 @@ export function AdminCommandPalette({ manifest }: AdminCommandPaletteProps) {
 
 	// Reset query when closing
 	React.useEffect(() => {
-		if (!open) {
+		if (open) {
 			setQuery("");
 		}
 	}, [open]);
