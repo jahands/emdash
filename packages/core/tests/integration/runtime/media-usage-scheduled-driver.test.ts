@@ -8,6 +8,7 @@ import { NodeSqliteCompatDatabase as Database } from "#node-sqlite";
 import { MediaUsageWorkRepository } from "../../../src/database/repositories/media-usage-work.js";
 import { MediaUsageRepository } from "../../../src/database/repositories/media-usage.js";
 import { OptionsRepository } from "../../../src/database/repositories/options.js";
+import { waitForDeferredTasks } from "../../../src/deferred-tasks.js";
 import { EmDashRuntime, type RuntimeDependencies } from "../../../src/emdash-runtime.js";
 import { activateMediaUsageCapture } from "../../../src/media/usage/activation.js";
 import { installMediaUsageCaptureTriggers } from "../../../src/media/usage/capture-triggers.js";
@@ -365,7 +366,7 @@ describe("media usage maintenance engine and Node heartbeat", () => {
 		});
 	});
 
-	it("processes a trigger-created job before returning from an authenticated write", async () => {
+	it("processes a trigger-created job after an authenticated write returns", async () => {
 		runtime = await EmDashRuntime.create(createDeps(null));
 		const fixture = await activateCollection(runtime, "fast_posts");
 
@@ -374,6 +375,7 @@ describe("media usage maintenance engine and Node heartbeat", () => {
 			status: "published",
 			data: { title: "Entry 1" },
 		});
+		await waitForDeferredTasks();
 
 		expect(result.success).toBe(true);
 		const contentId = result.data?.item.id;

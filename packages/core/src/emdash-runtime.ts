@@ -5778,10 +5778,28 @@ export class EmDashRuntime {
 		contentIds: readonly string[],
 		options: { captureActive?: boolean } = {},
 	): Promise<void> {
+		const captureActive =
+			options.captureActive ?? (await isIncrementalCaptureActive(this.db).catch(() => undefined));
+		if (captureActive === true) {
+			// With capture active, the write's capture trigger already committed a
+			// work record and marked the collection's coverage stale in the same
+			// statement, so usage readers see the projection as lagging until it is
+			// processed. Scheduled maintenance picks up whatever this misses.
+			after(() => this.processContentUsageWork(collection, contentIds, captureActive));
+			return;
+		}
+		await this.processContentUsageWork(collection, contentIds, captureActive);
+	}
+
+	private async processContentUsageWork(
+		collection: string,
+		contentIds: readonly string[],
+		captureActive: boolean | undefined,
+	): Promise<void> {
 		for (const contentId of new Set(contentIds)) {
 			try {
 				const work = await processMediaUsageWorkAfterWrite(this.db, collection, contentId, {
-					captureActive: options.captureActive,
+					captureActive,
 				});
 				if (work.outcome !== "inactive") continue;
 				await refreshContentMediaUsageAfterWrite(this.db, collection, contentId);

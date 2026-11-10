@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { handleMediaUsageSummaries } from "../../../src/api/handlers/media-usage.js";
 import { MediaUsageRepository } from "../../../src/database/repositories/media-usage.js";
 import { RevisionRepository } from "../../../src/database/repositories/revision.js";
+import { waitForDeferredTasks } from "../../../src/deferred-tasks.js";
 import type { EmDashRuntime } from "../../../src/emdash-runtime.js";
 import { setI18nConfig } from "../../../src/i18n/config.js";
 import {
@@ -766,6 +767,7 @@ describeEachDialect("runtime content media usage refresh", (dialect) => {
 		const updated = await runtime.handleContentUpdate("localized_posts", enId, {
 			data: { shared_hero: mediaRef("media-active-new") },
 		});
+		await waitForDeferredTasks();
 
 		expect(updated.success).toBe(true);
 		expect(await usageRepo.findCurrentUsageByMediaId("media-active-new")).toEqual(
