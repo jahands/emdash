@@ -81,3 +81,5 @@ export async function expectStableLayout(
 		);
 	}
 }
+
+export { captureVisibleState, assertVisibleState } from "./visible-state.js";
