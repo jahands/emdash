@@ -1,6 +1,6 @@
 import "vitest-browser-react";
 import { i18n } from "@lingui/core";
-import { afterAll, beforeAll } from "vitest";
+import { afterAll, beforeAll, beforeEach } from "vitest";
 
 // Initialize i18n for browser tests with empty English messages
 i18n.loadAndActivate({ locale: "en", messages: {} });
@@ -30,4 +30,11 @@ afterAll(() => {
 	throw new Error(
 		`This test file changed the page from ${pointerMediaAtStart} to ${now}, and later test files on the page inherit that. Turning touch emulation off resets hover and pointer to the machine's own devices, none on Linux CI. Put touch-screen tests in a .touch.test.tsx file.`,
 	);
+});
+
+// The top-level page that hosts the test frames is a few pixels taller than its
+// viewport. A test can leave it scrolled, and later tests would then start with the
+// frame's top edge outside the viewport.
+beforeEach(() => {
+	window.parent.scrollTo(0, 0);
 });
