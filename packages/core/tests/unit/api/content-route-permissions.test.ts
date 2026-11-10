@@ -181,7 +181,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 		};
 
 		it("returns 403 when an AUTHOR tries to clear publishedAt via null on their own post", async () => {
-			const handleContentGet = vi.fn().mockResolvedValue(ownedItem);
+			const handleContentGetForUpdate = vi.fn().mockResolvedValue(ownedItem);
 			const handleContentUpdate = vi.fn();
 
 			const request = new Request("http://localhost/_emdash/api/content/post/c1", {
@@ -195,7 +195,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 				request,
 				url: new URL(request.url),
 				locals: {
-					emdash: { handleContentUpdate, handleContentGet, db },
+					emdash: { handleContentUpdate, handleContentGetForUpdate, db },
 					user: makeUser(Role.AUTHOR),
 				},
 				cache: makeCache(),
@@ -206,7 +206,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 		});
 
 		it("returns 403 when an AUTHOR tries to set publishedAt on their own post", async () => {
-			const handleContentGet = vi.fn().mockResolvedValue(ownedItem);
+			const handleContentGetForUpdate = vi.fn().mockResolvedValue(ownedItem);
 			const handleContentUpdate = vi.fn();
 
 			const request = new Request("http://localhost/_emdash/api/content/post/c1", {
@@ -220,7 +220,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 				request,
 				url: new URL(request.url),
 				locals: {
-					emdash: { handleContentUpdate, handleContentGet, db },
+					emdash: { handleContentUpdate, handleContentGetForUpdate, db },
 					user: makeUser(Role.AUTHOR),
 				},
 				cache: makeCache(),
@@ -231,7 +231,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 		});
 
 		it("lets EDITOR set publishedAt", async () => {
-			const handleContentGet = vi.fn().mockResolvedValue(ownedItem);
+			const handleContentGetForUpdate = vi.fn().mockResolvedValue(ownedItem);
 			const handleContentUpdate = vi.fn().mockResolvedValue({
 				success: true,
 				data: {
@@ -251,7 +251,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 				request,
 				url: new URL(request.url),
 				locals: {
-					emdash: { handleContentUpdate, handleContentGet, db },
+					emdash: { handleContentUpdate, handleContentGetForUpdate, db },
 					user: makeUser(Role.EDITOR),
 				},
 				cache: makeCache(),
@@ -262,11 +262,12 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 				"post",
 				"c1",
 				expect.objectContaining({ publishedAt: "2019-03-15T10:30:00.000Z" }),
+				expect.anything(),
 			);
 		});
 
 		it("lets AUTHOR update their own post without date overrides", async () => {
-			const handleContentGet = vi.fn().mockResolvedValue(ownedItem);
+			const handleContentGetForUpdate = vi.fn().mockResolvedValue(ownedItem);
 			const handleContentUpdate = vi.fn().mockResolvedValue({
 				success: true,
 				data: { item: { id: "c1" }, _rev: "rev2" },
@@ -283,7 +284,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 				request,
 				url: new URL(request.url),
 				locals: {
-					emdash: { handleContentUpdate, handleContentGet, db },
+					emdash: { handleContentUpdate, handleContentGetForUpdate, db },
 					user: makeUser(Role.AUTHOR),
 				},
 				cache: makeCache(),
@@ -294,7 +295,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 		});
 
 		it("passes locale query through slug ownership lookup and update", async () => {
-			const handleContentGet = vi.fn().mockResolvedValue({
+			const handleContentGetForUpdate = vi.fn().mockResolvedValue({
 				success: true,
 				data: { item: { id: "fr-id", authorId: "user-1" }, _rev: "rev1" },
 			});
@@ -313,14 +314,14 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 				params: { collection: "post", id: "shared" },
 				request,
 				locals: {
-					emdash: { handleContentUpdate, handleContentGet, db },
+					emdash: { handleContentUpdate, handleContentGetForUpdate, db },
 					user: makeUser(Role.AUTHOR),
 				},
 				cache: makeCache(),
 			} as Parameters<typeof updateContent>[0]);
 
 			expect(response.status).toBe(200);
-			expect(handleContentGet).toHaveBeenCalledWith("post", "shared", "fr");
+			expect(handleContentGetForUpdate).toHaveBeenCalledWith("post", "shared", "fr");
 			expect(handleContentUpdate).toHaveBeenCalledWith(
 				"post",
 				"fr-id",
@@ -328,6 +329,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 					data: { title: "FR" },
 					locale: "fr",
 				}),
+				expect.anything(),
 			);
 		});
 	});
