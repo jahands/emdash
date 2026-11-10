@@ -17,6 +17,7 @@ import {
 import * as React from "react";
 
 import { createUploadPreviewUrl, formatFileSize } from "../lib/media-utils.js";
+import { cn } from "../lib/utils.js";
 import {
 	useMediaUploadQueue,
 	type MediaUploadJob,
@@ -220,7 +221,15 @@ export function MediaUploadDialog({
 			<Dialog
 				size="lg"
 				className="flex max-h-[min(88dvh,46rem)] flex-col overflow-hidden p-0"
-				style={{ width: "min(94vw, 42rem)" }}
+				style={
+					{
+						width: "min(94vw, 42rem)",
+						// Placed where the tallest dialog would be centered, so the dialog grows
+						// downward as files are added instead of re-centering.
+						top: "calc((100dvh - min(88dvh, 46rem)) / 2)",
+						"--tw-translate-y": "0px",
+					} as React.CSSProperties
+				}
 			>
 				<div className="flex shrink-0 items-start justify-between gap-4 border-b border-kumo-line px-6 py-5">
 					<div className="min-w-0">
@@ -309,7 +318,7 @@ export function MediaUploadDialog({
 					)}
 				</div>
 
-				<div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-kumo-line px-6 py-4">
+				<div className="grid shrink-0 gap-3 border-t border-kumo-line px-6 py-4 sm:flex sm:items-center sm:justify-between">
 					<p className="text-sm text-kumo-subtle tabular-nums" aria-hidden="true">
 						{rows.length > 0 ? t`${completedCount} of ${rows.length} complete` : t`No files added`}
 					</p>
@@ -329,15 +338,25 @@ export function MediaUploadDialog({
 								{t`Retry failed`}
 							</Button>
 						)}
-						{hasUnfinished ? (
-							<Button variant="outline" size="sm" onClick={cancelRemaining}>
-								{t`Cancel remaining`}
-							</Button>
-						) : (
-							<Button variant="primary" size="sm" onClick={() => onOpenChange(false)}>
-								{t`Done`}
-							</Button>
-						)}
+						{/* Both laid out in one cell, so swapping them doesn't move the other buttons. */}
+						<div className="grid justify-items-end">
+							<span
+								className={cn("col-start-1 row-start-1", !hasUnfinished && "invisible")}
+								inert={!hasUnfinished || undefined}
+							>
+								<Button variant="outline" size="sm" onClick={cancelRemaining}>
+									{t`Cancel remaining`}
+								</Button>
+							</span>
+							<span
+								className={cn("col-start-1 row-start-1", hasUnfinished && "invisible")}
+								inert={hasUnfinished || undefined}
+							>
+								<Button variant="primary" size="sm" onClick={() => onOpenChange(false)}>
+									{t`Done`}
+								</Button>
+							</span>
+						</div>
 					</div>
 				</div>
 

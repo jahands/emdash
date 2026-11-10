@@ -1125,6 +1125,25 @@ describe("MediaLibrary", () => {
 			pending.forEach(({ resolve }) => resolve());
 		});
 
+		it("refreshes the library once the upload dialog closes, not while files upload", async () => {
+			const onUpload = vi.fn().mockResolvedValue(undefined);
+			const onLocalUploadsDone = vi.fn();
+			const screen = await renderLibrary({ onUpload, onLocalUploadsDone });
+
+			screen.getByRole("button", { name: UPLOAD_FILES_PATTERN }).first().element().click();
+			await expect
+				.element(screen.getByRole("heading", { name: "Upload to Library" }))
+				.toBeInTheDocument();
+			setInputFiles(screen.getByLabelText("Browse files to upload").element() as HTMLInputElement, [
+				new File(["one"], "one.jpg", { type: "image/jpeg" }),
+			]);
+			await expect.element(screen.getByRole("button", { name: "Done" })).toBeVisible();
+			expect(onLocalUploadsDone).not.toHaveBeenCalled();
+
+			screen.getByRole("button", { name: "Done" }).element().click();
+			await vi.waitFor(() => expect(onLocalUploadsDone).toHaveBeenCalledTimes(1));
+		});
+
 		it("clears the page overlay when a file drag leaves the window", async () => {
 			const screen = await renderLibrary();
 			const transfer = new DataTransfer();

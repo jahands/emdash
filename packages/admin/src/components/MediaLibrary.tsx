@@ -98,6 +98,11 @@ export interface MediaLibraryProps {
 	items?: MediaItem[];
 	isLoading?: boolean;
 	onUpload?: (file: File, options?: MediaUploadOptions) => Promise<void> | void;
+	/**
+	 * Called when the upload dialog closes after at least one local upload finished. The
+	 * library is behind the dialog until then, so refreshing it earlier only reshuffles it.
+	 */
+	onLocalUploadsDone?: () => void;
 	onSelect?: (item: MediaItem) => void;
 	onItemUpdated?: () => void;
 	/** True when more local-library items can be fetched via cursor pagination */
@@ -184,6 +189,7 @@ export function MediaLibrary({
 	items = [],
 	isLoading,
 	onUpload,
+	onLocalUploadsDone,
 	onItemUpdated,
 	hasMore,
 	onLoadMore,
@@ -649,6 +655,7 @@ export function MediaLibrary({
 		},
 		[canMoveMedia, moveMutation, onMoveMedia],
 	);
+	const uploadedRef = React.useRef<"local" | "provider" | null>(null);
 	const uploadFile = React.useCallback(
 		async (file: File, options: { signal: AbortSignal }) => {
 			if (!uploadTarget) throw new Error("Upload target unavailable");
@@ -659,13 +666,19 @@ export function MediaLibrary({
 					folderId: uploadTarget.folderId,
 					...(uploadTarget.folderId ? { deduplicate: false } : {}),
 				});
+				uploadedRef.current = "local";
 				return;
 			}
 			await uploadToProvider(uploadTarget.id, file, undefined, options);
+			uploadedRef.current = "provider";
 		},
 		[onUpload, uploadTarget],
 	);
 	const handleUploadDialogClosed = React.useCallback(() => {
+		const uploaded = uploadedRef.current;
+		uploadedRef.current = null;
+		if (uploaded === "local") onLocalUploadsDone?.();
+		else if (uploaded === "provider") void refetchProviderMedia();
 		setEnqueueRequest(null);
 		setUploadTarget(null);
 		const returnTarget = returnFocusRef.current;
@@ -673,10 +686,7 @@ export function MediaLibrary({
 		window.requestAnimationFrame(() => {
 			(returnTarget?.isConnected ? returnTarget : mediaHeadingRef.current)?.focus();
 		});
-	}, []);
-	const handleUploadQueueIdle = React.useCallback(() => {
-		if (uploadTarget?.id !== "local") void refetchProviderMedia();
-	}, [refetchProviderMedia, uploadTarget?.id]);
+	}, [onLocalUploadsDone, refetchProviderMedia]);
 	const openCreateFolder = (event: React.MouseEvent<HTMLButtonElement>) => {
 		folderDialogReturnFocusRef.current = event.currentTarget;
 		setEditingFolder(null);
@@ -1303,7 +1313,6 @@ export function MediaLibrary({
 				}
 				onOpenChange={setUploadDialogOpen}
 				onCloseComplete={handleUploadDialogClosed}
-				onQueueIdle={handleUploadQueueIdle}
 				upload={uploadFile}
 			/>
 

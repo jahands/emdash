@@ -2467,12 +2467,16 @@ function MediaPage() {
 	const uploadMutation = useMutation({
 		mutationFn: ({ file, options }: { file: File; options?: MediaUploadOptions }) =>
 			uploadMedia(file, options),
-		onSuccess: () => {
-			setPage(1);
-			setRetainedTotalCount(0);
-			void queryClient.invalidateQueries({ queryKey: ["media"] });
-		},
+		// Shown when the upload dialog closes (`onLocalUploadsDone`); until then this only
+		// keeps a later visit from reusing the old list.
+		onSuccess: () =>
+			void queryClient.invalidateQueries({ queryKey: ["media"], refetchType: "none" }),
 	});
+	const handleLocalUploadsDone = React.useCallback(() => {
+		setPage(1);
+		setRetainedTotalCount(0);
+		void queryClient.invalidateQueries({ queryKey: ["media"] });
+	}, [queryClient]);
 	const resetMediaPage = React.useCallback(() => {
 		setPage(1);
 		setRetainedTotalCount(0);
@@ -2590,6 +2594,7 @@ function MediaPage() {
 			onUpload={async (file, options) => {
 				await uploadMutation.mutateAsync({ file, options });
 			}}
+			onLocalUploadsDone={handleLocalUploadsDone}
 			onLocalSearchChange={handleSearchChange}
 			onLocalMimeFilterChange={handleMimeFilterChange}
 			folders={folders}
