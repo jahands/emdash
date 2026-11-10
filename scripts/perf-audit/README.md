@@ -98,7 +98,7 @@ Seed caches publish completed directories atomically. Concurrent first seeds can
 
 `--react-profile` rebuilds with `react-dom/profiling` and disables fixture minification. Each document snapshot includes committed React fiber render counts by component name and a commit count. This measures committed work; aborted renders are not counted. Profiling changes execution cost, so compare like-for-like profiling runs and use normal builds for latency budgets. It cannot be combined with `--skip-build`.
 
-Category and tag fixtures paginate at 20 entries and fetch taxonomy terms without counts, matching the blog template's query behavior. Deliberate N+1/reference comparison pages are marked `fixtureOnly` in JSON and excluded from product ranking comparisons and from `--max-cls`. They remain measured as diagnostic controls.
+Category and tag fixtures paginate at 20 entries and fetch taxonomy terms without counts, matching the blog template's query behavior. The contributors and related comparison pairs (deliberate N+1 pages and their batched counterparts) are marked `fixtureOnly` in JSON and excluded from product ranking comparisons and from `--max-cls`. They remain measured as diagnostic controls.
 
 Run the harness regression checks with `node --test scripts/perf-audit/*.test.mjs` (requires installed Chromium). They deliberately move a table boundary by 31px, replace a row and change scroll, and require the assertions to reject each change. They also verify departed-document export, static import deduplication, concurrent seed publication, which statements count as writes, and that phone navigation rejects a menu or overlay left over the page. Audit scenario errors exit non-zero.
 

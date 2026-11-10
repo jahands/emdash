@@ -105,7 +105,7 @@ export function discoverTargets(params, { plugins = false } = {}) {
 		for (const path of paths) {
 			targets.push({
 				id: `public:${path}`,
-				fixtureOnly: path.includes("contributors-naive") || path.startsWith("/related"),
+				fixtureOnly: path.startsWith("/contributors") || path.startsWith("/related"),
 				pattern,
 				url: path,
 				kind: "route",
