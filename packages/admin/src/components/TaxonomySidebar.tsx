@@ -20,7 +20,12 @@ import { MagnifyingGlass, Plus, X } from "@phosphor-icons/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
-import { apiFetch, parseApiResponse, throwResponseError } from "../lib/api/client.js";
+import {
+	apiFetch,
+	parseApiResponse,
+	throwResponseError,
+	type AdminManifest,
+} from "../lib/api/client.js";
 import { createTerm, createTermTranslation, withLocale } from "../lib/api/taxonomies.js";
 import { inlineLabel } from "../lib/inline-label.js";
 import { resolveTaxonomyDefinitions } from "../lib/taxonomy-definitions.js";
@@ -113,9 +118,14 @@ function useApplicableTaxonomies(
 	activeLocale?: string,
 	defaultLocale?: string,
 ): TaxonomyDef[] {
+	const queryClient = useQueryClient();
 	const { data: taxonomies = [] } = useQuery({
 		queryKey: ["taxonomy-defs"],
 		queryFn: fetchTaxonomyDefs,
+		placeholderData: () =>
+			queryClient
+				.getQueryData<AdminManifest>(["manifest"])
+				?.taxonomies.map((taxonomy) => ({ ...taxonomy, id: taxonomy.id ?? taxonomy.name })),
 	});
 	return resolveTaxonomyDefinitions(taxonomies, activeLocale, defaultLocale).filter((taxonomy) =>
 		taxonomy.collections.includes(collection),
