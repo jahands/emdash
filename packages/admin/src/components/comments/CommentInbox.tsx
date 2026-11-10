@@ -353,7 +353,7 @@ export function CommentInbox({
 				<DataTable>
 					<thead>
 						<tr>
-							<th scope="col" className="w-10">
+							<th scope="col" className="w-12">
 								<Checkbox
 									checked={allOnPageSelected}
 									onCheckedChange={toggleAll}
@@ -361,13 +361,13 @@ export function CommentInbox({
 								/>
 							</th>
 							<th scope="col">{t`Comment`}</th>
-							<th scope="col" {...tertiaryColumn}>
+							<th scope="col" className="w-48" {...tertiaryColumn}>
 								{t`Content`}
 							</th>
-							<th scope="col" {...tertiaryColumn}>
+							<th scope="col" className="w-36" {...tertiaryColumn}>
 								{t`Date`}
 							</th>
-							<th scope="col" className="w-0">
+							<th scope="col" className="w-24">
 								<span className="sr-only">{t`Actions`}</span>
 							</th>
 						</tr>

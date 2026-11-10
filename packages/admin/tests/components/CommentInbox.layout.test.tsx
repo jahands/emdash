@@ -152,3 +152,58 @@ describe("Comment inbox at desktop width", () => {
 		expect(tray.scrollWidth).toBeLessThanOrEqual(tray.clientWidth);
 	});
 });
+
+describe("Comment inbox columns", () => {
+	function columnEdges() {
+		return Array.from(document.querySelectorAll("thead th"), (header) => {
+			const { left, right } = header.getBoundingClientRect();
+			return [Math.round(left), Math.round(right)];
+		});
+	}
+
+	function inbox(dir: "ltr" | "rtl", rows: AdminComment[], isLoading: boolean) {
+		return (
+			<div dir={dir} style={{ width: 1100 }}>
+				<CommentInbox
+					comments={rows}
+					counts={{ pending: 4, approved: 1, spam: 0, trash: 0 }}
+					isLoading={isLoading}
+					collections={{ posts: { label: "Posts" } }}
+					activeStatus="pending"
+					onStatusChange={vi.fn()}
+					collectionFilter=""
+					onCollectionFilterChange={vi.fn()}
+					searchQuery=""
+					onSearchChange={vi.fn()}
+					onCommentStatusChange={vi.fn().mockResolvedValue(undefined)}
+					onCommentDelete={vi.fn().mockResolvedValue(undefined)}
+					onBulkAction={vi.fn().mockResolvedValue(undefined)}
+					onLoadMore={vi.fn()}
+					isAdmin={true}
+					isStatusPending={false}
+					deleteError={null}
+					onDeleteErrorReset={vi.fn()}
+					bulkError={null}
+					onBulkErrorReset={vi.fn()}
+				/>
+			</div>
+		);
+	}
+
+	it.each(["ltr", "rtl"] as const)("keeps %s columns put as comments load", async (dir) => {
+		await page.viewport(1400, 800);
+		const screen = await render(inbox(dir, [], true));
+		await expect.element(screen.getByText("Loading comments...")).toBeVisible();
+		const loadingEdges = columnEdges();
+
+		await screen.rerender(inbox(dir, comments, false));
+		await expect.element(screen.getByRole("button", { name: "Sam", exact: true })).toBeVisible();
+		expect(columnEdges()).toEqual(loadingEdges);
+
+		await screen.rerender(inbox(dir, [comments[2]!], false));
+		await expect
+			.element(screen.getByRole("button", { name: "Sam", exact: true }))
+			.not.toBeInTheDocument();
+		expect(columnEdges()).toEqual(loadingEdges);
+	});
+});
