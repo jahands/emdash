@@ -1,3 +1,5 @@
+import { createRequire } from "node:module";
+
 import cloudflare from "@astrojs/cloudflare";
 import node from "@astrojs/node";
 import react from "@astrojs/react";
@@ -5,6 +7,10 @@ import { d1, r2 } from "@emdash-cms/cloudflare";
 import { defineConfig } from "astro/config";
 import emdash, { local } from "emdash/astro";
 import { postgres, sqlite } from "emdash/db";
+
+import { auditBuildGraph } from "../../scripts/perf-audit/build-graph.mjs";
+const require = createRequire(import.meta.url);
+const profiling = process.env.EMDASH_REACT_PROFILE === "1";
 
 const target = process.env.EMDASH_FIXTURE_TARGET ?? "sqlite";
 
@@ -38,6 +44,15 @@ const d1Integration = emdash({
 
 export default defineConfig({
 	output: "server",
+	vite: {
+		plugins: [auditBuildGraph()],
+		build: { minify: !profiling },
+		resolve: {
+			alias: profiling
+				? [{ find: /^react-dom\/client$/, replacement: require.resolve("react-dom/profiling") }]
+				: [],
+		},
+	},
 	adapter:
 		target === "d1"
 			? cloudflare()
