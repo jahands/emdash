@@ -11,6 +11,7 @@ import {
 	mkdirSync,
 	mkdtempSync,
 	readFileSync,
+	readdirSync,
 	rmSync,
 	statSync,
 } from "node:fs";
@@ -285,6 +286,8 @@ async function readSeededParams(db) {
 		).id;
 	return {
 		shortPostId: await postId("generated-post-0"),
+		firstAutosavePostId: await postId("generated-post-1"),
+		firstSavePostId: await postId("generated-post-2"),
 		longPostId: await postId(LONG_POST_SLUG),
 		productId: (
 			await db
@@ -337,19 +340,43 @@ async function preparePostgresRun({ workDir, seedDir, postgres, template, latenc
 			PGPASSWORD: decodeURIComponent(url.password),
 			DATABASE_URL: url.toString(),
 		},
+		async snapshot() {
+			await postgres.drop(`${database}_snap`);
+			await postgres.create(`${database}_snap`, database);
+		},
+		async restore() {
+			await postgres.drop(database);
+			await postgres.create(database, `${database}_snap`);
+		},
 		async cleanup() {
 			proxy?.stop();
 			await postgres.drop(database);
+			await postgres.drop(`${database}_snap`);
 		},
 	};
 }
 
+const databaseFiles = (dir) => readdirSync(dir).filter((name) => name.startsWith("data.db"));
+
 async function prepareSqliteRun({ workDir, seedDir }) {
 	cpSync(join(seedDir, "data.db"), join(workDir, "data.db"));
 	cpSync(join(seedDir, "uploads"), join(workDir, "uploads"), { recursive: true });
+	const snapshotDir = join(workDir, "snapshot");
 	return {
 		dbHandle: await openDatabase("sqlite", `file:${join(workDir, "data.db")}`),
 		env: {},
+		// The WAL and shared-memory files belong to the database state, so they move with it.
+		async snapshot() {
+			rmSync(snapshotDir, { recursive: true, force: true });
+			mkdirSync(snapshotDir);
+			for (const name of databaseFiles(workDir))
+				cpSync(join(workDir, name), join(snapshotDir, name));
+		},
+		async restore() {
+			for (const name of databaseFiles(workDir)) rmSync(join(workDir, name));
+			for (const name of databaseFiles(snapshotDir))
+				cpSync(join(snapshotDir, name), join(workDir, name));
+		},
 		async cleanup() {},
 	};
 }
@@ -435,6 +462,11 @@ export async function startSite({
 		await waitForTcp(port, child);
 		readyMs = performance.now() - bootAt;
 	};
+	const stopServer = async () => {
+		const stopped = new Promise((resolveExit) => child.once("exit", resolveExit));
+		child.kill("SIGTERM");
+		await stopped;
+	};
 	await launch();
 	const proxy = gzip ? await startGzipProxy(port) : null;
 	const baseUrl = `http://${HOST}:${proxy?.port ?? port}`;
@@ -445,9 +477,22 @@ export async function startSite({
 			return readyMs;
 		},
 		async restart() {
-			const stopped = new Promise((resolveExit) => child.once("exit", resolveExit));
-			child.kill("SIGTERM");
-			await stopped;
+			await stopServer();
+			await launch();
+		},
+		/**
+		 * Records the current database, including sessions created since start,
+		 * as the state `restore()` returns to. The server restarts either way.
+		 */
+		async snapshot() {
+			await stopServer();
+			await run.snapshot();
+			await launch();
+		},
+		/** Returns the database to the last snapshot and restarts the server. */
+		async restore() {
+			await stopServer();
+			await run.restore();
 			await launch();
 		},
 		loginToken,
@@ -456,6 +501,12 @@ export async function startSite({
 		takeQueries(phase) {
 			const events = queries.get(phase) ?? [];
 			queries.delete(phase);
+			return events;
+		},
+		/** Every query event not yet taken, such as writes that finished after their measurement. */
+		takeStrayQueries() {
+			const events = [...queries.values()].flat();
+			queries.clear();
 			return events;
 		},
 		serverOutput: () => serverOutput,

@@ -112,6 +112,26 @@ async function updateEntryBehindEditor(page, baseUrl, id) {
 		throw new Error(`Concurrent update failed (${response.status()}): ${await response.text()}`);
 }
 
+/**
+ * Fails when the entry is not published as seeded, so a scenario about the
+ * first change to a published entry cannot silently start from a later state.
+ */
+async function assertPublishedWithoutChanges(page, baseUrl, id) {
+	const response = await page.request.get(`${baseUrl}/_emdash/api/content/posts/${id}`);
+	if (!response.ok()) throw new Error(`Reading ${id} failed (${response.status()})`);
+	const body = await response.json();
+	const item = body.data?.item ?? body.item;
+	const hasChanges = item?.draftRevisionId && item.draftRevisionId !== item.liveRevisionId;
+	if (!item?.liveRevisionId || hasChanges)
+		throw new Error(`Entry ${id} must start published without draft changes; it did not`);
+}
+
+const editorTop = (page) =>
+	page
+		.locator(".ProseMirror")
+		.first()
+		.evaluate((element) => Math.round(element.getBoundingClientRect().top));
+
 const clickSave = (page) => page.getByRole("button", { name: SAVE_LABEL }).first().click();
 
 const contentSave = (url, method) =>
@@ -191,6 +211,48 @@ export const STATE_SCENARIOS = [
 			});
 			await rec.sample("autosaved");
 			rec.save();
+		},
+	},
+	{
+		id: "scenario:editor-first-save",
+		async run({ page, step, params, baseUrl, viewportName }) {
+			const rec = recorder(page, `editor-first-save-${viewportName}`);
+			const moved = [];
+			const editAndSave = async (label, id, save) => {
+				await assertPublishedWithoutChanges(page, baseUrl, id);
+				await step(`load ${label} entry`, () =>
+					page.goto(admin(`/content/posts/${id}`), { waitUntil: "commit" }),
+				);
+				await step(`${label}: focus editor`, () =>
+					page
+						.locator(".ProseMirror")
+						.first()
+						.click({ position: { x: 20, y: 20 } }),
+				);
+				await rec.sample(`${label}: before`);
+				const before = await editorTop(page);
+				await step(label, async () => {
+					const saved = page.waitForResponse(
+						(response) => contentSave(response.url(), response.request().method()),
+						{ timeout: 15_000 },
+					);
+					await page.keyboard.type("First change. ");
+					await save();
+					if (!(await saved).ok()) throw new Error(`${label} request failed`);
+				});
+				await rec.sample(`${label}: after`);
+				const after = await editorTop(page);
+				if (Math.abs(after - before) > 1)
+					moved.push(`${label} moved the editor ${after - before}px (top ${before} -> ${after})`);
+			};
+			await editAndSave("first autosave", params.firstAutosavePostId, async () => {});
+			// Phones show no Save button for a published entry with autosave, so autosave saves it there.
+			await editAndSave("first save", params.firstSavePostId, async () => {
+				const save = page.getByRole("button", { name: SAVE_LABEL }).first();
+				if (await save.isVisible()) await save.click();
+			});
+			rec.save();
+			if (moved.length > 0) throw new Error(moved.join("; "));
 		},
 	},
 	{

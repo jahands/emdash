@@ -12,6 +12,7 @@ import { parseArgs } from "node:util";
 
 import { chromium } from "@playwright/test";
 
+import { contentWrites } from "./isolation.mjs";
 import { NETWORK_PRESETS, VIEWPORTS, runMeasurement } from "./measure.mjs";
 import { startPostgres } from "./postgres.mjs";
 import { compareDbLatency, compareStability, compareToBaseline, renderSummary } from "./report.mjs";
@@ -169,6 +170,26 @@ async function signIn(browser, site) {
 	return storageState;
 }
 
+/**
+ * Loads one admin page and the manifest after a restore, so a measurement on a
+ * restored database starts from a warm server like the ones around it.
+ */
+async function warmServer(browser, site) {
+	const context = await browser.newContext({
+		baseURL: site.baseUrl,
+		storageState: site.storageState,
+		extraHTTPHeaders: { "x-perf-phase": "warmup" },
+	});
+	try {
+		for (const path of ["/_emdash/admin/", "/_emdash/api/manifest"]) {
+			const response = await context.request.get(path);
+			if (!response.ok()) throw new Error(`Warm-up ${path} failed (${response.status()})`);
+		}
+	} finally {
+		await context.close();
+	}
+}
+
 function gitLabel() {
 	const sha = execFileSync("git", ["rev-parse", "--short", "HEAD"], {
 		cwd: ROOT,
@@ -267,13 +288,25 @@ async function main() {
 	let serverDied = false;
 	try {
 		site.storageState = await signIn(browser, site);
+		await site.snapshot();
+		site.takeStrayQueries();
 		const total = selected.length * options.viewports.length * options.runs;
 		let completed = 0;
+		let dirty = false;
 		for (let pass = 0; pass < options.runs; pass++) {
 			const results = [];
 			for (const viewportName of options.viewports) {
 				for (const target of selected) {
-					if (options.cold) await site.restart();
+					if (contentWrites(site.takeStrayQueries()).length > 0) dirty = true;
+					let restoreMs;
+					if (dirty) {
+						const restoreStarted = performance.now();
+						await site.restore();
+						if (!options.cold) await warmServer(browser, site);
+						site.takeStrayQueries();
+						restoreMs = Math.round(performance.now() - restoreStarted);
+						dirty = false;
+					} else if (options.cold) await site.restart();
 					const result = await runMeasurement({
 						browser,
 						site,
@@ -283,11 +316,15 @@ async function main() {
 						pass,
 						outDir,
 					});
+					result.restoreMs = restoreMs;
+					if (result.stateWrites) dirty = true;
 					results.push(result);
 					completed++;
 					const cls = result.metrics ? result.metrics.cls.toFixed(3) : "n/a";
+					const restoredNote = restoreMs === undefined ? "" : ` restored=${restoreMs}ms`;
+					const wrote = result.stateWrites ? ` wrote=${result.stateWrites.tables.join("+")}` : "";
 					process.stdout.write(
-						`[${completed}/${total}] ${result.key} ${result.status} cls=${cls}\n`,
+						`[${completed}/${total}] ${result.key} ${result.status} cls=${cls}${restoredNote}${wrote}\n`,
 					);
 				}
 			}

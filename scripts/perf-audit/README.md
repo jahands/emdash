@@ -33,6 +33,18 @@ pnpm perf:audit --db-latency 20 --viewport desktop --baseline .perf-audit/result
 
 Admin routes that need a plugin or marketplace are listed as unreachable in `summary.md`; the default fixture does not configure them. `--plugins` builds the fixture with the forms plugin into a separate build directory and measures its admin pages and settings; the marketplace and registry routes stay unreachable. `.perf-audit/` is gitignored.
 
+## Database state between measurements
+
+Every measurement starts from the seeded database. One run serves all measurements from one server, so after any measurement that writes content, settings or other stored state, the harness stops the server, restores the database snapshot it took after signing in, restarts the server and loads one admin page to warm it. The audit user's own entry locks don't count as writes. The progress line shows `wrote=<tables>` for a measurement that wrote and `restored=<ms>` for one that started from a restore; `results.json` records both as `stateWrites` and `restoreMs`. Uploaded files are not restored, but restored media rows no longer reference them.
+
+Writes are found in the server's query log, so this also covers `--runs`: the second pass starts from the seed, not from the first pass's edits. A scenario about the first change to an entry should still check its starting state, as `scenario:editor-first-save` does, so it fails instead of measuring a later state if the restore misses something.
+
+`scenario:editor-first-save` makes the first change to two published entries: one saved by autosave, one by the Save button where there is one (phones save published entries by autosave). It fails if either save moves the editor, which catches movement right after the click that CLS ignores. Run it with a CLS budget:
+
+```bash
+pnpm perf:audit --skip-build --only scenario:editor-first-save --max-cls 0.05
+```
+
 ## State scenarios
 
 `scenarios-states.mjs` adds scenarios for states a plain page load never reaches: editor save, autosave, save failure and edit conflict; failed API requests; offline navigation to a screen that has not loaded; a chunk that is missing after a deploy; empty collections and searches; media uploads; dialogs and toasts. Each scenario saves a screenshot and the boxes of the elements it names at every sample to `.perf-audit/states/`, so movement that CLS excludes, such as a banner that appears right after a click, is still recorded.

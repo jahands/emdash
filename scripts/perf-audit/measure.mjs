@@ -5,6 +5,7 @@ import { gzipSync } from "node:zlib";
 
 import { initialJsBytes } from "./build-graph.mjs";
 import { mergeDocuments } from "./documents.mjs";
+import { contentWrites, writtenTables } from "./isolation.mjs";
 import { computeCls, summarizeDbWait } from "./metrics.mjs";
 import { captureGeometry, assertVisibleState } from "./visible-state.mjs";
 
@@ -411,6 +412,10 @@ export async function runMeasurement({
 			),
 		);
 	const queries = queryBreakdown(rawQueries);
+	const writes = contentWrites(rawQueries);
+	const stateWrites = writes.length
+		? { count: writes.length, tables: writtenTables(writes) }
+		: undefined;
 
 	if (!data) {
 		return {
@@ -421,6 +426,7 @@ export async function runMeasurement({
 			viewport: viewportName,
 			status: "error",
 			error: error ?? "collector unavailable",
+			stateWrites,
 			metrics: null,
 		};
 	}
@@ -501,6 +507,7 @@ export async function runMeasurement({
 		status,
 		error,
 		settleTimeouts,
+		stateWrites,
 		durationMs: Date.now() - startedAt,
 		processReadyMs: site.readyMs,
 		metrics: {
