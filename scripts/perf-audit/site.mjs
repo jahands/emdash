@@ -15,11 +15,14 @@ import {
 	statSync,
 } from "node:fs";
 import { createRequire } from "node:module";
+import { createConnection } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { normalizeSql } from "../query-counts-normalize.mjs";
+import { publishSeed } from "./cache.mjs";
+import { startGzipProxy } from "./gzip-proxy.mjs";
 import { availablePort } from "./ports.mjs";
 import { COUNTS, LONG_POST_SLUG, writeAuditSeed } from "./seed-data.mjs";
 
@@ -44,7 +47,7 @@ const fixtureImport = (specifier) => import(pathToFileURL(fixtureRequire.resolve
 
 const buildDirFor = (db) => join(FIXTURE_DIR, `.perf-audit/dist-${db}`);
 
-export function buildSite({ fonts, db }) {
+export function buildSite({ fonts, db, reactProfile }) {
 	if (!existsSync(CLI_PATH) || !existsSync(ADMIN_DIST)) {
 		throw new Error("Workspace packages are not built. Run `pnpm build` first.");
 	}
@@ -58,6 +61,7 @@ export function buildSite({ fonts, db }) {
 			env: {
 				...process.env,
 				EMDASH_FIXTURE_TARGET: db,
+				EMDASH_REACT_PROFILE: reactProfile ? "1" : "",
 				...(fonts ? { EMDASH_FIXTURE_FONTS: "1" } : {}),
 			},
 		},
@@ -79,12 +83,18 @@ async function openDatabase(kind, url) {
 function seedCacheKey() {
 	const hash = createHash("sha256");
 	hash.update(readFileSync(BASE_SEED_PATH));
+	hash.update("audit-seed-v2-search");
 	hash.update(readFileSync(join(import.meta.dirname, "seed-data.mjs")));
 	hash.update(String(statSync(CLI_PATH).size));
 	return hash.digest("hex").slice(0, 12);
 }
 
 async function addRowsTheSeedFormatCannotExpress(db) {
+	await db
+		.updateTable("_emdash_collections")
+		.set({ search_config: JSON.stringify({ enabled: true, titleField: "title" }) })
+		.where("slug", "=", "posts")
+		.execute();
 	const now = "2026-01-01T00:00:00.000Z";
 	const data = JSON.stringify({ welcomeDismissed: true });
 	const user = (id, email, name, role) => ({
@@ -141,37 +151,38 @@ async function addRowsTheSeedFormatCannotExpress(db) {
 
 /** Returns a directory holding a seeded `data.db`, `uploads/` and `seed.json`, built once per seed version. */
 export async function ensureSeed({ reseed }) {
-	const dir = join(CACHE_DIR, seedCacheKey());
-	if (existsSync(join(dir, "ready")) && !reseed) return dir;
-	rmSync(dir, { recursive: true, force: true });
-	mkdirSync(join(dir, "uploads"), { recursive: true });
-	const seedPath = writeAuditSeed({
-		dir,
-		uploadsDir: join(dir, "uploads"),
-		baseSeedPath: BASE_SEED_PATH,
-	});
-	const result = spawnSync(
-		process.execPath,
-		[
-			CLI_PATH,
-			"seed",
-			seedPath,
-			"--cwd",
-			dir,
-			"--database",
-			"./data.db",
-			"--uploads-dir",
-			"./uploads",
-		],
-		{ cwd: dir, stdio: "pipe", encoding: "utf8" },
+	return publishSeed(
+		CACHE_DIR,
+		`${seedCacheKey()}${reseed ? `-${Date.now()}` : ""}`,
+		async (dir) => {
+			mkdirSync(join(dir, "uploads"), { recursive: true });
+			const seedPath = writeAuditSeed({
+				dir,
+				uploadsDir: join(dir, "uploads"),
+				baseSeedPath: BASE_SEED_PATH,
+			});
+			const result = spawnSync(
+				process.execPath,
+				[
+					CLI_PATH,
+					"seed",
+					seedPath,
+					"--cwd",
+					dir,
+					"--database",
+					"./data.db",
+					"--uploads-dir",
+					"./uploads",
+				],
+				{ cwd: dir, stdio: "pipe", encoding: "utf8" },
+			);
+			if (result.status !== 0)
+				throw new Error(`emdash seed failed:\n${result.stdout}\n${result.stderr}`);
+			const db = await openDatabase("sqlite", `file:${join(dir, "data.db")}`);
+			await addRowsTheSeedFormatCannotExpress(db);
+			await db.destroy();
+		},
 	);
-	if (result.status !== 0)
-		throw new Error(`emdash seed failed:\n${result.stdout}\n${result.stderr}`);
-	const db = await openDatabase("sqlite", `file:${join(dir, "data.db")}`);
-	await addRowsTheSeedFormatCannotExpress(db);
-	await db.destroy();
-	mkdirSync(join(dir, "ready"));
-	return dir;
 }
 
 function migratePostgres(url) {
@@ -221,21 +232,25 @@ export async function ensurePostgresTemplate({ reseed, postgres, seedDir }) {
 	return template;
 }
 
-async function waitForHttp(url, child, serverOutput) {
+async function waitForTcp(port, child) {
 	const deadline = Date.now() + 60_000;
 	while (Date.now() < deadline) {
-		if (child.exitCode !== null)
-			throw new Error(`Server exited before it became ready:\n${serverOutput()}`);
-		try {
-			const response = await fetch(url, { signal: AbortSignal.timeout(5000) });
-			await response.arrayBuffer();
-			if (response.status < 500) return;
-		} catch {
-			// Not listening yet.
-		}
-		await new Promise((resolveDelay) => setTimeout(resolveDelay, 200));
+		if (child.exitCode !== null) throw new Error("Server exited before TCP readiness");
+		const ready = await new Promise((resolveReady) => {
+			const socket = createConnection({ host: HOST, port });
+			socket.once("connect", () => {
+				socket.destroy();
+				resolveReady(true);
+			});
+			socket.once("error", () => {
+				socket.destroy();
+				resolveReady(false);
+			});
+		});
+		if (ready) return;
+		await new Promise((resolveDelay) => setTimeout(resolveDelay, 100));
 	}
-	throw new Error(`${url} did not respond within 60s`);
+	throw new Error("Server TCP port did not open within 60s");
 }
 
 /**
@@ -337,7 +352,15 @@ async function prepareSqliteRun({ workDir, seedDir }) {
 	};
 }
 
-export async function startSite({ db, seedDir, postgres, template, latencyMs }) {
+export async function startSite({
+	db,
+	seedDir,
+	postgres,
+	template,
+	latencyMs,
+	role = "admin",
+	gzip = false,
+}) {
 	const entryPath = join(buildDirFor(db), "server/entry.mjs");
 	if (!existsSync(entryPath))
 		throw new Error(`No ${db} build found. Run without --skip-build first.`);
@@ -347,58 +370,83 @@ export async function startSite({ db, seedDir, postgres, template, latencyMs }) 
 			? await preparePostgresRun({ workDir, seedDir, postgres, template, latencyMs })
 			: await prepareSqliteRun({ workDir, seedDir });
 
+	await run.dbHandle
+		.updateTable("users")
+		.set({ role: { admin: 50, editor: 40, author: 30, contributor: 20, subscriber: 10 }[role] })
+		.where("id", "=", ADMIN_USER_ID)
+		.execute();
 	const loginToken = await createLoginToken(run.dbHandle);
 	const params = await readSeededParams(run.dbHandle);
 	await run.dbHandle.destroy();
 
 	const port = await availablePort();
-	const baseUrl = `http://${HOST}:${port}`;
+
 	const queries = new Map();
 	let serverOutput = "";
-	const child = spawn(process.execPath, [entryPath], {
-		cwd: workDir,
-		env: {
-			...process.env,
-			...run.env,
-			HOST,
-			PORT: String(port),
-			EMDASH_QUERY_LOG: "1",
-			EMDASH_ENCRYPTION_KEY: ENCRYPTION_KEY,
-		},
-		stdio: ["ignore", "pipe", "pipe"],
-	});
-	process.once("exit", () => child.kill());
-	let buffered = "";
-	child.stdout.on("data", (chunk) => {
-		buffered += chunk;
-		const lines = buffered.split("\n");
-		buffered = lines.pop() ?? "";
-		for (const line of lines) {
-			const index = line.indexOf(QUERY_LOG_PREFIX);
-			if (index === -1) continue;
-			try {
-				const event = JSON.parse(line.slice(index + QUERY_LOG_PREFIX.length));
-				if (!queries.has(event.phase)) queries.set(event.phase, []);
-				queries.get(event.phase).push({
-					sql: normalizeSql(event.sql),
-					route: `${event.method} ${event.route}`,
-					durationMs: event.durationMs,
-					startedAtMs: event.startedAtMs,
-					requestId: event.requestId,
-				});
-			} catch {
-				// A truncated line is not a measurement.
-			}
-		}
-	});
-	child.stderr.on("data", (chunk) => {
-		serverOutput = (serverOutput + chunk).slice(-4000);
-	});
+	let child;
+	let readyMs;
+	process.once("exit", () => child?.kill());
+	const launch = async () => {
+		const bootAt = performance.now();
+		child = spawn(process.execPath, [entryPath], {
+			cwd: workDir,
+			env: {
+				...process.env,
+				...run.env,
+				HOST,
+				PORT: String(port),
+				EMDASH_QUERY_LOG: "1",
+				EMDASH_ENCRYPTION_KEY: ENCRYPTION_KEY,
+			},
+			stdio: ["ignore", "pipe", "pipe"],
+		});
 
-	await waitForHttp(`${baseUrl}/`, child, () => serverOutput);
+		let buffered = "";
+		child.stdout.on("data", (chunk) => {
+			buffered += chunk;
+			const lines = buffered.split("\n");
+			buffered = lines.pop() ?? "";
+			for (const line of lines) {
+				const index = line.indexOf(QUERY_LOG_PREFIX);
+				if (index === -1) continue;
+				try {
+					const event = JSON.parse(line.slice(index + QUERY_LOG_PREFIX.length));
+					if (!queries.has(event.phase)) queries.set(event.phase, []);
+					queries.get(event.phase).push({
+						sql: normalizeSql(event.sql),
+						rawSql: event.sql,
+						route: `${event.method} ${event.route}`,
+						durationMs: event.durationMs,
+						startedAtMs: event.startedAtMs,
+						requestId: event.requestId,
+					});
+				} catch {
+					// A truncated line is not a measurement.
+				}
+			}
+		});
+		child.stderr.on("data", (chunk) => {
+			serverOutput = (serverOutput + chunk).slice(-4000);
+		});
+
+		await waitForTcp(port, child);
+		readyMs = performance.now() - bootAt;
+	};
+	await launch();
+	const proxy = gzip ? await startGzipProxy(port) : null;
+	const baseUrl = `http://${HOST}:${proxy?.port ?? port}`;
 
 	return {
 		baseUrl,
+		get readyMs() {
+			return readyMs;
+		},
+		async restart() {
+			const stopped = new Promise((resolveExit) => child.once("exit", resolveExit));
+			child.kill("SIGTERM");
+			await stopped;
+			await launch();
+		},
 		loginToken,
 		params,
 		/** Query events recorded for a measurement id, removed from the buffer. */
@@ -409,6 +457,7 @@ export async function startSite({ db, seedDir, postgres, template, latencyMs }) 
 		},
 		serverOutput: () => serverOutput,
 		async stop() {
+			await proxy?.stop();
 			child.kill("SIGTERM");
 			await Promise.race([
 				new Promise((resolveExit) => child.once("exit", resolveExit)),
