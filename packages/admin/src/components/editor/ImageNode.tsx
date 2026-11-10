@@ -15,7 +15,12 @@ import * as React from "react";
 
 import { fetchMediaItem } from "../../lib/api/media.js";
 import { useStableCallback } from "../../lib/hooks";
-import { canonicalMediaProviderId, getMediaPreviewUrl } from "../../lib/media-utils.js";
+import {
+	canonicalMediaProviderId,
+	getMediaPreviewUrl,
+	getMediaThumbnailUrl,
+	fallbackToOriginalThumbnail,
+} from "../../lib/media-utils.js";
 import { cn } from "../../lib/utils";
 import type { ImageAttributes, ImagePanelAttributes } from "./ImageDetailPanel";
 import { useCaptionField, useCaptionText } from "./useCaptionField.js";
@@ -79,13 +84,29 @@ function ImageNodeView({
 		canonicalMediaProviderId(node.attrs.provider) === "local"
 			? node.attrs.mediaId
 			: null;
-	const { data: currentMedia } = useQuery({
+	const { data: currentMedia, isPending: mediaPending } = useQuery({
 		queryKey: ["media", mediaId],
 		queryFn: ({ signal }) => fetchMediaItem(mediaId!, { signal }),
 		enabled: mediaId !== null,
 	});
 	const storedSrc = typeof node.attrs.src === "string" ? node.attrs.src : "";
-	const displaySrc = getMediaPreviewUrl(currentMedia?.url || storedSrc, currentMedia?.contentHash);
+	const originalSrc = getMediaPreviewUrl(currentMedia?.url || storedSrc, currentMedia?.contentHash);
+	const displaySrc =
+		mediaId && mediaPending
+			? undefined
+			: currentMedia
+				? getMediaThumbnailUrl(
+						currentMedia.url || storedSrc,
+						currentMedia.mimeType,
+						1600,
+						currentMedia.contentHash,
+					)
+				: originalSrc;
+
+	const imageRef = React.useRef<HTMLImageElement>(null);
+	React.useLayoutEffect(() => {
+		if (imageRef.current) delete imageRef.current.dataset.thumbFallback;
+	}, [displaySrc]);
 
 	/** Whether this node currently has its sidebar panel open */
 	const sidebarOpenRef = React.useRef(false);
@@ -254,8 +275,9 @@ function ImageNodeView({
 	const alignmentStyle: React.CSSProperties =
 		alignment === "center" ? { width: "fit-content", marginInline: "auto" } : {};
 	const { width, height, displayWidth, displayHeight } = node.attrs as ImageAttributes;
-	const originalWidth = imageDimension(width);
-	const originalHeight = imageDimension(height);
+	const originalWidth = imageDimension(width) ?? imageDimension(currentMedia?.width ?? undefined);
+	const originalHeight =
+		imageDimension(height) ?? imageDimension(currentMedia?.height ?? undefined);
 	const customWidth = imageDimension(displayWidth);
 	const customHeight = imageDimension(displayHeight);
 	const aspectRatio = originalWidth && originalHeight ? originalWidth / originalHeight : undefined;
@@ -287,7 +309,10 @@ function ImageNodeView({
 		>
 			<figure className="relative my-0!">
 				<img
+					ref={imageRef}
 					src={displaySrc}
+					loading={renderWidth && renderHeight ? "lazy" : "eager"}
+					onError={(event) => fallbackToOriginalThumbnail(event.currentTarget, originalSrc)}
 					alt={node.attrs.alt || ""}
 					title={node.attrs.title || ""}
 					className="rounded-lg max-w-full h-auto object-cover"

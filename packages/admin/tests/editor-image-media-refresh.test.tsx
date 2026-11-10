@@ -64,10 +64,34 @@ describe("Editor image media refresh", () => {
 
 		void render(<TestEditor />);
 
-		const image = await screen.findByRole("img", { name: "Workshop tools" });
-		await vi.waitFor(() =>
-			expect(image).toHaveAttribute("src", `${MEDIA_URL}?_emdash_media=sha1%3Acropped`),
-		);
+		await screen.findByRole("img", { name: "Workshop tools" });
+		await vi.waitFor(() => {
+			const src = screen.getByRole("img", { name: "Workshop tools" }).getAttribute("src");
+			expect(src).toBeTruthy();
+			const url = new URL(src!, location.origin);
+			expect(url.searchParams.get("href") || url.href).toBe(
+				`${location.origin}${MEDIA_URL}?_emdash_media=sha1%3Acropped`,
+			);
+		});
+		expect(screen.getByRole("img", { name: "Workshop tools" })).toHaveAttribute("width", "467");
+		expect(screen.getByRole("img", { name: "Workshop tools" })).toHaveAttribute("height", "311");
 		expect(fetchMediaItem).toHaveBeenCalledWith(MEDIA_ID, { signal: expect.any(AbortSignal) });
 	});
+});
+
+it("does not request the stored image before media metadata resolves", async () => {
+	vi.mocked(fetchMediaItem).mockImplementation(() => new Promise(() => {}));
+	void render(<TestEditor />);
+	const image = await screen.findByRole("img", { name: "Workshop tools" });
+	expect(image.getAttribute("src")).toBeNull();
+});
+
+it("renders a stored URL when metadata fails, including images without dimensions", async () => {
+	vi.mocked(fetchMediaItem).mockRejectedValue(new Error("Missing media"));
+	void render(<TestEditor />);
+	const image = await screen.findByRole("img", { name: "Workshop tools" });
+	await vi.waitFor(() =>
+		expect(screen.getByRole("img", { name: "Workshop tools" })).toHaveAttribute("src", MEDIA_URL),
+	);
+	expect(image.getAttribute("width")).toBeNull();
 });
