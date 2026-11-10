@@ -92,16 +92,14 @@ export const SCENARIOS = [
 	},
 	{
 		id: "scenario:editor",
-		async run({ page, step, viewportName, params }) {
+		async run({ page, step, viewportName, params, typeKeys }) {
 			await step("load editor", () =>
 				page.goto(admin(`/content/posts/${params.shortPostId}`), { waitUntil: "commit" }),
 			);
 			const editor = page.locator(".ProseMirror").first();
 			await step("focus editor", () => editor.click({ position: { x: 20, y: 20 } }));
 			await step("type paragraph", () =>
-				page.keyboard.type("Typing a new sentence to watch the toolbar and save state. ", {
-					delay: 12,
-				}),
+				typeKeys(editor, "Typing a new sentence to watch the toolbar and save state. "),
 			);
 			await step("select and bold", async () => {
 				await page.keyboard.press("Shift+Home");
@@ -127,14 +125,14 @@ export const SCENARIOS = [
 	},
 	{
 		id: "scenario:editor-long-post",
-		async run({ page, step, params }) {
+		async run({ page, step, params, typeKeys }) {
 			await step("load long editor", () =>
 				page.goto(admin(`/content/posts/${params.longPostId}`), { waitUntil: "commit" }),
 			);
 			const editor = page.locator(".ProseMirror").first();
 			await step("focus and type", async () => {
 				await editor.click({ position: { x: 20, y: 20 } });
-				await page.keyboard.type("Typing into a very long post. ", { delay: 12 });
+				await typeKeys(editor, "Typing into a very long post. ");
 			});
 		},
 	},

@@ -1,9 +1,30 @@
 /* Runs in every audited page before any app script. Keep it allocation-light: it shares the main thread with what it measures. */
+const LEADING_SLASH = /^\//;
 const SKIP_CLASS = /[:[\]/.!]/;
 
 (() => {
 	if (window.__perfAudit) return;
 
+	const reactProfile = { commits: 0, renders: {} };
+	if (window.__auditReactProfile)
+		window.__REACT_DEVTOOLS_GLOBAL_HOOK__ = {
+			supportsFiber: true,
+			inject: () => 1,
+			onCommitFiberUnmount() {},
+			onCommitFiberRoot(_renderer, root) {
+				reactProfile.commits++;
+				const visit = (fiber) => {
+					if (!fiber) return;
+					if (fiber.flags & 1 && typeof fiber.type === "function") {
+						const name = fiber.type.displayName || fiber.type.name || "anonymous";
+						reactProfile.renders[name] = (reactProfile.renders[name] ?? 0) + 1;
+					}
+					visit(fiber.child);
+					visit(fiber.sibling);
+				};
+				visit(root.current);
+			},
+		};
 	const shifts = [];
 	const largestPaints = [];
 	const longTasks = [];
@@ -11,6 +32,21 @@ const SKIP_CLASS = /[:[\]/.!]/;
 	const paints = {};
 	let lastActivity = performance.now();
 	let currentStep = "load";
+	const documentId = crypto.randomUUID();
+	const events = [];
+	observe(
+		"event",
+		(entry) =>
+			events.push({
+				name: entry.name,
+				t: entry.startTime,
+				duration: entry.duration,
+				processingMs: entry.processingEnd - entry.processingStart,
+				interactionId: entry.interactionId,
+				step: currentStep,
+			}),
+		{ durationThreshold: 16 },
+	);
 
 	function shortName(node) {
 		if (!node || node.nodeType !== 1) return node?.nodeName?.toLowerCase() ?? "(none)";
@@ -161,6 +197,25 @@ const SKIP_CLASS = /[:[\]/.!]/;
 		},
 		idleFor: () => performance.now() - lastActivity,
 		snapshot: () => ({
+			reactProfile,
+			language: document.documentElement.lang,
+			direction: document.documentElement.dir,
+			dark: matchMedia("(prefers-color-scheme: dark)").matches,
+			entryScripts: [
+				...document.querySelectorAll(
+					'script[type="module"][src], astro-island[renderer-url], astro-island[component-url]',
+				),
+			]
+				.flatMap((element) => [
+					element.getAttribute("src"),
+					element.getAttribute("renderer-url"),
+					element.getAttribute("component-url"),
+				])
+				.filter(Boolean)
+				.map((url) => new URL(url, location.href).pathname.replace(LEADING_SLASH, "")),
+			documentId,
+			timeOrigin: performance.timeOrigin,
+			events,
 			shifts,
 			largestPaints,
 			longTasks,
@@ -169,4 +224,25 @@ const SKIP_CLASS = /[:[\]/.!]/;
 			finalPath: location.pathname + location.search,
 		}),
 	};
+	const archiveKey = "perf-audit-previous-document";
+	try {
+		const previous = sessionStorage.getItem(archiveKey);
+		if (previous) {
+			window.__auditFlushed = window.__auditDocument?.(JSON.parse(previous)).then(() => {
+				if (sessionStorage.getItem(archiveKey) === previous) sessionStorage.removeItem(archiveKey);
+				return undefined;
+			});
+		}
+	} catch {
+		/* Storage can be unavailable on opaque origins. */
+	}
+	addEventListener("pagehide", () => {
+		const snapshot = window.__perfAudit.snapshot();
+		try {
+			sessionStorage.setItem(archiveKey, JSON.stringify(snapshot));
+		} catch {
+			/* The binding still covers documents with unavailable storage. */
+		}
+		window.__auditDocument?.(snapshot);
+	});
 })();
