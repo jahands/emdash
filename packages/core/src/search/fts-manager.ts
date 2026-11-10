@@ -11,11 +11,22 @@ import { isSqlite, tableExists as dialectTableExists } from "../database/dialect
 import type { Database } from "../database/types.js";
 import { validateIdentifier } from "../database/validate.js";
 import { isStoragelessFieldRow } from "../schema/types.js";
+import { chunks } from "../utils/chunks.js";
 import { normalizeSearchError } from "./errors.js";
 import { SEARCH_TOKENIZERS } from "./types.js";
 import type { SearchConfig, SearchTokenizer } from "./types.js";
 
 const DEFAULT_SEARCH_TOKENIZER: SearchTokenizer = "porter unicode61";
+
+/** Each collection adds two scalar subqueries to the verification statement. */
+const FTS_VERIFY_BATCH_SIZE = 16;
+
+interface IndexCounts {
+	contentRows: number;
+	ftsRows: number;
+}
+
+type IndexState = { exists: false } | ({ exists: true } & IndexCounts);
 
 function isSearchTokenizer(value: unknown): value is SearchTokenizer {
 	return SEARCH_TOKENIZERS.some((tokenizer) => tokenizer === value);
@@ -688,13 +699,25 @@ export class FTSManager {
 	async verifyAndRepairIndex(collectionSlug: string): Promise<boolean> {
 		if (!isSqlite(this.db)) return false;
 		this.validateInputs(collectionSlug);
-		const ftsTable = this.getFtsTableName(collectionSlug);
-		const ftsDocsizeTable = `${ftsTable}_docsize`;
-		const contentTable = this.getContentTableName(collectionSlug);
 		const fields = await this.getSearchableFields(collectionSlug);
 		const config = await this.getSearchConfig(collectionSlug);
 
 		if (!(await this.ftsTableExists(collectionSlug))) {
+			return this.repairIndex(collectionSlug, fields, config, { exists: false });
+		}
+
+		const [counts] = await this.readIndexCounts([collectionSlug]);
+		return this.repairIndex(collectionSlug, fields, config, { exists: true, ...counts });
+	}
+
+	/** Rebuilds an index that is missing or out of step with its content table. */
+	private async repairIndex(
+		collectionSlug: string,
+		fields: string[],
+		config: SearchConfig | null,
+		state: IndexState,
+	): Promise<boolean> {
+		if (!state.exists) {
 			if (!config?.enabled || fields.length === 0) {
 				return false;
 			}
@@ -706,21 +729,9 @@ export class FTSManager {
 
 		// Row count parity check against the docsize shadow table, which
 		// tracks rows actually present in the full-text index.
-		const contentCount = await sql<{ count: number }>`
-			SELECT COUNT(*) as count FROM ${sql.ref(contentTable)}
-			WHERE deleted_at IS NULL
-		`.execute(this.db);
-
-		const ftsCount = await sql<{ count: number }>`
-			SELECT COUNT(*) as count FROM "${sql.raw(ftsDocsizeTable)}"
-		`.execute(this.db);
-
-		const contentRows = contentCount.rows[0]?.count ?? 0;
-		const ftsRows = ftsCount.rows[0]?.count ?? 0;
-
-		if (contentRows !== ftsRows) {
+		if (state.contentRows !== state.ftsRows) {
 			console.warn(
-				`FTS index for "${collectionSlug}" has ${ftsRows} rows but content table has ${contentRows}. Rebuilding.`,
+				`FTS index for "${collectionSlug}" has ${state.ftsRows} rows but content table has ${state.contentRows}. Rebuilding.`,
 			);
 			if (fields.length > 0) {
 				await this.rebuildIndex(collectionSlug, fields, config?.weights, config?.tokenize);
@@ -729,6 +740,38 @@ export class FTSManager {
 		}
 
 		return false;
+	}
+
+	/** Reads the content and FTS row counts of several collections in one statement. */
+	private async readIndexCounts(collectionSlugs: string[]): Promise<IndexCounts[]> {
+		const selections = collectionSlugs.flatMap((slug, index) => [
+			sql`(
+				SELECT COUNT(*) FROM ${sql.ref(this.getContentTableName(slug))}
+				WHERE deleted_at IS NULL
+			) AS ${sql.ref(`content_${index}`)}`,
+			sql`(
+				SELECT COUNT(*) FROM ${sql.ref(`${this.getFtsTableName(slug)}_docsize`)}
+			) AS ${sql.ref(`fts_${index}`)}`,
+		]);
+		const result = await sql<Record<string, number>>`
+			SELECT ${sql.join(selections)}
+		`.execute(this.db);
+		const row = result.rows[0] ?? {};
+		return collectionSlugs.map((_, index) => ({
+			contentRows: row[`content_${index}`] ?? 0,
+			ftsRows: row[`fts_${index}`] ?? 0,
+		}));
+	}
+
+	private async existingFtsTables(collectionSlugs: string[]): Promise<Set<string>> {
+		const result = await sql<{ name: string }>`
+			SELECT name FROM sqlite_master
+			WHERE type = 'table'
+			AND name IN (SELECT value FROM json_each(${JSON.stringify(
+				collectionSlugs.map((slug) => this.getFtsTableName(slug)),
+			)}))
+		`.execute(this.db);
+		return new Set(result.rows.map((row) => row.name));
 	}
 
 	/**
@@ -740,22 +783,89 @@ export class FTSManager {
 	async verifyAndRepairAll(): Promise<number> {
 		if (!isSqlite(this.db)) return 0;
 
-		const collections = await this.db
-			.selectFrom("_emdash_collections")
-			.select("slug")
-			.where("search_config", "is not", null)
+		const rows = await this.db
+			.selectFrom("_emdash_collections as c")
+			.leftJoin("_emdash_fields as f", (join) =>
+				join.onRef("f.collection_id", "=", "c.id").on("f.searchable", "=", 1),
+			)
+			.select([
+				"c.slug",
+				"c.search_config",
+				"c.title_field",
+				"f.slug as field_slug",
+				"f.type as field_type",
+				"f.validation as field_validation",
+			])
+			.where("c.search_config", "is not", null)
 			.execute();
 
-		let repaired = 0;
-		for (const { slug } of collections) {
-			const config = await this.getSearchConfig(slug);
-			if (!config?.enabled) continue;
+		const indexes = new Map<string, { config: SearchConfig; fields: string[] }>();
+		for (const row of rows) {
+			let index = indexes.get(row.slug);
+			if (!index) {
+				const config = parseSearchConfig(row.search_config!, row.title_field);
+				if (!config?.enabled) continue;
+				try {
+					this.validateInputs(row.slug);
+				} catch (error) {
+					console.error(`Failed to verify/repair FTS index for "${row.slug}":`, error);
+					continue;
+				}
+				index = { config, fields: [] };
+				indexes.set(row.slug, index);
+			}
+			if (
+				row.field_slug &&
+				row.field_type &&
+				!isStoragelessFieldRow({ type: row.field_type, validation: row.field_validation })
+			) {
+				index.fields.push(row.field_slug);
+			}
+		}
 
+		let repaired = 0;
+		const repair = async (slug: string, state: IndexState): Promise<void> => {
+			const index = indexes.get(slug)!;
 			try {
-				const wasRepaired = await this.verifyAndRepairIndex(slug);
-				if (wasRepaired) repaired++;
+				if (await this.repairIndex(slug, index.fields, index.config, state)) repaired++;
 			} catch (error) {
 				console.error(`Failed to verify/repair FTS index for "${slug}":`, error);
+			}
+		};
+
+		const slugs = [...indexes.keys()];
+		const present: string[] = [];
+		for (const batch of chunks(slugs, FTS_VERIFY_BATCH_SIZE)) {
+			// oxlint-disable-next-line no-await-in-loop -- repairs below write, so batches stay sequential
+			const existing = await this.existingFtsTables(batch);
+			for (const slug of batch) {
+				if (existing.has(this.getFtsTableName(slug))) present.push(slug);
+				// oxlint-disable-next-line no-await-in-loop -- rebuilds are serialized writes
+				else await repair(slug, { exists: false });
+			}
+		}
+
+		for (const batch of chunks(present, FTS_VERIFY_BATCH_SIZE)) {
+			let counts: IndexCounts[];
+			try {
+				// oxlint-disable-next-line no-await-in-loop -- rebuilds in the loop below write
+				counts = await this.readIndexCounts(batch);
+			} catch {
+				// One unreadable table fails the whole statement; recheck these
+				// individually so a corrupt index cannot hide a healthy one.
+				for (const slug of batch) {
+					try {
+						// oxlint-disable-next-line no-await-in-loop -- rebuilds are serialized writes
+						if (await this.verifyAndRepairIndex(slug)) repaired++;
+					} catch (error) {
+						console.error(`Failed to verify/repair FTS index for "${slug}":`, error);
+					}
+				}
+				continue;
+			}
+			for (const [position, slug] of batch.entries()) {
+				// oxlint-disable-next-line no-await-in-loop -- rebuilds are serialized writes
+				await repair(slug, { exists: true, ...counts[position] });
 			}
 		}
 
