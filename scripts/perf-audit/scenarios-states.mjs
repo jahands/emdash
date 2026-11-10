@@ -19,6 +19,7 @@ const fixtureRequire = createRequire(join(ROOT, "fixtures/perf-site/package.json
 const admin = (path) => `/_emdash/admin${path}`;
 const API_HEADERS = { "X-EmDash-Request": "1", "Content-Type": "application/json" };
 const SAVE_LABEL = /^Save$/;
+const SAVE_ANYWAY_LABEL = /^Save anyway$/;
 const SAVE_PREFIX = /^Save/;
 const UPLOAD_PREFIX = /^Upload/;
 const CONTENT_ITEM_PATH = /\/_emdash\/api\/content\/posts\/[^/]+$/;
@@ -133,8 +134,6 @@ const editorTop = (page) =>
 		.locator(".ProseMirror")
 		.first()
 		.evaluate((element) => Math.round(element.getBoundingClientRect().top));
-
-const clickSave = (page) => page.getByRole("button", { name: SAVE_LABEL }).first().click();
 
 const contentSave = (url, method) =>
 	(method === "PUT" || method === "PATCH" || method === "POST") &&
@@ -286,10 +285,30 @@ export const STATE_SCENARIOS = [
 			await step("change entry elsewhere", () =>
 				updateEntryBehindEditor(page, baseUrl, params.shortPostId),
 			);
-			await step("save (conflict)", () => clickSave(page));
+			// Phones show no Save button for a published entry with autosave, so autosave meets the
+			// conflict there.
+			await step("save (conflict)", async () => {
+				const refused = page.waitForResponse(
+					(response) =>
+						contentSave(response.url(), response.request().method()) && response.status() === 409,
+					{ timeout: 15_000 },
+				);
+				const save = page.getByRole("button", { name: SAVE_LABEL }).first();
+				if (await save.isVisible()) await save.click();
+				await refused;
+			});
 			await rec.sample("conflict");
 			await step("settle after conflict", () => page.waitForTimeout(1500));
 			await rec.sample("conflict settled");
+			await step("save anyway", async () => {
+				const saved = page.waitForResponse(
+					(response) => contentSave(response.url(), response.request().method()),
+					{ timeout: 15_000 },
+				);
+				await page.getByRole("alert").getByRole("button", { name: SAVE_ANYWAY_LABEL }).click();
+				if (!(await saved).ok()) throw new Error("Save anyway request failed");
+			});
+			await rec.sample("conflict resolved");
 			rec.save();
 		},
 	},

@@ -351,6 +351,106 @@ describe("ContentEditor mobile action bar", () => {
 		expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
 	});
 
+	async function renderFailingPublishedEditor(failure: "error" | "conflict", locale = "en") {
+		const saves: unknown[] = [];
+		function FailingSaveHarness() {
+			const [failed, setFailed] = React.useState(false);
+			return (
+				<>
+					<button type="button" onClick={() => setFailed(true)}>
+						Fail save
+					</button>
+					<ContentEditor
+						collection="posts"
+						collectionLabel="Post"
+						fields={fields}
+						item={item(true)}
+						supportsDrafts
+						supportsRevisions
+						saveError={
+							failure === "error" && failed
+								? { message: "The server rejected this save.", token: 1 }
+								: undefined
+						}
+						hasSaveConflict={failure === "conflict" && failed}
+						onAutosave={() => undefined}
+						onSave={(payload) => {
+							saves.push(payload);
+							setFailed(false);
+						}}
+						onPublish={() => undefined}
+						onUnpublish={() => undefined}
+					/>
+				</>
+			);
+		}
+		const router = createAdminRouter(createTestQueryClient());
+		const messages = locale === "en" ? {} : await loadMessages(locale);
+		i18n.loadAndActivate({ locale, messages });
+		const screen = await render(
+			<I18nProvider i18n={i18n}>
+				<LocaleDirectionProvider>
+					<Toasty>
+						<RouterContextProvider router={router}>
+							<FailingSaveHarness />
+						</RouterContextProvider>
+					</Toasty>
+				</LocaleDirectionProvider>
+			</I18nProvider>,
+		);
+		await screen.getByRole("textbox", { name: "Title" }).fill("Unsaved change");
+		const toolbar = document.querySelector<HTMLElement>("[data-emdash-editor-bar]")!;
+		const height = toolbar.getBoundingClientRect().height;
+		await screen.getByRole("button", { name: "Fail save" }).click();
+		await expect.element(screen.getByRole("alert")).toBeVisible();
+		return { screen, toolbar, height, saves };
+	}
+
+	it.each([
+		["error", 390, "en", msg`Try again`],
+		["conflict", 390, "en", msg`Save anyway`],
+		["error", 320, "ar", msg`Try again`],
+		["conflict", 320, "ar", msg`Save anyway`],
+	] as const)(
+		"keeps the published phone bar's height on a save %s at %ipx in %s and saves from the banner",
+		async (failure, width, locale, action) => {
+			await page.viewport(width, 800);
+			const { screen, toolbar, height, saves } = await renderFailingPublishedEditor(
+				failure,
+				locale,
+			);
+			expect(toolbar.getBoundingClientRect().height).toBe(height);
+			expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
+			const retry = screen.getByRole("alert").getByRole("button", { name: i18n._(action) });
+			await expect.element(retry).toBeVisible();
+			const rect = retry.element().getBoundingClientRect();
+			expect(rect.left).toBeGreaterThanOrEqual(0);
+			expect(rect.right).toBeLessThanOrEqual(width);
+			await retry.click();
+			expect(saves).toHaveLength(1);
+			expect(document.querySelector('[role="alert"]')).toBeNull();
+			expect(document.activeElement).toBe(toolbar.querySelector("h1"));
+		},
+	);
+
+	it("offers Save in the phone bar once the save error is dismissed", async () => {
+		await page.viewport(390, 800);
+		const { screen, toolbar, saves } = await renderFailingPublishedEditor("error");
+		await screen.getByRole("button", { name: "Dismiss save error" }).click();
+		expect(document.querySelector('[role="alert"]')).toBeNull();
+		const save = actionRects(toolbar).find(({ name }) => name === "Save");
+		expect(save).toBeDefined();
+		await screen.getByRole("button", { name: "Save", exact: true }).click();
+		expect(saves).toHaveLength(1);
+	});
+
+	it("keeps the save error's retry out of the desktop banner, where the bar has Save", async () => {
+		await page.viewport(1280, 800);
+		const { screen } = await renderFailingPublishedEditor("error");
+		expect(screen.getByRole("alert").getByRole("button", { name: "Try again" }).query()).toBeNull();
+		await expect.element(screen.getByRole("button", { name: "Save", exact: true })).toBeVisible();
+	});
+
 	it("shows a dismissible save error below the bar on mobile and desktop", async () => {
 		function SaveErrorHarness() {
 			const [error, setError] = React.useState<{ message: string; token: number } | undefined>({

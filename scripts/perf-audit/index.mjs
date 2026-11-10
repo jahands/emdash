@@ -416,7 +416,9 @@ async function main() {
 		process.exitCode = 1;
 	}
 	if (options.maxCls !== undefined) {
-		const over = entries.filter((entry) => !entry.fixtureOnly && entry.metrics && entry.metrics.cls > options.maxCls);
+		const over = entries.filter(
+			(entry) => !entry.fixtureOnly && entry.metrics && entry.metrics.cls > options.maxCls,
+		);
 		if (over.length > 0) {
 			process.stderr.write(
 				`\nCLS budget ${options.maxCls} exceeded:\n${over.map((entry) => `  ${entry.key}: ${entry.metrics.cls.toFixed(4)}`).join("\n")}\n`,

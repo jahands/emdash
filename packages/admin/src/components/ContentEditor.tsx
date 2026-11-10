@@ -1166,6 +1166,18 @@ export function ContentEditor({
 	const isContentOperationPending = Boolean(isSaving);
 	const isContentSaveBlocked =
 		isContentOperationPending || hasUnsupportedPortableTextMarks || readOnly || isViewing;
+	const showSaveConflict = Boolean(hasSaveConflict) && !isViewing;
+	const saveErrorKey = saveError
+		? `${item?.id ?? "new"}:${item?.locale ?? entryLocale}:${saveError.token}`
+		: null;
+	const [dismissedSaveErrorKey, setDismissedSaveErrorKey] = React.useState<string | null>(null);
+	const showSaveError = saveErrorKey !== null && saveErrorKey !== dismissedSaveErrorKey;
+	// When autosave carries the entry, phones keep Save out of the bar's four cells. A failed or
+	// conflicting save is retried from its banner instead, so the bar keeps its size.
+	const barAlwaysSavesOnPhone =
+		isNew || !onAutosave || !onPublish || !supportsDrafts || !supportsRevisions;
+	const offerSaveRetryInBanner =
+		!barAlwaysSavesOnPhone && !showSaveConflict && Boolean(isDirty || saveFeedbackActive);
 
 	// Replace a reference field's staged current selection (add/remove/reorder).
 	// Upserts the field so one with no hydrated rows can take its first pick.
@@ -1826,6 +1838,15 @@ export function ContentEditor({
 	const focusEditorHeading = React.useCallback(() => {
 		editorHeadingRef.current?.focus({ preventScroll: true });
 	}, []);
+	const saveStatusShown = showSaveConflict || showSaveError;
+	const saveStatusHadFocus = React.useRef(false);
+	React.useLayoutEffect(() => {
+		if (!saveStatusHadFocus.current) return;
+		const active = document.activeElement;
+		if (active && active !== document.body) return;
+		saveStatusHadFocus.current = false;
+		focusEditorHeading();
+	}, [saveStatusShown, saveErrorKey, focusEditorHeading]);
 	const hasDocumentTitle =
 		documentTitleField !== undefined && fields[documentTitleField]?.kind === "string";
 	const focusDocumentBody = React.useCallback(() => {
@@ -2043,13 +2064,7 @@ export function ContentEditor({
 							isDirty={isDirty}
 							onSaveControlRemoved={focusEditorHeading}
 							showMobileSave={Boolean(
-								isNew ||
-								!onAutosave ||
-								!onPublish ||
-								!supportsDrafts ||
-								!supportsRevisions ||
-								saveError ||
-								hasSaveConflict,
+								barAlwaysSavesOnPhone || ((saveError || hasSaveConflict) && !saveStatusShown),
 							)}
 							isSaving={Boolean(saveFeedbackActive)}
 							isAutosaving={autosaveFeedbackActive}
@@ -2126,44 +2141,68 @@ export function ContentEditor({
 		</div>
 	);
 
-	const showSaveConflict = hasSaveConflict && !isViewing;
 	// Takes no space, so it covers the top of the page instead of pushing it down under the
 	// writer, and sticks to the top of the canvas once the page scrolls.
-	const saveStatus =
-		showSaveConflict || saveError ? (
-			<div className="pointer-events-none sticky top-0 z-20 h-0 shrink-0">
-				<div className="mx-auto grid w-full max-w-[52rem] gap-2 px-4 pt-3 sm:px-13">
-					{showSaveConflict && (
-						<div className="pointer-events-auto rounded-lg bg-kumo-base shadow-lg">
-							<Banner
-								variant="error"
-								role="alert"
-								title={t`This entry changed somewhere else after you opened it.`}
-								description={t`What you typed is still here. Saving replaces the newer version.`}
-								action={
-									<Button
-										size="sm"
-										variant="secondary"
-										type="button"
-										disabled={readOnly}
-										onClick={submitSave}
-									>
-										{t`Save anyway`}
-									</Button>
-								}
-							/>
-						</div>
-					)}
-					{saveError && (
-						<EditorSaveError
-							key={`${item?.id ?? "new"}:${item?.locale ?? entryLocale}:${saveError.token}`}
-							message={saveError.message}
-							title={saveError.title}
+	const saveStatus = saveStatusShown ? (
+		<div
+			className="pointer-events-none sticky top-0 z-20 h-0 shrink-0"
+			onFocus={() => {
+				saveStatusHadFocus.current = true;
+			}}
+			onBlur={(event) => {
+				if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) {
+					saveStatusHadFocus.current = false;
+				}
+			}}
+		>
+			<div className="mx-auto grid w-full max-w-[52rem] gap-2 px-4 pt-3 sm:px-13">
+				{showSaveConflict && (
+					<div className="pointer-events-auto rounded-lg bg-kumo-base shadow-lg">
+						<Banner
+							variant="error"
+							role="alert"
+							title={t`This entry changed somewhere else after you opened it.`}
+							description={t`What you typed is still here. Saving replaces the newer version.`}
+							action={
+								<Button
+									size="sm"
+									variant="secondary"
+									type="button"
+									disabled={readOnly}
+									onClick={submitSave}
+								>
+									{t`Save anyway`}
+								</Button>
+							}
 						/>
-					)}
-				</div>
+					</div>
+				)}
+				{saveError && showSaveError && (
+					<EditorSaveError
+						key={saveErrorKey}
+						message={saveError.message}
+						title={saveError.title}
+						onDismiss={() => setDismissedSaveErrorKey(saveErrorKey)}
+						retry={
+							offerSaveRetryInBanner ? (
+								<Button
+									size="sm"
+									variant="secondary"
+									type="button"
+									className="sm:hidden"
+									disabled={readOnly}
+									loading={Boolean(saveFeedbackActive)}
+									onClick={submitSave}
+								>
+									{t`Try again`}
+								</Button>
+							) : null
+						}
+					/>
+				)}
 			</div>
-		) : null;
+		</div>
+	) : null;
 
 	const form = (
 		<form
@@ -2734,10 +2773,18 @@ function RevisionViewSheetSync({
 	return null;
 }
 
-function EditorSaveError({ message, title }: { message: string; title?: string }) {
+function EditorSaveError({
+	message,
+	title,
+	retry,
+	onDismiss,
+}: {
+	message: string;
+	title?: string;
+	retry: React.ReactNode;
+	onDismiss: () => void;
+}) {
 	const { t } = useLingui();
-	const [dismissed, setDismissed] = React.useState(false);
-	if (dismissed) return null;
 	return (
 		<div className="pointer-events-auto rounded-lg bg-kumo-base shadow-lg">
 			<Banner
@@ -2746,15 +2793,18 @@ function EditorSaveError({ message, title }: { message: string; title?: string }
 				title={title ?? t`Failed to save`}
 				description={message}
 				action={
-					<Button
-						type="button"
-						variant="ghost"
-						shape="square"
-						size="sm"
-						aria-label={t`Dismiss save error`}
-						onClick={() => setDismissed(true)}
-						icon={<X />}
-					/>
+					<>
+						{retry}
+						<Button
+							type="button"
+							variant="ghost"
+							shape="square"
+							size="sm"
+							aria-label={t`Dismiss save error`}
+							onClick={onDismiss}
+							icon={<X />}
+						/>
+					</>
 				}
 			/>
 		</div>
