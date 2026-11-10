@@ -430,6 +430,10 @@ export function SidebarNav({ manifest }: SidebarNavProps) {
 	const { t, i18n } = useLingui();
 	const location = useLocation();
 	const currentPath = location.pathname;
+	const { isMobile, setOpenMobile } = useSidebar();
+	React.useEffect(() => {
+		if (isMobile) setOpenMobile(false);
+	}, [currentPath, isMobile, setOpenMobile]);
 	const routeLocale =
 		new URL(location.href, "http://emdash.local").searchParams.get("locale") ?? undefined;
 	const pluginAdmins = usePluginAdmins();

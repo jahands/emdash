@@ -5,6 +5,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { page } from "vitest/browser";
 
 import { ThemeProvider } from "../src/components/ThemeProvider";
 import type { AdminManifest } from "../src/lib/api";
@@ -46,7 +47,7 @@ function requestUrl(input: string | URL | Request) {
 
 let manifest: AdminManifest;
 
-async function sidebarLinks() {
+async function sidebarLinks(mobile = false) {
 	const queryClient = new QueryClient({
 		defaultOptions: { queries: { retry: false, gcTime: 0, staleTime: 60_000 } },
 	});
@@ -66,9 +67,16 @@ async function sidebarLinks() {
 			</I18nProvider>
 		</ThemeProvider>,
 	);
+	if (mobile)
+		await page
+			.elementLocator(document.querySelector<HTMLElement>("header [data-sidebar=trigger]")!)
+			.click();
 	await expect.element(screen.getByRole("link", { name: "Settings" })).toBeInTheDocument();
 	await expect.element(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
-	return Array.from(document.querySelectorAll("a"), (link) => link.textContent?.trim());
+	return {
+		links: Array.from(document.querySelectorAll("a"), (link) => link.textContent?.trim()),
+		router,
+	};
 }
 
 const ALL = [
@@ -127,15 +135,30 @@ describe("admin.hiddenNavItems", () => {
 		globalThis.fetch = originalFetch;
 	});
 
+	it("closes the phone navigation sheet after changing routes", async () => {
+		await page.viewport(390, 800);
+		manifest = manifestHiding();
+		try {
+			const { router } = await sidebarLinks(true);
+			expect(document.querySelector('.emdash-sidebar[data-state="expanded"]')).not.toBeNull();
+			await router.navigate({ to: "/settings" });
+			await expect
+				.poll(() => document.querySelector('.emdash-sidebar[data-state="expanded"]'))
+				.toBeNull();
+		} finally {
+			await page.viewport(1280, 800);
+		}
+	});
+
 	it("shows every built-in area when nothing is hidden", async () => {
 		manifest = manifestHiding();
-		const links = await sidebarLinks();
+		const { links } = await sidebarLinks();
 		for (const label of LABELS) expect(links).toContain(label);
 	});
 
 	it("leaves hidden built-in areas out of the sidebar and dashboard shortcuts", async () => {
 		manifest = manifestHiding(ALL);
-		const links = await sidebarLinks();
+		const { links } = await sidebarLinks();
 		for (const label of LABELS) expect(links).not.toContain(label);
 		expect(links).toEqual(expect.arrayContaining(["Posts", "Settings"]));
 	});
