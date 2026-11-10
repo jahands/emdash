@@ -1,7 +1,7 @@
 {
 	"GET / (cold)": 4,
 	"GET / (warm)": 4,
-	"GET /category/development (cold)": 7,
+	"GET /category/development (cold)": 6,
 	"GET /category/development (warm)": 6,
 	"GET /contributors (cold)": 4,
 	"GET /contributors (warm)": 4,

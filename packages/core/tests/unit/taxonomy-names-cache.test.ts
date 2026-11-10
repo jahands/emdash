@@ -8,6 +8,7 @@ import type { Database } from "../../src/database/types.js";
 import { waitForDeferredTasks } from "../../src/deferred-tasks.js";
 import { emdashLoader, resetTaxonomyNamesCache } from "../../src/loader.js";
 import { runWithContext } from "../../src/request-context.js";
+import { getTaxonomyDefs } from "../../src/taxonomies/index.js";
 import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../utils/test-db.js";
 
 describe("taxonomy name mappings background cache", () => {
@@ -69,6 +70,13 @@ describe("taxonomy name mappings background cache", () => {
 			loader.loadCollection!({ filter: { type: "post", where } }),
 		);
 	}
+
+	it("shares cold definition reads between content filtering and taxonomy rendering", async () => {
+		await read({ topic: "news" });
+		const defs = await runWithContext({ editMode: false, db }, () => getTaxonomyDefs());
+		expect(defs.some((def) => def.name === "topic")).toBe(true);
+		expect(definitionReads).toBe(1);
+	});
 
 	it("refreshes remote mapping changes after 30 seconds without a render-time reload", async () => {
 		await attach(false);

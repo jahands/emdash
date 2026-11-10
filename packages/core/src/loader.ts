@@ -17,10 +17,6 @@ import { Kysely, type RawBuilder, sql, type Dialect, type SqlBool } from "kysely
 import { buildStatusCondition, isPostgres } from "./database/dialect-helpers.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
 import { jsonTextValues } from "./database/json-recordset.js";
-import {
-	parseTaxonomyCollections,
-	selectTaxonomyDefs,
-} from "./database/repositories/taxonomy-def.js";
 import type { BylineSummary, ContentBylineCredit } from "./database/repositories/types.js";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "./database/repositories/types.js";
 import { validateIdentifier } from "./database/validate.js";
@@ -35,18 +31,13 @@ import type { Database } from "./index.js";
 import { primeSeoPanel } from "./page/seo-panel.js";
 import { getRequestContext } from "./request-context.js";
 import { setEntryTitleField } from "./seo/title-field.js";
+import { loadTaxonomyDefRows, invalidateTaxonomyDefsCache } from "./taxonomies/index.js";
 import { chunks, SQL_BATCH_SIZE } from "./utils/chunks.js";
 import {
 	isMissingColumnError,
 	getMissingColumnIdentifier,
 	isMissingTableError,
 } from "./utils/db-errors.js";
-import {
-	createRevalidatingCache,
-	invalidateRevalidatingCache,
-	revalidatingCached,
-	type RevalidatingCache,
-} from "./utils/revalidating-cache.js";
 
 const FIELD_NAME_PATTERN = /^[a-zA-Z_][a-zA-Z0-9_]*$/;
 
@@ -453,51 +444,21 @@ function getTableName(type: string): string {
 	return `ec_${type}`;
 }
 
-/** Taxonomy-to-collection mappings revalidated in the background after 30 seconds. */
-type TaxonomyNames = Map<string, Set<string>>;
-
-const TAXONOMY_NAMES_CACHE_KEY = Symbol.for("emdash:taxonomy-names:swr");
-const taxonomyNamesStore = globalThis as Record<symbol, unknown>;
-const taxonomyNamesCache: RevalidatingCache<TaxonomyNames> =
-	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- globalThis singleton pattern
-	(taxonomyNamesStore[TAXONOMY_NAMES_CACHE_KEY] as RevalidatingCache<TaxonomyNames> | undefined) ??
-	(() => {
-		const cache = createRevalidatingCache<TaxonomyNames>();
-		taxonomyNamesStore[TAXONOMY_NAMES_CACHE_KEY] = cache;
-		return cache;
-	})();
-
-async function fetchTaxonomyNames(db: Kysely<Database>): Promise<TaxonomyNames> {
+async function getTaxonomyNames(collection: string): Promise<Set<string>> {
 	try {
-		const defs = await selectTaxonomyDefs(db).execute();
-		const namesByCollection: TaxonomyNames = new Map();
-		for (const def of defs) {
-			for (const collection of parseTaxonomyCollections(def.collections)) {
-				const names = namesByCollection.get(collection) ?? new Set<string>();
-				names.add(def.name);
-				namesByCollection.set(collection, names);
-			}
-		}
-		return namesByCollection;
+		const defs = await loadTaxonomyDefRows();
+		return new Set(
+			defs.filter((def) => def.collections.includes(collection)).map((def) => def.name),
+		);
 	} catch (error) {
 		if (!isMissingTableError(error) && !isMissingColumnError(error)) throw error;
-		return new Map();
+		return new Set();
 	}
-}
-
-async function getTaxonomyNames(db: Kysely<Database>, collection: string): Promise<Set<string>> {
-	const load = () => fetchTaxonomyNames(db);
-	const names = getRequestContext()?.dbIsIsolated
-		? await load()
-		: await revalidatingCached(taxonomyNamesCache, load, (error) => {
-				console.error("[emdash:loader] revalidating taxonomy names failed:", error);
-			});
-	return names.get(collection) ?? new Set();
 }
 
 /** Discard mappings after a local taxonomy-definition write. @internal */
 export function resetTaxonomyNamesCache(): void {
-	invalidateRevalidatingCache(taxonomyNamesCache);
+	invalidateTaxonomyDefsCache();
 }
 
 /**
@@ -1845,7 +1806,7 @@ export function emdashLoader(): LiveLoader<EntryData, EntryFilter, LoaderCollect
 				const fieldFilters: Record<string, WhereValue> = {};
 
 				if (where && Object.keys(where).length > 0) {
-					const taxNames = await getTaxonomyNames(db, type);
+					const taxNames = await getTaxonomyNames(type);
 
 					for (const [key, value] of Object.entries(where)) {
 						if (value == null) continue;

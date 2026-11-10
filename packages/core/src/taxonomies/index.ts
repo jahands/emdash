@@ -27,7 +27,7 @@ import {
 	storedLocaleOrder,
 } from "../i18n/query.js";
 import { resolveLocale, resolveLocaleChain } from "../i18n/resolve.js";
-import { getDb, resetTaxonomyNamesCache } from "../loader.js";
+import { getDb } from "../loader.js";
 import {
 	cachedQuery,
 	CacheNamespace,
@@ -158,14 +158,13 @@ const defsCache =
 	})();
 
 /**
- * Invalidate the isolate-wide taxonomy-definitions cache (and the related
- * loader taxonomy-names cache). Called from every taxonomy-def write path
+ * Invalidate the definition snapshot shared by taxonomy helpers and content
+ * filtering. Called from every taxonomy-def write path
  * (`handleTaxonomyCreate`/`Update`/`Delete`, seed application). Other isolates
  * pick up remote changes through background revalidation.
  */
 export function invalidateTaxonomyDefsCache(): void {
 	invalidateRevalidatingCache(defsCache);
-	resetTaxonomyNamesCache();
 	invalidateTaxonomyObjectCache();
 }
 
@@ -188,7 +187,7 @@ async function fetchTaxonomyDefRows(): Promise<TaxonomyDef[]> {
  * Resolve the definition rows through the isolate fallback cache, bypassing it
  * for isolated databases.
  */
-function loadTaxonomyDefRows(): Promise<TaxonomyDef[]> {
+export function loadTaxonomyDefRows(): Promise<TaxonomyDef[]> {
 	const context = getRequestContext();
 	if (context?.dbIsIsolated) return fetchTaxonomyDefRows();
 	return revalidatingCached(defsCache, fetchTaxonomyDefRows, (error) =>
