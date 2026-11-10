@@ -1308,12 +1308,17 @@ describe("ContentListPage – numbered pages", () => {
 			releaseManifest = resolve;
 		});
 		const { router, TestApp } = buildRouter();
-		await router.navigate({ to: "/content/$collection", params: { collection: "posts" } });
+		// The admin layout's loader waits for the manifest, so this settles only after it.
+		const navigation = router.navigate({
+			to: "/content/$collection",
+			params: { collection: "posts" },
+		});
 		const screen = await render(<TestApp />);
 		await new Promise((resolve) => setTimeout(resolve, 100));
 
 		expect(requests).toEqual([]);
 		releaseManifest();
+		await navigation;
 
 		await expect.element(screen.getByText("Showing 1-20 of 45")).toBeInTheDocument();
 		expect(requests.filter((url) => url.includes("/trash?"))).toEqual([

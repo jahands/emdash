@@ -68,15 +68,17 @@ describe("admin shell current-user gate", () => {
 		globalThis.fetch = ((input: string | URL | Request) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 			requested.push(url);
-			if (url.startsWith("/_emdash/api/manifest")) return manifest.promise;
-			if (url.startsWith("/_emdash/api/auth/me")) return me.promise;
+			// Queries fetch again after the layout's loader has, so each read gets its own copy.
+			if (url.startsWith("/_emdash/api/manifest")) return manifest.promise.then((r) => r.clone());
+			if (url.startsWith("/_emdash/api/auth/me")) return me.promise.then((r) => r.clone());
 			return Promise.resolve(json({ data: {} }));
 		}) as typeof fetch;
 
 		const queryClient = createTestQueryClient();
 		const router = createAdminRouter(queryClient);
 		if (!i18n.locale) i18n.loadAndActivate({ locale: "en", messages: {} });
-		await router.navigate({ to: "/settings" });
+		// The admin layout's loader waits for the manifest and the user, which the tests hold.
+		void router.navigate({ to: "/settings" });
 		const screen = await render(
 			<I18nProvider i18n={i18n}>
 				<QueryClientProvider client={queryClient}>
