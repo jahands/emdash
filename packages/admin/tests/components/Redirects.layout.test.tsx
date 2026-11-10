@@ -224,3 +224,46 @@ describe("Disabled redirects", () => {
 		for (const part of shownParts(enabled)) expect(shownOpacity(part)).toBe(1);
 	});
 });
+
+describe("Redirects filters", () => {
+	it("keep their place when the redirect count arrives", async () => {
+		await page.viewport(1440, 900);
+		let resolve!: (value: Awaited<ReturnType<typeof fetchRedirects>>) => void;
+		vi.mocked(fetchRedirects).mockReturnValueOnce(
+			new Promise((settle) => {
+				resolve = settle;
+			}),
+		);
+		const screen = await render(
+			<Toasty>
+				<div style={{ width: 1100 }}>
+					<Redirects />
+				</div>
+			</Toasty>,
+		);
+		const frame = screen.container.querySelector<HTMLElement>("div[style]")!;
+		const filters = () =>
+			[
+				screen.getByRole("searchbox"),
+				screen.getByRole("textbox", { name: "Filter by group" }),
+				screen.getByRole("combobox", { name: "Filter by status" }),
+				screen.getByRole("combobox", { name: "Filter by type" }),
+			].map((control) => {
+				const { left, top, width } = control.element().getBoundingClientRect();
+				return [Math.round(left), Math.round(top), Math.round(width)];
+			});
+		// The filter row wraps at a width that depends on the fonts, so try a range of widths.
+		const widths = Array.from({ length: 21 }, (_, index) => 1000 + index * 10);
+		const geometryAt = () =>
+			widths.map((width) => {
+				frame.style.width = `${width}px`;
+				return filters();
+			});
+
+		await expect.element(screen.getByText("Loading redirects...")).toBeVisible();
+		const loading = geometryAt();
+		resolve({ items: redirects, loopRedirectIds: [] });
+		await expect.element(screen.getByText("Loading redirects...")).not.toBeInTheDocument();
+		expect(geometryAt()).toEqual(loading);
+	});
+});

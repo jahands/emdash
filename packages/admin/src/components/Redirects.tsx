@@ -730,12 +730,14 @@ export function Redirects() {
 									aria-hidden="true"
 								/>
 								{t`Redirects`}
-								{redirectsQuery.data && (
-									<Badge variant="secondary">
-										{redirects.length}
-										{redirectsQuery.hasNextPage ? "+" : ""}
-									</Badge>
-								)}
+								{/* Laid out while loading so the tabs keep their width when the count arrives. */}
+								<Badge variant="secondary" className={cn(!redirectsQuery.data && "invisible")}>
+									<span className="inline-block min-w-[3ch] text-center tabular-nums">
+										{redirectsQuery.data
+											? `${redirects.length}${redirectsQuery.hasNextPage ? "+" : ""}`
+											: "0"}
+									</span>
+								</Badge>
 							</span>
 						),
 					},
