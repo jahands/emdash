@@ -360,9 +360,11 @@ describe("EmDashRuntime.create — cold boot", () => {
 		try {
 			expect(warn).not.toHaveBeenCalled();
 			await runtime.getManifest();
-			expect(warn).toHaveBeenCalledWith(
-				expect.stringContaining("Taxonomy rows use locales outside the configured locales (ja)"),
-			);
+			await vi.waitFor(() => {
+				expect(warn).toHaveBeenCalledWith(
+					expect.stringContaining("Taxonomy rows use locales outside the configured locales (ja)"),
+				);
+			});
 			expect(warn).toHaveBeenCalledWith(expect.stringContaining("definitions: en"));
 		} finally {
 			warn.mockRestore();

@@ -8,6 +8,7 @@
  */
 
 import type { APIRoute } from "astro";
+import { sql } from "kysely";
 
 import { apiSuccess, handleError } from "#api/error.js";
 import { resolveSiteTitle } from "#api/site-title.js";
@@ -20,20 +21,92 @@ import type { EmDashManifest } from "../../types.js";
 
 export const prerender = false;
 
+interface ManifestSiteOptions {
+	adminBranding: EmDashManifest["admin"];
+	siteTitle?: string;
+	siteTimezone: string;
+	staging: boolean;
+}
+
+/**
+ * Read the site options shown in the admin shell. Precedence for the branded
+ * name: explicit `admin.siteName`, then Site Title (Settings -> General), then
+ * the title captured by the setup wizard, then the bundled "EmDash" default in
+ * the SPA.
+ */
+async function readManifestSiteOptions(
+	db: NonNullable<App.Locals["emdash"]>["db"] | undefined,
+	configuredBranding: EmDashManifest["admin"],
+): Promise<ManifestSiteOptions> {
+	const result: ManifestSiteOptions = {
+		adminBranding: configuredBranding,
+		siteTimezone: "UTC",
+		staging: false,
+	};
+	if (!db) return result;
+	try {
+		const options = new OptionsRepository(db);
+		const titles = await options.getMany<string | boolean>([
+			"site:title",
+			"emdash:site_title",
+			"site:timezone",
+			"site:staging",
+			"site:logo",
+		]);
+		const savedSiteTitle = titles.get("site:title");
+		result.siteTitle =
+			typeof savedSiteTitle === "string"
+				? savedSiteTitle.trim() || undefined
+				: resolveSiteTitle(undefined, titles.get("emdash:site_title"))?.trim() || undefined;
+		const brandingSiteTitle = resolveSiteTitle(savedSiteTitle, titles.get("emdash:site_title"));
+		const timezone = titles.get("site:timezone");
+		result.siteTimezone = typeof timezone === "string" && timezone ? timezone : "UTC";
+		result.staging = titles.get("site:staging") === true;
+		if (!result.adminBranding?.siteName && brandingSiteTitle) {
+			result.adminBranding = { ...result.adminBranding, siteName: brandingSiteTitle };
+		}
+
+		const siteLogo: unknown = titles.get("site:logo");
+		if (
+			!result.adminBranding?.logo &&
+			typeof siteLogo === "object" &&
+			siteLogo !== null &&
+			"mediaId" in siteLogo &&
+			typeof siteLogo.mediaId === "string"
+		) {
+			const media = await new MediaRepository(db).findById(siteLogo.mediaId);
+			if (media) {
+				result.adminBranding = {
+					...result.adminBranding,
+					logo: `/_emdash/api/media/file/${media.storageKey}`,
+				};
+			}
+		}
+	} catch {
+		// options table may not exist yet (pre-setup) — keep the defaults.
+	}
+	return result;
+}
+
+/** Whether any allowed domain permits self-signup. */
+async function isSignupEnabled(
+	db: NonNullable<App.Locals["emdash"]>["db"] | undefined,
+): Promise<boolean> {
+	if (!db) return false;
+	try {
+		const result = await sql<{ cnt: unknown }>`
+			SELECT COUNT(*) as cnt FROM allowed_domains WHERE enabled = 1
+		`.execute(db);
+		return Number(result.rows[0]?.cnt ?? 0) > 0;
+	} catch {
+		return false;
+	}
+}
+
 export const GET: APIRoute = async ({ locals }) => {
 	const { emdash } = locals;
 
 	try {
-		// Manifest is built fresh from the live database per admin request.
-		// `requestCached` inside `getManifest` dedupes if multiple consumers
-		// share the request. Wrapped in try/catch so any future DB-touching
-		// additions to `getManifest()` (plugin manifest loading, marketplace
-		// lookup, etc.) return the standard error envelope rather than an
-		// unstructured 500 — matches the pattern used by the WP execute
-		// routes.
-		const emdashManifest = emdash ? await emdash.getManifest() : null;
-
-		// Determine auth mode from config
 		const authMode = getAuthMode(emdash?.config);
 		const providerManagedName =
 			authMode.type === "external" &&
@@ -44,82 +117,16 @@ export const GET: APIRoute = async ({ locals }) => {
 				authMode.config.syncName === false
 			);
 
-		// Read admin branding from the per-request config plumbed through middleware
-		// (same source admin.astro reads from). Reading from a build-time global
-		// here was unreliable -- the virtual config module exports the config but
-		// doesn't assign it to globalThis, so getStoredConfig() always returned
-		// null and the React SPA never received custom logo/siteName/favicon.
-		// See issue #835.
-		let adminBranding = emdash?.config?.admin;
-		let siteTitle: string | undefined;
-		let siteTimezone = "UTC";
-		let staging = false;
-
-		// Read the site timezone alongside the title fallback so datetime controls
-		// and branding share one options query. When no build-time `admin.siteName`
-		// is configured, brand the admin with
-		// the site's own title so multi-site operators can tell backends apart
-		// (WordPress-style: wp-admin always shows the site name). Precedence:
-		// explicit `admin.siteName` → Site Title (Settings → General) → the title
-		// captured by the setup wizard → the bundled "EmDash" default in the SPA.
-		if (emdash?.db) {
-			try {
-				const options = new OptionsRepository(emdash.db);
-				const titles = await options.getMany<string | boolean>([
-					"site:title",
-					"emdash:site_title",
-					"site:timezone",
-					"site:staging",
-					"site:logo",
-				]);
-				const savedSiteTitle = titles.get("site:title");
-				siteTitle =
-					typeof savedSiteTitle === "string"
-						? savedSiteTitle.trim() || undefined
-						: resolveSiteTitle(undefined, titles.get("emdash:site_title"))?.trim() || undefined;
-				const brandingSiteTitle = resolveSiteTitle(savedSiteTitle, titles.get("emdash:site_title"));
-				const timezone = titles.get("site:timezone");
-				siteTimezone = typeof timezone === "string" && timezone ? timezone : "UTC";
-				staging = titles.get("site:staging") === true;
-				if (!adminBranding?.siteName && brandingSiteTitle) {
-					adminBranding = { ...adminBranding, siteName: brandingSiteTitle };
-				}
-
-				const siteLogo: unknown = titles.get("site:logo");
-				if (
-					!adminBranding?.logo &&
-					typeof siteLogo === "object" &&
-					siteLogo !== null &&
-					"mediaId" in siteLogo &&
-					typeof siteLogo.mediaId === "string"
-				) {
-					const media = await new MediaRepository(emdash.db).findById(siteLogo.mediaId);
-					if (media) {
-						adminBranding = {
-							...adminBranding,
-							logo: `/_emdash/api/media/file/${media.storageKey}`,
-						};
-					}
-				}
-			} catch {
-				// options table may not exist yet (pre-setup) — keep the default.
-			}
-		}
-
-		// Check if self-signup is enabled (any allowed domain with enabled = 1)
-		// Only relevant for passkey auth — external auth providers handle their own signup
-		let signupEnabled = false;
-		if (emdash?.db && authMode.type === "passkey") {
-			try {
-				const { sql } = await import("kysely");
-				const result = await sql<{ cnt: unknown }>`
-					SELECT COUNT(*) as cnt FROM allowed_domains WHERE enabled = 1
-				`.execute(emdash.db);
-				signupEnabled = Number(result.rows[0]?.cnt ?? 0) > 0;
-			} catch {
-				// Table may not exist yet, that's fine
-			}
-		}
+		// Built fresh from the live database per admin request. `requestCached`
+		// inside `getManifest` dedupes if multiple consumers share the request.
+		// External auth providers handle their own signup, so only passkey auth
+		// reads the allowed domains.
+		const [emdashManifest, siteOptions, signupEnabled] = await Promise.all([
+			emdash ? emdash.getManifest() : null,
+			readManifestSiteOptions(emdash?.db, emdash?.config?.admin),
+			authMode.type === "passkey" ? isSignupEnabled(emdash?.db) : false,
+		]);
+		const { adminBranding, siteTitle, siteTimezone, staging } = siteOptions;
 
 		const manifest: EmDashManifest = emdashManifest
 			? {

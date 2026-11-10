@@ -11,6 +11,7 @@
  */
 
 import type { APIContext } from "astro";
+import type { KyselyPlugin } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { GET as getManifest } from "../../../src/astro/routes/api/manifest.js";
@@ -67,6 +68,48 @@ function makeContext(
 
 	return { locals } as unknown as APIContext;
 }
+
+describe("manifest route reads", () => {
+	it("reads site options and signup state without waiting for the manifest", async () => {
+		const db = await setupTestDatabase();
+		try {
+			const started = new Set<string>();
+			let release = () => {};
+			const reads = new Promise<void>((resolve) => {
+				release = resolve;
+			});
+			const observer: KyselyPlugin = {
+				transformQuery({ node }) {
+					const text = JSON.stringify(node);
+					if (text.includes('"name":"options"')) started.add("options");
+					if (text.includes("allowed_domains")) started.add("allowed_domains");
+					if (started.size === 2) release();
+					return node;
+				},
+				transformResult: async ({ result }) => result,
+			};
+			const context = {
+				locals: {
+					emdash: {
+						db: db.withPlugin(observer),
+						config: {},
+						getManifest: async () => {
+							await reads;
+							return { version: "test", hash: "t", collections: {}, plugins: {}, taxonomies: [] };
+						},
+					},
+				},
+			} as unknown as APIContext;
+
+			const response = await getManifest(context);
+
+			expect(response.status).toBe(200);
+			expect([...started].toSorted()).toEqual(["allowed_domains", "options"]);
+		} finally {
+			await teardownTestDatabase(db);
+		}
+	});
+});
 
 describe("manifest route admin branding", () => {
 	it("returns admin branding from locals.emdash.config.admin", async () => {

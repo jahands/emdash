@@ -3428,17 +3428,25 @@ export class EmDashRuntime {
 	/**
 	 * Build the manifest from the database.
 	 *
-	 * Constant query shapes via `listCollectionsWithFields()` — one query
-	 * for collections, one batched query for fields (chunked at
-	 * `SQL_BATCH_SIZE` collection IDs to stay under D1's bound-parameter
-	 * limit). Typical sites stay well under the chunk threshold, so this
-	 * is two queries in practice; never N+1.
+	 * Constant query shapes via `listCollectionsWithFields()`: one query for
+	 * collections and one for fields, overlapping the taxonomy definition read
+	 * so all three cost one round trip on backends with connection pools.
 	 */
 	private async _buildManifest(): Promise<EmDashManifest> {
-		// Build collections from the live database.
 		// Use this.db (ALS-aware getter) so playground mode picks up the
 		// per-session DO database instead of the hardcoded singleton.
-		const manifestCollections = await buildManifestCollections({}, this.db);
+		const db = this.db;
+		const taxonomyRowsPromise = selectTaxonomyDefs(db)
+			.orderBy("d.name")
+			.execute()
+			.catch((error: unknown) => {
+				console.debug("EmDash: Could not load taxonomy definitions:", error);
+				return [];
+			});
+		const [manifestCollections, taxonomyRows] = await Promise.all([
+			buildManifestCollections({}, db),
+			taxonomyRowsPromise,
+		]);
 
 		// Build plugins manifest
 		const manifestPlugins: Record<
@@ -3560,45 +3568,30 @@ export class EmDashRuntime {
 			};
 		}
 
-		// Build taxonomies from database
-		let manifestTaxonomies: Array<{
-			id: string;
-			name: string;
-			label: string;
-			labelSingular?: string;
-			hierarchical: boolean;
-			collections: string[];
-			locale: string;
-			translationGroup: string;
-		}> = [];
-		let taxonomyDefinitionLocales: string[] = [];
-		try {
-			const rows = await selectTaxonomyDefs(this.db).orderBy("d.name").execute();
-			taxonomyDefinitionLocales = rows.map((row) => row.locale);
-			manifestTaxonomies = rows.map((row) => ({
-				id: row.id,
-				name: row.name,
-				label: row.label,
-				labelSingular: row.label_singular ?? undefined,
-				hierarchical: row.hierarchical === 1,
-				collections: parseStringArray(row.collections).toSorted(),
-				locale: row.locale,
-				translationGroup: row.translation_group ?? row.id,
-			}));
-		} catch (error) {
-			console.debug("EmDash: Could not load taxonomy definitions:", error);
-		}
+		const manifestTaxonomies = taxonomyRows.map((row) => ({
+			id: row.id,
+			name: row.name,
+			label: row.label,
+			labelSingular: row.label_singular ?? undefined,
+			hierarchical: row.hierarchical === 1,
+			collections: parseStringArray(row.collections).toSorted(),
+			locale: row.locale,
+			translationGroup: row.translation_group ?? row.id,
+		}));
 
-		try {
-			const configuredLocales = virtualConfig?.i18n?.locales ?? getI18nConfig()?.locales ?? [];
-			await warnAboutUnconfiguredTaxonomyLocales(
-				this.db,
-				configuredLocales,
-				taxonomyDefinitionLocales,
-			);
-		} catch (error) {
-			console.warn("[i18n] taxonomy locale diagnostic failed:", error);
-		}
+		const taxonomyDefinitionLocales = taxonomyRows.map((row) => row.locale);
+		after(async () => {
+			try {
+				const configuredLocales = virtualConfig?.i18n?.locales ?? getI18nConfig()?.locales ?? [];
+				await warnAboutUnconfiguredTaxonomyLocales(
+					db,
+					configuredLocales,
+					taxonomyDefinitionLocales,
+				);
+			} catch (error) {
+				console.warn("[i18n] taxonomy locale diagnostic failed:", error);
+			}
+		});
 
 		// Build manifest hash
 		const manifestHash = await hashString(

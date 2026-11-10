@@ -405,53 +405,35 @@ export class SchemaRegistry {
 	}
 
 	/**
-	 * List every collection together with its fields in O(1) query shapes
-	 * — one for collections, then one batched query for the fields of every
-	 * returned collection — instead of the N+1 pattern of `listCollections`
-	 * + per-collection `listFields`. The fields query is chunked at
-	 * `SQL_BATCH_SIZE` to stay under D1's bound-parameter limit, so on
-	 * sites with more than `SQL_BATCH_SIZE` collections the field fetch
-	 * becomes `ceil(collectionCount / SQL_BATCH_SIZE)` queries — still
-	 * a constant factor, not N+1. Typical sites have well under
-	 * `SQL_BATCH_SIZE` collections, so this is two queries in practice.
+	 * List every collection with its fields in two whole-table reads that
+	 * overlap on backends with connection pools, instead of the N+1 pattern
+	 * of `listCollections` plus per-collection `listFields`.
 	 *
-	 * Used by the manifest build, which previously paid N+1 round-trips on
-	 * every admin request. Each round-trip costs ~80–150ms against the D1
-	 * primary on a busy link, so a 10-collection site spent ~1 s rebuilding
-	 * a manifest that is now built fresh per admin request (no cache).
+	 * Used by the manifest build, which runs on every admin request.
 	 */
 	async listCollectionsWithFields(): Promise<CollectionWithFields[]> {
-		const collectionRows = await this.db
-			.selectFrom("_emdash_collections")
-			.selectAll()
-			.orderBy(collectionOrder, "asc")
-			.orderBy("slug", "asc")
-			.execute();
-
-		if (collectionRows.length === 0) return [];
-
-		const fieldsByCollection = new Map<string, Field[]>();
-		// Chunk to stay under D1's bound-parameter limit. Typical sites have
-		// well under SQL_BATCH_SIZE collections, so this is a single query
-		// in practice; on larger sites it becomes a small constant number
-		// of queries, never N+1.
-		for (const idChunk of chunks(
-			collectionRows.map((c) => c.id),
-			SQL_BATCH_SIZE,
-		)) {
-			const fieldRows = await this.db
+		// Both queries read whole tables, so neither depends on the other's result.
+		const [collectionRows, fieldRows] = await Promise.all([
+			this.db
+				.selectFrom("_emdash_collections")
+				.selectAll()
+				.orderBy(collectionOrder, "asc")
+				.orderBy("slug", "asc")
+				.execute(),
+			this.db
 				.selectFrom("_emdash_fields")
-				.where("collection_id", "in", idChunk)
 				.selectAll()
 				.orderBy("collection_id", "asc")
 				.orderBy("sort_order", "asc")
 				.orderBy("created_at", "asc")
-				.execute();
-			for (const row of fieldRows) {
-				const list = fieldsByCollection.get(row.collection_id) ?? [];
-				list.push(this.mapFieldRow(row));
-				fieldsByCollection.set(row.collection_id, list);
-			}
+				.execute(),
+		]);
+
+		const fieldsByCollection = new Map<string, Field[]>();
+		for (const row of fieldRows) {
+			const list = fieldsByCollection.get(row.collection_id) ?? [];
+			list.push(this.mapFieldRow(row));
+			fieldsByCollection.set(row.collection_id, list);
 		}
 
 		return collectionRows.map((c) => ({

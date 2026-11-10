@@ -14,7 +14,7 @@
  * through the other on the very next call.
  */
 
-import type { Kysely } from "kysely";
+import { AliasNode, SelectQueryNode, TableNode, type Kysely, type KyselyPlugin } from "kysely";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { generateManifest } from "../../../src/api/handlers/manifest.js";
@@ -403,6 +403,38 @@ describe("EmDashRuntime.getManifest()", () => {
 		expect(posts).toBeDefined();
 		expect(posts?.fields.title?.kind).toBe("string");
 		expect(posts?.fields.body?.kind).toBe("json");
+	});
+
+	it("overlaps the collection, field and taxonomy reads", async () => {
+		const events: string[] = [];
+		const observer: KyselyPlugin = {
+			transformQuery({ node }) {
+				if (SelectQueryNode.is(node)) {
+					const from = node.from?.froms[0];
+					if (from && (TableNode.is(from) || AliasNode.is(from))) {
+						const table = TableNode.is(from) ? from : from.node;
+						if (TableNode.is(table)) events.push(`start:${table.table.identifier.name}`);
+					}
+				}
+				return node;
+			},
+			async transformResult({ result }) {
+				events.push("end");
+				return result;
+			},
+		};
+
+		await buildRuntime(db.withPlugin(observer)).getManifest();
+
+		const firstEnd = events.indexOf("end");
+		const before = events.slice(0, firstEnd);
+		expect(before).toEqual(
+			expect.arrayContaining([
+				"start:_emdash_collections",
+				"start:_emdash_fields",
+				"start:_emdash_taxonomy_defs",
+			]),
+		);
 	});
 
 	it("forwards declared validation on every field type", async () => {
