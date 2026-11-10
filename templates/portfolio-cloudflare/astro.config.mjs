@@ -26,6 +26,7 @@ export default defineConfig({
 	integrations: [
 		react(),
 		emdash({
+			siteUrl: process.env.EMDASH_SITE_URL || process.env.SITE_URL,
 			database: d1({ binding: "DB", session: "auto", coalesce: true }),
 			storage: r2({ binding: "MEDIA" }),
 		}),

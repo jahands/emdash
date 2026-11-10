@@ -744,6 +744,16 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 				});
 				if (imageEndpointWarning) logger.warn(imageEndpointWarning);
 
+				if (
+					command === "build" &&
+					resolvedConfig.images !== false &&
+					imageRemotePatterns.length === 0
+				) {
+					logger.warn(
+						"Media images cannot be resized without a public origin. Set siteUrl, EMDASH_SITE_URL, or SITE_URL when building with local storage.",
+					);
+				}
+
 				const imageConfig: Record<string, unknown> = {};
 				if (imageRemotePatterns.length) imageConfig.remotePatterns = imageRemotePatterns;
 				if (imageEndpoint) {

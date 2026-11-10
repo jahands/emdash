@@ -19,7 +19,8 @@
     "astro": "catalog:",
     "emdash": "workspace:*",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "sharp": "^0.34.5"
   },
   "devDependencies": {
     "@astrojs/check": "catalog:",

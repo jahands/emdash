@@ -12,6 +12,7 @@ export default defineConfig({
 	integrations: [
 		react(),
 		emdash({
+			siteUrl: process.env.EMDASH_SITE_URL || process.env.SITE_URL,
 			database: sqlite({ url: "file:./data.db" }),
 			storage: local({
 				directory: "./uploads",

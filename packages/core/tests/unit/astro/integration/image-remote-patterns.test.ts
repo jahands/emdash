@@ -206,7 +206,7 @@ describe("imageEndpointRoutePattern", () => {
 });
 
 /** Runs `astro:config:setup` and returns the image config Astro would receive. */
-async function imageConfigFor(config: EmDashConfig) {
+async function imageConfigFor(config: EmDashConfig, warn = vi.fn()) {
 	const setup = emdash(config).hooks["astro:config:setup"] as NonNullable<
 		AstroIntegration["hooks"]["astro:config:setup"]
 	>;
@@ -221,7 +221,7 @@ async function imageConfigFor(config: EmDashConfig) {
 			trailingSlash: "ignore",
 			integrations: [{ name: "@astrojs/react", hooks: {} }],
 		},
-		logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn: vi.fn() },
+		logger: { debug: vi.fn(), error: vi.fn(), info: vi.fn(), warn },
 		injectRoute: vi.fn(),
 		addMiddleware: vi.fn(),
 		updateConfig,
@@ -282,6 +282,12 @@ describe("image remotePatterns from env", () => {
 		if (origSiteUrl === undefined) delete process.env.SITE_URL;
 		else process.env.SITE_URL = origSiteUrl;
 		_resetEnvCache();
+	});
+
+	it("warns when production media cannot be resized without a configured origin", async () => {
+		const warn = vi.fn();
+		await imageConfigFor({ storage: localStorage }, warn);
+		expect(warn).toHaveBeenCalledWith(expect.stringContaining("EMDASH_SITE_URL"));
 	});
 
 	it("allowlists the EMDASH_SITE_URL origin for local media when no siteUrl is set", async () => {
