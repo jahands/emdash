@@ -2016,6 +2016,22 @@ export class SchemaRegistry {
 			${createIndex} ${sql.ref(`idx_${tableName}_loc_crt`)}
 			ON ${sql.ref(tableName)} (deleted_at, locale, created_at DESC, id DESC)
 		`.execute(conn);
+
+		// PostgreSQL cannot return ordered rows from the `deleted_at`-led indexes
+		// above for `deleted_at IS NULL` listings (see migration 096).
+		if (isPostgres(conn)) {
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_pub`)}
+				ON ${sql.ref(tableName)} (published_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_crt`)}
+				ON ${sql.ref(tableName)} (created_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+		}
 	}
 
 	private getFieldIndexName(fieldId: string): string {
