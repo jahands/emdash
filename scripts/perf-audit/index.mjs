@@ -24,6 +24,15 @@ const RESULTS_DIR = join(ROOT, ".perf-audit/results");
 
 const USAGE = `Usage: pnpm perf:audit [options]
 
+  --max-initial-js-gz <KB> Fail routes exceeding the static entry import graph budget (KiB)
+  --react-profile       Build with React profiling and count committed fiber renders
+  --gzip                Serve the fixture through a local streaming gzip proxy
+  --midpoint-ms <ms>     Sample scenario geometry after this delay into each step
+  --cold                Restart the server before every route or scenario (TCP-only readiness)
+  --role <name>         admin (default), editor, author, contributor or subscriber
+  --locale <code>       Admin locale cookie and browser locale (default en)
+  --dark                Use dark color scheme
+  --query-timeline <text> Export full SQL events for request paths containing text
   --only <text[,text]>   Measure ids containing the text, e.g. admin:/media or scenario:editor; end with $ for an exact id
   --viewport <name>      desktop, mobile or both (default both)
   --slow-api <ms>        Delay every admin API response by this many milliseconds
@@ -48,6 +57,15 @@ function readOptions() {
 	const { values } = parseArgs({
 		args: process.argv.slice(2).filter((arg) => arg !== "--"),
 		options: {
+			"max-initial-js-gz": { type: "string" },
+			"react-profile": { type: "boolean", default: false },
+			gzip: { type: "boolean", default: false },
+			"midpoint-ms": { type: "string", default: "0" },
+			cold: { type: "boolean", default: false },
+			role: { type: "string", default: "admin" },
+			locale: { type: "string", default: "en" },
+			dark: { type: "boolean", default: false },
+			"query-timeline": { type: "string" },
 			only: { type: "string" },
 			viewport: { type: "string", default: "both" },
 			"slow-api": { type: "string", default: "0" },
@@ -77,6 +95,25 @@ function readOptions() {
 		throw new Error(`Unknown --network ${values.network}`);
 	if (!["desktop", "mobile", "both"].includes(values.viewport))
 		throw new Error("--viewport must be desktop, mobile or both");
+	if (!["admin", "editor", "author", "contributor", "subscriber"].includes(values.role))
+		throw new Error("Unknown --role; use admin, editor, author, contributor or subscriber");
+	if (values["react-profile"] && values["skip-build"])
+		throw new Error("--react-profile requires a rebuild; omit --skip-build");
+	for (const name of [
+		"midpoint-ms",
+		"max-initial-js-gz",
+		"max-cls",
+		"db-latency",
+		"slow-api",
+		"cpu",
+		"runs",
+	]) {
+		if (
+			values[name] !== undefined &&
+			(!Number.isFinite(Number(values[name])) || Number(values[name]) < 0)
+		)
+			throw new Error(`--${name} must be a non-negative finite number`);
+	}
 	const dbLatency = Number(values["db-latency"]);
 	if (values.db && !["sqlite", "postgres"].includes(values.db))
 		throw new Error("--db must be sqlite or postgres");
@@ -84,6 +121,16 @@ function readOptions() {
 	return {
 		db: values.db ?? (dbLatency > 0 ? "postgres" : "sqlite"),
 		dbLatency,
+		cold: values.cold,
+		gzip: values.gzip,
+		midpointMs: Number(values["midpoint-ms"]),
+		reactProfile: values["react-profile"],
+		maxInitialJsGz:
+			values["max-initial-js-gz"] === undefined ? undefined : Number(values["max-initial-js-gz"]),
+		role: values.role,
+		locale: values.locale,
+		dark: values.dark,
+		queryTimeline: values["query-timeline"],
 		only: values.only
 			?.split(",")
 			.map((text) => text.trim())
@@ -162,7 +209,7 @@ async function main() {
 
 	if (!options.skipBuild && !options.list) {
 		process.stdout.write("Building production fixture...\n");
-		buildSite({ fonts: options.fonts, db: options.db });
+		buildSite({ fonts: options.fonts, db: options.db, reactProfile: options.reactProfile });
 	}
 	process.stdout.write("Preparing seed...\n");
 	const seedDir = await ensureSeed({ reseed: options.reseed });
@@ -176,6 +223,8 @@ async function main() {
 		postgres,
 		template,
 		latencyMs: options.dbLatency,
+		role: options.role,
+		gzip: options.gzip,
 	});
 
 	const { targets, unreachable } = discoverTargets(site.params);
@@ -215,6 +264,7 @@ async function main() {
 			const results = [];
 			for (const viewportName of options.viewports) {
 				for (const target of selected) {
+					if (options.cold) await site.restart();
 					const result = await runMeasurement({
 						browser,
 						site,
@@ -251,6 +301,13 @@ async function main() {
 	const comparison = baselineResults ? compareToBaseline(entries, baselineResults) : null;
 	const meta = {
 		git: gitLabel(),
+		cold: options.cold,
+		gzip: options.gzip,
+		midpointMs: options.midpointMs,
+		reactProfile: options.reactProfile,
+		role: options.role,
+		locale: options.locale,
+		dark: options.dark,
 		startedAt: startedAt.toISOString(),
 		durationMs: Date.now() - startedAt.getTime(),
 		runs: options.runs,
@@ -287,7 +344,12 @@ async function main() {
 	const summaryPath = join(outDir, "summary.md");
 	writeFileSync(
 		summaryPath,
-		renderSummary({ meta, entries, unreachable, stability, comparison, dbLatencyComparison }),
+		renderSummary({ meta, entries, unreachable, stability, comparison, dbLatencyComparison }) +
+			"\n## Initial JS (static entry imports)\n\n| Route | gzip KiB |\n| --- | ---: |\n" +
+			entries
+				.filter((entry) => entry.metrics?.initialJsGzip !== undefined)
+				.map((entry) => `| ${entry.key} | ${(entry.metrics.initialJsGzip / 1024).toFixed(1)} |`)
+				.join("\n"),
 	);
 	rmSync(join(RESULTS_DIR, "latest"), { force: true });
 	symlinkSync(outName, join(RESULTS_DIR, "latest"));
@@ -296,6 +358,16 @@ async function main() {
 		`\nResults: ${outDir}\nSummary: ${summaryPath}\nDuration: ${Math.round(meta.durationMs / 1000)}s\n`,
 	);
 
+	if (entries.some((entry) => entry.status === "error")) process.exitCode = 1;
+	const overJs = entries.filter(
+		(entry) => entry.metrics?.initialJsGzip / 1024 > options.maxInitialJsGz,
+	);
+	if (overJs.length) {
+		process.stderr.write(
+			`Initial JS budget ${options.maxInitialJsGz} KiB exceeded: ${overJs.map((entry) => entry.key).join(", ")}\n`,
+		);
+		process.exitCode = 1;
+	}
 	if (options.maxCls !== undefined) {
 		const over = entries.filter((entry) => entry.metrics && entry.metrics.cls > options.maxCls);
 		if (over.length > 0) {
