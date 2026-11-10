@@ -27,6 +27,22 @@ interface UsePagedQueryOptions<T> {
 	/** Offered page sizes; the first is the default. */
 	pageSizes: readonly number[];
 	enabled?: boolean;
+	/**
+	 * Keeps the page and page size in step with state held outside the hook, such as the
+	 * URL. `page` and `perPage` are the current external values (`undefined` when absent);
+	 * `onChange` receives every change the hook makes, with `replace` true when the user
+	 * did not ask for it, as when a filter changes the list or the page no longer exists.
+	 */
+	sync?: {
+		page: number | undefined;
+		perPage: number | undefined;
+		onChange: (position: PagePosition, options: { replace: boolean }) => void;
+	};
+}
+
+export interface PagePosition {
+	page: number;
+	perPage: number;
 }
 
 const NO_ITEMS: never[] = [];
@@ -41,12 +57,35 @@ export function usePagedQuery<T>({
 	queryFn,
 	pageSizes,
 	enabled,
+	sync,
 }: UsePagedQueryOptions<T>) {
-	const [perPage, setPerPage] = React.useState(pageSizes[0] ?? 20);
+	const defaultPerPage = pageSizes[0] ?? 20;
+	const syncedPosition: PagePosition | undefined = sync && {
+		page: sync.page ?? 1,
+		perPage:
+			sync.perPage !== undefined && pageSizes.includes(sync.perPage)
+				? sync.perPage
+				: defaultPerPage,
+	};
+	const [localPerPage, setLocalPerPage] = React.useState(syncedPosition?.perPage ?? defaultPerPage);
+	const [seenPosition, setSeenPosition] = React.useState(syncedPosition);
+	const positionChanged =
+		syncedPosition &&
+		seenPosition &&
+		(syncedPosition.page !== seenPosition.page || syncedPosition.perPage !== seenPosition.perPage);
+	const perPage = positionChanged ? syncedPosition.perPage : localPerPage;
+	if (positionChanged) {
+		setSeenPosition(syncedPosition);
+		setLocalPerPage(syncedPosition.perPage);
+	}
+
 	const resetKey = hashKey([...scope, ...queryKey, perPage]);
-	const [pageState, setPageState] = React.useState({ resetKey, page: 1 });
+	const [pageState, setPageState] = React.useState({ resetKey, page: syncedPosition?.page ?? 1 });
 	let page = pageState.page;
-	if (pageState.resetKey !== resetKey) {
+	if (positionChanged) {
+		page = syncedPosition.page;
+		setPageState({ resetKey, page });
+	} else if (pageState.resetKey !== resetKey) {
 		page = 1;
 		setPageState({ resetKey, page: 1 });
 	}
@@ -75,6 +114,17 @@ export function usePagedQuery<T>({
 	}, [isRecovering, lastPage, resetKey]);
 	const isPending = query.isLoading || query.isPlaceholderData || isRecovering;
 
+	const userChangedPosition = React.useRef(false);
+	const onSyncChange = React.useRef(sync?.onChange);
+	onSyncChange.current = sync?.onChange;
+	const syncedPage = syncedPosition?.page;
+	const syncedPerPage = syncedPosition?.perPage;
+	React.useEffect(() => {
+		if (syncedPage === undefined || (page === syncedPage && perPage === syncedPerPage)) return;
+		onSyncChange.current?.({ page, perPage }, { replace: !userChangedPosition.current });
+		userChangedPosition.current = false;
+	}, [page, perPage, syncedPage, syncedPerPage]);
+
 	const pagination: ListPagination = {
 		page: isRecovering ? lastPage : page,
 		perPage,
@@ -84,11 +134,13 @@ export function usePagedQuery<T>({
 			if (isPending || !Number.isSafeInteger(nextPage) || nextPage < 1 || nextPage > lastPage) {
 				return;
 			}
+			userChangedPosition.current = true;
 			setPageState({ resetKey, page: nextPage });
 		},
 		onPageSizeChange(nextPerPage) {
 			if (isPending || !pageSizes.includes(nextPerPage)) return;
-			setPerPage(nextPerPage);
+			userChangedPosition.current = true;
+			setLocalPerPage(nextPerPage);
 		},
 	};
 

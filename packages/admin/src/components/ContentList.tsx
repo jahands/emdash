@@ -175,6 +175,8 @@ export interface ContentListProps {
 	 * to already reflect the filter. Without it, the list falls back to
 	 * filtering the loaded page client-side (legacy behavior).
 	 */
+	/** The search box's starting text, such as a search restored from the browser history. */
+	initialSearchQuery?: string;
 	onSearchChange?: (q: string) => void;
 	/**
 	 * Filter controls. The whole bar is opt-in: it only renders when
@@ -299,6 +301,7 @@ export function ContentList({
 	sort,
 	onSortChange,
 	total,
+	initialSearchQuery = "",
 	onSearchChange,
 	statusFilter = "all",
 	onStatusFilterChange,
@@ -321,7 +324,7 @@ export function ContentList({
 	const { t, i18n: lingui } = useLingui();
 	const pluginAdmins = usePluginAdmins();
 	const [activeTab, setActiveTab] = React.useState<ViewTab>("all");
-	const [searchQuery, setSearchQuery] = React.useState("");
+	const [searchQuery, setSearchQuery] = React.useState(initialSearchQuery);
 	const [page, setPage] = React.useState(0);
 	const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
 	const [bulkTagSelection, setBulkTagSelection] = React.useState<SelectedBulkTagPost[] | null>(

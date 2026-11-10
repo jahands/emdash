@@ -159,12 +159,21 @@ import {
 } from "./lib/api/comments";
 import { runBulkAction } from "./lib/bulk";
 import { parseCalendarSearch } from "./lib/calendar";
+import {
+	isBylineFilterState,
+	isContentDateFilter,
+	isContentListSort,
+	isContentStatusFilter,
+	isString,
+	parseContentListSearch,
+} from "./lib/content-list-search";
 import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/content-permissions";
 import { describeContentValidationError } from "./lib/content-validation-errors";
 import { usePluginPage } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
 import { withAutosavedDraft } from "./lib/revision-list-cache.js";
 import { sanitizeRedirectUrl } from "./lib/url";
+import { useHistoryEntryState, useRestoreMainScroll } from "./lib/use-history-entry";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
 import { BylineSchemaPage } from "./routes/byline-schema";
@@ -559,16 +568,18 @@ const contentListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection",
 	component: ContentListPage,
-	validateSearch: (search: Record<string, unknown>) => ({
-		locale: typeof search.locale === "string" ? search.locale : undefined,
-	}),
+	validateSearch: parseContentListSearch,
 	staticData: { pageTitle: msg`Content` },
 });
 
 function ContentListPage() {
 	const { t } = useLingui();
 	const { collection } = useParams({ from: "/_admin/content/$collection" });
-	const { locale: localeParam } = useSearch({ from: "/_admin/content/$collection" });
+	const {
+		locale: localeParam,
+		page: pageParam,
+		perPage: perPageParam,
+	} = useSearch({ from: "/_admin/content/$collection" });
 	const queryClient = useQueryClient();
 	const navigate = useNavigate();
 	const toastManager = useKumoToastManager();
@@ -589,23 +600,44 @@ function ContentListPage() {
 	// Default sorts by the collection's dateField, else last-updated.
 	// `sortOverride` is the user's explicit choice (null until they click a
 	// column), keeping the default reactive as the manifest loads and per-collection.
-	const [sortOverride, setSortOverride] = React.useState<ContentListSort | null>(null);
+	const [sortOverride, setSortOverride] = useHistoryEntryState<ContentListSort | null>(
+		"contentListSort",
+		null,
+		isContentListSort,
+	);
 	const sort: ContentListSort = sortOverride ?? {
 		field: manifest?.collections[collection]?.dateField ?? "updatedAt",
 		direction: "desc",
 	};
-	React.useEffect(() => setSortOverride(null), [collection]);
+	const sortCollection = React.useRef(collection);
+	React.useEffect(() => {
+		if (sortCollection.current === collection) return;
+		sortCollection.current = collection;
+		setSortOverride(null);
+	}, [collection, setSortOverride]);
 
 	// Server-side search term (debounced inside ContentList). Part of the query
 	// key so a new term restarts the cursor chain from a filtered first page.
-	const [searchTerm, setSearchTerm] = React.useState("");
+	const [searchTerm, setSearchTerm] = useHistoryEntryState("contentListSearch", "", isString);
 
 	// Filter state. All are part of the query key so changing any of
 	// them restarts the cursor chain from a filtered first page.
-	const [statusFilter, setStatusFilter] = React.useState<ContentStatusFilter>("all");
-	const [authorFilter, setAuthorFilter] = React.useState("");
-	const [dateFilter, setDateFilter] = React.useState<ContentDateFilter>(EMPTY_DATE_FILTER);
-	const [bylineFilter, setBylineFilter] = React.useState<BylineFilterState>(EMPTY_BYLINE_FILTER);
+	const [statusFilter, setStatusFilter] = useHistoryEntryState<ContentStatusFilter>(
+		"contentListStatus",
+		"all",
+		isContentStatusFilter,
+	);
+	const [authorFilter, setAuthorFilter] = useHistoryEntryState("contentListAuthor", "", isString);
+	const [dateFilter, setDateFilter] = useHistoryEntryState<ContentDateFilter>(
+		"contentListDate",
+		EMPTY_DATE_FILTER,
+		isContentDateFilter,
+	);
+	const [bylineFilter, setBylineFilter] = useHistoryEntryState<BylineFilterState>(
+		"contentListByline",
+		EMPTY_BYLINE_FILTER,
+		isBylineFilterState,
+	);
 
 	// Only the parts that change the result set belong in the query key —
 	// `includeInferred` alone, with nothing selected, filters nothing.
@@ -682,7 +714,24 @@ function ContentListPage() {
 			}),
 		pageSizes: CONTENT_LIST_PAGE_SIZES,
 		enabled: !!manifest,
+		sync: {
+			page: pageParam,
+			perPage: perPageParam,
+			onChange: ({ page, perPage }, { replace }) => {
+				void navigate({
+					to: "/content/$collection",
+					params: { collection },
+					search: (previous) => ({
+						...previous,
+						page: page > 1 ? page : undefined,
+						perPage: perPage === CONTENT_LIST_PAGE_SIZES[0] ? undefined : perPage,
+					}),
+					replace,
+				});
+			},
+		},
 	});
+	useRestoreMainScroll(!contentList.pagination.isPending && contentList.items.length > 0);
 
 	// A failed trash request (subscribers can't read the trash) only hides the
 	// trash rows; it never replaces the list with an error screen.
@@ -877,6 +926,7 @@ function ContentListPage() {
 			dateField={collectionConfig.dateField}
 			sort={sort}
 			onSortChange={setSortOverride}
+			initialSearchQuery={searchTerm}
 			onSearchChange={setSearchTerm}
 			statusFilter={statusFilter}
 			onStatusFilterChange={setStatusFilter}
