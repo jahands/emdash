@@ -2,7 +2,7 @@ import type { Editor } from "@tiptap/core";
 import { NodeSelection } from "@tiptap/pm/state";
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { userEvent } from "vitest/browser";
+import { cdp, userEvent } from "vitest/browser";
 
 import {
 	LinkDestinationInput,
@@ -162,7 +162,9 @@ async function typeQuery(screen: Awaited<ReturnType<typeof render>>, text: strin
 	input.dispatchEvent(new Event("input", { bubbles: true }));
 }
 
-beforeEach(() => {
+beforeEach(async () => {
+	// Keep a stationary pointer from hovering results as they mount.
+	await cdp().send("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
 	vi.mocked(fetchManifest).mockResolvedValue(postsManifest);
 	vi.mocked(fetchContent).mockRejectedValue(new Error("not mocked"));
 	vi.mocked(apiFetch).mockReset();
