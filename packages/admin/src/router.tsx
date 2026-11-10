@@ -504,8 +504,14 @@ function RootComponent() {
 		queryKey: ["manifest"],
 		queryFn: fetchManifest,
 	});
+	// Requested alongside the manifest so the sidebar and pages render once for the user's role.
+	// Only the first answer is waited for: a failed or reset query goes back to pending when
+	// it refetches, and holding the admin back again then would unmount the open page.
+	const { isFetched: isUserFetched } = useCurrentUser();
+	const [userSettled, setUserSettled] = React.useState(false);
+	if (isUserFetched && !userSettled) setUserSettled(true);
 
-	if (isLoading) {
+	if (isLoading || !(userSettled || isUserFetched)) {
 		return <ConfigurationLoadingScreen />;
 	}
 
