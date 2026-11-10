@@ -130,6 +130,24 @@ describeEachDialect("content save round trips", (dialect) => {
 		expect(recorder.waves()).toBeLessThanOrEqual(SAVE_WAVE_BUDGET);
 	});
 
+	it("writes the live and draft usage projections together", async () => {
+		const first = await put({ data: { title: "Draft one" }, _rev: await currentRev() });
+		await ctx.db.deleteFrom("_emdash_media_usage_sources").execute();
+		recorder.reset();
+
+		const second = await put({ data: { title: "Draft two" }, _rev: first.body.data!._rev });
+
+		expect(second.status).toBe(200);
+		expect(recorder.peakConcurrency(/insert into _emdash_media_usage_generation_writes/i)).toBe(2);
+		const variants = await ctx.db
+			.selectFrom("_emdash_media_usage_sources")
+			.select("source_variant")
+			.where("content_id", "=", id)
+			.orderBy("source_variant")
+			.execute();
+		expect(variants.map((row) => row.source_variant)).toEqual(["columns", "draft_overlay"]);
+	});
+
 	it.each([
 		{
 			name: "another save",
@@ -189,4 +207,4 @@ describeEachDialect("content save round trips", (dialect) => {
 	});
 });
 
-const SAVE_WAVE_BUDGET = 17;
+const SAVE_WAVE_BUDGET = 12;

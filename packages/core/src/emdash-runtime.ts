@@ -100,7 +100,10 @@ import {
 	markContentMediaUsageCollectionStale,
 	refreshContentMediaUsageAfterWrite,
 } from "./media/usage/content-refresh.js";
-import { processMediaUsageWorkAfterWrite } from "./media/usage/work-processor.js";
+import {
+	isIncrementalCaptureActive,
+	processMediaUsageWorkAfterWrite,
+} from "./media/usage/work-processor.js";
 import {
 	scheduledPolicyRejectionKey,
 	type ScheduledPolicyRejection,
@@ -4516,22 +4519,25 @@ export class EmDashRuntime {
 		// Update the content table:
 		// - If collection uses draft revisions: only update metadata (no data fields, no slug)
 		// - Otherwise: update everything as before
-		const result =
-			usesDraftRevisions && !liveMetaTouched
-				? stagedItem
-					? await handleContentHydrate(this.db, collection, stagedItem, {
-							hasSeo: collectionInfo?.hasSeo,
-						})
-					: await handleContentGet(this.db, collection, resolvedId)
-				: await handleContentUpdate(this.db, collection, resolvedId, {
-						...bodyWithoutRev,
-						_rev: draftStorageChanged ? undefined : body._rev,
-						data: usesDraftRevisions ? undefined : processedData,
-						slug: usesDraftRevisions ? undefined : bodyWithoutRev.slug,
-						references: usesDraftRevisions ? undefined : bodyWithoutRev.references,
-						authorId: bodyWithoutRev.authorId,
-						bylines: bodyWithoutRev.bylines,
-					});
+		const [result, captureActive] = await runConcurrently(this.db, [
+			async () =>
+				usesDraftRevisions && !liveMetaTouched
+					? stagedItem
+						? handleContentHydrate(this.db, collection, stagedItem, {
+								hasSeo: collectionInfo?.hasSeo,
+							})
+						: handleContentGet(this.db, collection, resolvedId)
+					: handleContentUpdate(this.db, collection, resolvedId, {
+							...bodyWithoutRev,
+							_rev: draftStorageChanged ? undefined : body._rev,
+							data: usesDraftRevisions ? undefined : processedData,
+							slug: usesDraftRevisions ? undefined : bodyWithoutRev.slug,
+							references: usesDraftRevisions ? undefined : bodyWithoutRev.references,
+							authorId: bodyWithoutRev.authorId,
+							bylines: bodyWithoutRev.bylines,
+						}),
+			() => isIncrementalCaptureActive(this.db).catch(() => undefined),
+		]);
 
 		const liveContentChanged = usesDraftRevisions
 			? liveMetaTouched
@@ -4563,7 +4569,9 @@ export class EmDashRuntime {
 					)),
 				);
 			}
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, contentIdsToRefresh);
+			await this.refreshContentUsageAfterSuccessfulWrite(collection, contentIdsToRefresh, {
+				captureActive,
+			});
 		} else if (draftStorageChanged) {
 			try {
 				await markContentMediaUsageCollectionStale(this.db, collection, "CONTENT_USAGE_STALE");
@@ -5768,10 +5776,13 @@ export class EmDashRuntime {
 	private async refreshContentUsageAfterSuccessfulWrite(
 		collection: string,
 		contentIds: readonly string[],
+		options: { captureActive?: boolean } = {},
 	): Promise<void> {
 		for (const contentId of new Set(contentIds)) {
 			try {
-				const work = await processMediaUsageWorkAfterWrite(this.db, collection, contentId);
+				const work = await processMediaUsageWorkAfterWrite(this.db, collection, contentId, {
+					captureActive: options.captureActive,
+				});
 				if (work.outcome !== "inactive") continue;
 				await refreshContentMediaUsageAfterWrite(this.db, collection, contentId);
 			} catch (error) {

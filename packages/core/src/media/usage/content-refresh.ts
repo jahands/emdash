@@ -1,5 +1,6 @@
 import { sql, type Kysely } from "kysely";
 
+import { runConcurrently } from "../../database/concurrent.js";
 import {
 	type MediaUsageExistingSourceProjection,
 	MediaUsageRepository,
@@ -525,14 +526,21 @@ async function refreshContentMediaUsageAttempt(
 ): Promise<ContentMediaUsageRefreshResult> {
 	const repo = new MediaUsageRepository(db);
 	const canonicalSourceKeys = contentSourceKeys(collectionSlug, contentId, options.collectionId);
-	const observedSources = options.observedSources ?? (await repo.findSources(canonicalSourceKeys));
+	const [observedSources, fieldDiscovery, collectionExistedBefore] = await runConcurrently(db, [
+		async () => options.observedSources ?? repo.findSources(canonicalSourceKeys),
+		async () =>
+			options.snapshotsResult
+				? options.fieldDiscovery
+				: (options.fieldDiscovery ?? loadContentMediaUsageFields(db, collectionSlug)),
+		async () => (options.collectionId ? true : contentCollectionExists(db, collectionSlug)),
+	]);
 	const snapshotsResult =
 		options.snapshotsResult ??
 		(await loadContentMediaUsageSnapshots(
 			db,
 			collectionSlug,
 			contentId,
-			options.fieldDiscovery,
+			fieldDiscovery,
 			options.collectionId ? { collectionId: options.collectionId, identityVersion: 1 } : undefined,
 		));
 	if (!snapshotsResult.success) {
@@ -554,10 +562,7 @@ async function refreshContentMediaUsageAttempt(
 				contentId,
 			);
 		}
-		if (
-			snapshotsResult.error === "CONTENT_NOT_FOUND" &&
-			!(await contentCollectionExists(db, collectionSlug))
-		) {
+		if (snapshotsResult.error === "CONTENT_NOT_FOUND" && !collectionExistedBefore) {
 			const deletedSourceCount = await repo.deleteContentSources(collectionSlug, contentId);
 			return { ...ZERO_RESULT, deletedSourceCount };
 		}
@@ -566,7 +571,7 @@ async function refreshContentMediaUsageAttempt(
 			: markSnapshotFailure(db, collectionSlug, snapshotsResult);
 	}
 
-	if (!options.collectionId && !(await contentCollectionExists(db, collectionSlug))) {
+	if (!collectionExistedBefore) {
 		const deletedSourceCount = await repo.deleteContentSources(collectionSlug, contentId);
 		return { ...ZERO_RESULT, deletedSourceCount };
 	}
@@ -582,25 +587,30 @@ async function refreshContentMediaUsageAttempt(
 	if (admission && admission.outcome !== "admitted") {
 		return admissionFailureResult(admission.outcome);
 	}
-	let refreshedSourceCount = 0;
-	for (const snapshot of snapshotsResult.snapshots) {
+	const replaceSnapshot = async (snapshot: ContentMediaUsageSnapshot) => {
 		if (
 			admission?.outcome === "admitted" &&
 			admission.noOpSourceKeys.has(snapshot.source.sourceKey)
 		) {
-			refreshedSourceCount++;
-			continue;
+			return { replaced: false, unchanged: true };
 		}
-		const result = await repo.replaceSourceIfMatching(
+		return repo.replaceSourceIfMatching(
 			snapshot.source,
 			snapshot.occurrences,
 			observedSources.get(snapshot.source.sourceKey) ?? null,
 		);
-		if (result.unchanged) {
-			refreshedSourceCount++;
-			continue;
-		}
-		if (!result.replaced) {
+	};
+	// Each variant writes its own source row under its own lease, so outside
+	// durable work, whose admission budget is spent in order, they run together.
+	const replacements = options.durableWork
+		? await replaceInOrder(snapshotsResult.snapshots, replaceSnapshot)
+		: await runConcurrently(
+				db,
+				snapshotsResult.snapshots.map((snapshot) => () => replaceSnapshot(snapshot)),
+			);
+	let refreshedSourceCount = 0;
+	for (const result of replacements) {
+		if (!result.unchanged && !result.replaced) {
 			return generationConflictResult({
 				refreshedSourceCount,
 				deletedSourceCount: 0,
@@ -644,6 +654,21 @@ async function refreshContentMediaUsageAttempt(
 		deletedSourceCount,
 		failedSourceCount: 0,
 	};
+}
+
+/** Replaces one snapshot at a time, stopping at the first that is not current. */
+async function replaceInOrder<T extends { replaced: boolean; unchanged: boolean }>(
+	snapshots: readonly ContentMediaUsageSnapshot[],
+	replace: (snapshot: ContentMediaUsageSnapshot) => Promise<T>,
+): Promise<T[]> {
+	const results: T[] = [];
+	for (const snapshot of snapshots) {
+		// oxlint-disable-next-line no-await-in-loop -- durable work spends its admission budget in order
+		const result = await replace(snapshot);
+		results.push(result);
+		if (!result.unchanged && !result.replaced) break;
+	}
+	return results;
 }
 
 export function contentRefreshKey(collectionId: string, contentId: string): string {

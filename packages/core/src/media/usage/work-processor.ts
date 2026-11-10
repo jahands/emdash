@@ -59,8 +59,9 @@ export async function processMediaUsageWorkAfterWrite(
 	db: Kysely<Database>,
 	collectionSlug: string,
 	contentId: string,
+	options: { captureActive?: boolean } = {},
 ): Promise<MediaUsageWorkProcessingResult> {
-	if (!(await isIncrementalCaptureActive(db))) {
+	if (!(options.captureActive ?? (await isIncrementalCaptureActive(db)))) {
 		return { outcome: "inactive", claimed: false };
 	}
 
@@ -453,7 +454,7 @@ function canContinueBulkWork(): boolean {
 	return !metrics || metrics.dbCount + 150 <= 900;
 }
 
-async function isIncrementalCaptureActive(db: Kysely<Database>): Promise<boolean> {
+export async function isIncrementalCaptureActive(db: Kysely<Database>): Promise<boolean> {
 	const row = await db
 		.selectFrom("_emdash_media_usage_activation")
 		.select("state")

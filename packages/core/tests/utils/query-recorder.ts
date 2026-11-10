@@ -17,8 +17,8 @@ export interface QueryRecorder {
 	matching(pattern: RegExp): string[];
 	/** How many groups of overlapping statements ran, one round trip each. */
 	waves(): number;
-	/** The most statements that were in flight at once. */
-	peakConcurrency(): number;
+	/** The most statements that were in flight at once, of those matching `pattern` if given. */
+	peakConcurrency(pattern?: RegExp): number;
 	reset(): void;
 }
 
@@ -71,9 +71,9 @@ export function recordQueries(source: Kysely<Database>): QueryRecorder {
 			}
 			return waves;
 		},
-		peakConcurrency: () => {
+		peakConcurrency: (pattern) => {
 			let peak = 0;
-			const list = ordered();
+			const list = ordered().filter((query) => !pattern || pattern.test(query.sql));
 			for (const query of list) {
 				const end = query.endedAt ?? Number.POSITIVE_INFINITY;
 				const overlapping = list.filter(
