@@ -63,6 +63,7 @@ import { dirname, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 
+import { availablePort } from "./perf-audit/ports.mjs";
 import { normalizeSql } from "./query-counts-normalize.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -70,7 +71,7 @@ const repoRoot = resolve(__dirname, "..");
 const fixtureDir = resolve(repoRoot, "fixtures/perf-site");
 
 const HOST = "127.0.0.1";
-const PORT = 14321;
+const PORT = await availablePort();
 const BASE = `http://${HOST}:${PORT}`;
 
 const ROUTES = [
@@ -330,7 +331,7 @@ async function startServer({ collectedEvents, streamEndSnapshots = [] }) {
 		args = ["./dist/server/entry.mjs"];
 	} else {
 		cmd = astroBin;
-		args = ["preview", "--host", HOST, "--port", String(PORT)];
+		args = ["preview", "--ignore-lock", "--host", HOST, "--port", String(PORT)];
 	}
 
 	await waitForPortFree(HOST, PORT);
