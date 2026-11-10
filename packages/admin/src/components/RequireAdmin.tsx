@@ -3,6 +3,7 @@ import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
 import { useCurrentUser } from "../lib/api/current-user.js";
+import { QueryErrorState } from "./QueryErrorState.js";
 
 const ROLE_ADMIN = 50;
 
@@ -14,14 +15,18 @@ export function RequireAdmin({
 	minimumRole?: number;
 }) {
 	const { t } = useLingui();
-	const { data: currentUser, isLoading: userLoading } = useCurrentUser();
+	const { data: currentUser, isPending, isError, isFetching, refetch } = useCurrentUser();
 
-	if (userLoading) {
+	if (!currentUser && (isPending || isFetching)) {
 		return (
 			<div className="flex items-center justify-center min-h-[50vh]">
 				<Loader />
 			</div>
 		);
+	}
+
+	if (!currentUser && isError) {
+		return <QueryErrorState onRetry={() => void refetch()} />;
 	}
 
 	if (!currentUser || currentUser.role < minimumRole) {

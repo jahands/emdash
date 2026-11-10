@@ -20,6 +20,8 @@ vi.mock("../../src/lib/api/current-user.js", () => ({
 			? { id: "user-1", email: "user@example.com", role: currentUser.role }
 			: undefined,
 		isLoading: currentUser.isLoading,
+		isPending: currentUser.isLoading,
+		isFetching: currentUser.isLoading,
 	}),
 }));
 

@@ -220,3 +220,64 @@ describe("read permission gates", () => {
 		},
 	);
 });
+
+describe("read permission gates when the user lookup fails", () => {
+	const PROTECTED_DATA = /\/(redirects|schema|relations|admin\/plugins)(\/|\?|$)/;
+	const requestedProtectedData = (
+		fetchSpy: ReturnType<typeof vi.spyOn<typeof globalThis, "fetch">>,
+	) =>
+		fetchSpy.mock.calls.some(([url]) =>
+			PROTECTED_DATA.test(typeof url === "string" ? url : url instanceof URL ? url.href : url.url),
+		);
+
+	it.each(["/redirects", "/content-types", "/plugins-manager"])(
+		"offers Retry at %s instead of Access denied, without requesting protected data",
+		async (to) => {
+			const mockFetch = createMockFetch();
+			mockFetch
+				.on("GET", "/_emdash/api/manifest", { data: MANIFEST })
+				.on("GET", "/_emdash/api/auth/me", { error: { code: "INTERNAL_ERROR" } }, 500);
+			const fetchSpy = vi.spyOn(globalThis, "fetch");
+			try {
+				const { router, TestApp } = buildRouter();
+				await router.navigate({ to });
+				const screen = await render(<TestApp />);
+
+				await expect.element(screen.getByRole("button", { name: "Retry" })).toBeInTheDocument();
+				await expect.element(screen.getByText("Access denied")).not.toBeInTheDocument();
+				expect(requestedProtectedData(fetchSpy)).toBe(false);
+			} finally {
+				fetchSpy.mockRestore();
+				mockFetch.restore();
+			}
+		},
+	);
+
+	it.each([
+		["/content-types", "Content types content"],
+		["/plugins-manager", "Plugin manager content"],
+	])("opens %s after Retry once the user lookup succeeds", async (to, marker) => {
+		const mockFetch = createMockFetch();
+		mockFetch
+			.on("GET", "/_emdash/api/manifest", { data: MANIFEST })
+			.on("GET", "/_emdash/api/auth/me", { error: { code: "INTERNAL_ERROR" } }, 500)
+			.on("GET", "/_emdash/api/schema/collections", { data: { items: [] } })
+			.on("GET", "/_emdash/api/schema/orphans", { data: { items: [] } })
+			.on("GET", "/_emdash/api/schema/block-types", { data: { items: [] } });
+		try {
+			const { router, TestApp } = buildRouter();
+			await router.navigate({ to });
+			const screen = await render(<TestApp />);
+			const retry = screen.getByRole("button", { name: "Retry" });
+			await expect.element(retry).toBeInTheDocument();
+
+			mockFetch.on("GET", "/_emdash/api/auth/me", { data: { id: "user_01", role: 40 } });
+			await retry.click();
+
+			await expect.element(screen.getByText(marker)).toBeInTheDocument();
+			await expect.element(screen.getByText("Access denied")).not.toBeInTheDocument();
+		} finally {
+			mockFetch.restore();
+		}
+	});
+});
