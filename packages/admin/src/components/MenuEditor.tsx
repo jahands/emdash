@@ -32,6 +32,7 @@ import {
 	createMenuTranslation,
 	type CreateMenuItemInput,
 	type MenuItem,
+	type MenuWithItems,
 	type UpdateMenuItemInput,
 } from "../lib/api";
 import { fetchManifest } from "../lib/api/client.js";
@@ -346,8 +347,17 @@ export function MenuEditor() {
 	const reorderMutation = useMutation({
 		mutationFn: (input: Parameters<typeof reorderMenuItems>[1]) =>
 			reorderMenuItems(name, input, { locale: menuLocale }),
-		onSuccess: () => {
-			void queryClient.invalidateQueries({ queryKey: ["menu", name] });
+		onMutate: async () => {
+			const queryKey = ["menu", name, routeLocale ?? null];
+			await queryClient.cancelQueries({ queryKey: ["menu", name] });
+			return { queryKey, name };
+		},
+		onSuccess: async (items, _, context) => {
+			await queryClient.cancelQueries({ queryKey: ["menu", context.name] });
+			void queryClient.invalidateQueries({ queryKey: ["menu", context.name], refetchType: "none" });
+			queryClient.setQueryData<MenuWithItems>(context.queryKey, (cached) =>
+				cached ? { ...cached, items } : cached,
+			);
 			toastManager.add({
 				title: t`Order saved`,
 				description: t`Menu order has been updated.`,

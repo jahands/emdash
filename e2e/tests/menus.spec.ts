@@ -140,6 +140,27 @@ test.describe("Menus", () => {
 			await expect(page.locator("text=https://example.com/contact")).toBeVisible();
 		});
 
+		test("reorders items without downloading the menu again", async ({ admin, page }) => {
+			await admin.goToMenus();
+			const menuName = `reorder-${Date.now()}`;
+			await admin.createMenu(menuName, "Reorder Menu");
+			await admin.addMenuLink("Home", "https://example.com");
+			await admin.addMenuLink("About", "https://example.com/about");
+			await page.waitForLoadState("networkidle");
+			const reads: string[] = [];
+			page.on("request", (request) => {
+				if (
+					request.method() === "GET" &&
+					new URL(request.url()).pathname === `/_emdash/api/menus/${menuName}`
+				)
+					reads.push(request.url());
+			});
+			await page.getByRole("button", { name: "Move down", exact: true }).first().click();
+			await expect(page.getByText("Menu order has been updated.")).toBeVisible();
+			await page.waitForLoadState("networkidle");
+			expect(reads).toEqual([]);
+		});
+
 		test("deletes menu item", async ({ admin, page }) => {
 			await admin.goToMenus();
 			await admin.waitForLoading();
