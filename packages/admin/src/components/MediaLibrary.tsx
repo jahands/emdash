@@ -446,7 +446,17 @@ export function MediaLibrary({
 	// Get current items based on active provider
 	const currentItems = activeProvider === "local" ? items : [];
 	const currentProviderItems = activeProvider !== "local" ? providerData?.items || [] : [];
-	const currentLoading = activeProvider === "local" ? isLoading : providerLoading;
+	const awaitingSetupStatus = isAdmin && activeProvider === "local" && activationQuery.isPending;
+	const currentLoading =
+		(activeProvider === "local" ? isLoading : providerLoading) || awaitingSetupStatus;
+	// Until the first results arrive, nothing below the heading is shown: the setup banner,
+	// toolbar and folders would otherwise appear one by one and push each other down.
+	const [shownFirstResults, setShownFirstResults] = React.useState(false);
+	const awaitingFirstResults =
+		!shownFirstResults &&
+		(awaitingSetupStatus ||
+			(currentLoading && currentItems.length === 0 && currentProviderItems.length === 0));
+	if (!awaitingFirstResults && !shownFirstResults) setShownFirstResults(true);
 	React.useEffect(() => {
 		if (
 			pendingMediaLibraryScrollTop === null ||
@@ -491,10 +501,11 @@ export function MediaLibrary({
 		}
 	};
 	const showToolbar =
-		resultCount > 0 ||
-		hasActiveQuery ||
-		(activeProvider === "local" &&
-			(folders.length > 0 || Boolean(foldersLoading) || Boolean(foldersError)));
+		!awaitingFirstResults &&
+		(resultCount > 0 ||
+			hasActiveQuery ||
+			(activeProvider === "local" &&
+				(folders.length > 0 || Boolean(foldersLoading) || Boolean(foldersError))));
 	const assetPage = pagination?.page ?? 1;
 	const showFolderResults =
 		activeProvider === "local" &&
@@ -831,7 +842,7 @@ export function MediaLibrary({
 					)}
 				</div>
 			</div>
-			{activeProvider === "local" && setupIncomplete ? (
+			{activeProvider === "local" && setupIncomplete && !awaitingFirstResults ? (
 				<Banner
 					variant="alert"
 					title={
@@ -966,7 +977,7 @@ export function MediaLibrary({
 				</span>
 			)}
 
-			{hasFolderSurface && viewMode === "grid" && (
+			{hasFolderSurface && viewMode === "grid" && !awaitingFirstResults && (
 				<section
 					aria-labelledby="media-folders-heading"
 					aria-busy={Boolean(foldersLoading || isLoadingMoreFolders) || undefined}
@@ -1025,7 +1036,8 @@ export function MediaLibrary({
 			)}
 
 			{/* Content */}
-			{currentLoading && currentItems.length === 0 && currentProviderItems.length === 0 ? (
+			{awaitingFirstResults ||
+			(currentLoading && currentItems.length === 0 && currentProviderItems.length === 0) ? (
 				<div className="flex items-center justify-center py-12">
 					<Loader />
 				</div>

@@ -7,6 +7,7 @@ import "../../dist/styles.css";
 import { MediaLibrary } from "../../src/components/MediaLibrary.js";
 import type { LocalMediaItem, MediaFolder, MediaItem } from "../../src/lib/api/media.js";
 import { formatFileSize } from "../../src/lib/media-utils.js";
+import { expectStableLayout } from "../utils/layout-stability";
 import { render } from "../utils/render.js";
 
 vi.mock("../../src/lib/api", async (importOriginal) => ({
@@ -29,8 +30,15 @@ vi.mock("@tanstack/react-router", async (importOriginal) => ({
 	),
 }));
 
+const currentRole = vi.hoisted(() => ({ value: 30 }));
 vi.mock("../../src/lib/api/current-user.js", () => ({
-	useCurrentUser: () => ({ data: { id: "user-1", role: 30 } }),
+	useCurrentUser: () => ({ data: { id: "user-1", role: currentRole.value } }),
+}));
+
+const activationStatus = vi.hoisted(() => vi.fn());
+vi.mock("../../src/lib/api/media-usage-activation.js", async (importOriginal) => ({
+	...(await importOriginal<typeof import("../../src/lib/api/media-usage-activation.js")>()),
+	fetchMediaUsageActivationStatus: () => activationStatus(),
 }));
 
 const items: MediaItem[] = Array.from({ length: 35 }, (_, index) => ({
@@ -405,5 +413,41 @@ describe("Media Library list view hover", () => {
 		await hoverRow(folderRow);
 		expect(backgrounds(hovered)).toEqual(resting);
 		expect(backgrounds(folderRow)).toEqual(folderResting);
+	});
+});
+
+describe("Media library setup banner", () => {
+	afterEach(() => {
+		currentRole.value = 30;
+	});
+
+	it("doesn't push the grid down when the banner's status arrives", async () => {
+		await page.viewport(1280, 800);
+		currentRole.value = 50;
+		let resolveStatus!: (value: unknown) => void;
+		activationStatus.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveStatus = resolve;
+				}),
+		);
+		const screen = await render(
+			<Toasty>
+				<Sidebar.Provider>
+					<main style={{ width: 1000 }}>
+						<MediaLibrary items={items} canUpload />
+					</main>
+				</Sidebar.Provider>
+			</Toasty>,
+		);
+		await expect
+			.element(screen.getByRole("heading", { name: "Media Library" }))
+			.toBeInTheDocument();
+
+		await expectStableLayout(async () => {
+			resolveStatus({ state: "expanded" });
+			await expect.element(screen.getByText("Set up media usage tracking")).toBeInTheDocument();
+			await expect.element(screen.getByText("document-0.txt")).toBeInTheDocument();
+		});
 	});
 });
