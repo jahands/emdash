@@ -2018,7 +2018,10 @@ export function ContentEditor({
 			    it changes the view, not the entry, and a reader must be able to
 			    leave the overlay. */}
 				<div className="grid w-full grid-cols-4 items-center gap-1.5 sm:ms-1.5 sm:flex sm:w-auto sm:flex-wrap sm:justify-end">
-					<fieldset disabled={readOnly} className="contents">
+					<fieldset
+						disabled={readOnly}
+						className="contents [&_button:disabled]:opacity-50 [&_button:disabled]:cursor-not-allowed"
+					>
 						{!isDistractionFree && item && sandboxedEditorActions.length > 0 ? (
 							<SandboxedContentEditorActions
 								actions={sandboxedEditorActions}
@@ -2241,7 +2244,11 @@ export function ContentEditor({
 									) : null}
 									{/* Hidden, not unmounted, while a version is shown, so unsaved edits,
 									    undo history and the outline survive. */}
-									<fieldset disabled={readOnly} hidden={isViewing} className="contents">
+									<fieldset
+										disabled={readOnly}
+										hidden={isViewing}
+										className="contents [&_button:disabled]:opacity-50 [&_button:disabled]:cursor-not-allowed"
+									>
 										{unsupportedFields.length > 0 && (
 											<Banner
 												variant="error"
@@ -2378,7 +2385,10 @@ export function ContentEditor({
 						aria-label={t`Settings`}
 						className={cn(isDistractionFree && "hidden")}
 					>
-						<fieldset disabled={readOnly} className="contents">
+						<fieldset
+							disabled={readOnly}
+							className="contents [&_button:disabled]:opacity-50 [&_button:disabled]:cursor-not-allowed"
+						>
 							<div
 								className="flex-1 overflow-y-auto overflow-x-hidden bg-kumo-base"
 								style={isBelowLg ? { paddingTop: ADMIN_HEADER_HEIGHT_PX } : undefined}

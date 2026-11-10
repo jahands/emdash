@@ -45,6 +45,7 @@ async function renderDirectEditor(
 	entry: ContentItem,
 	locale = "en",
 	options: {
+		readOnly?: boolean;
 		saveError?: { message: string; token: number };
 		supportsPreview?: boolean;
 		autosave?: boolean;
@@ -62,6 +63,7 @@ async function renderDirectEditor(
 				<Toasty>
 					<RouterContextProvider router={router}>
 						<ContentEditor
+							readOnly={options.readOnly}
 							collection="posts"
 							collectionLabel="Post"
 							fields={fields}
@@ -214,6 +216,16 @@ describe("ContentEditor mobile action bar", () => {
 				Boolean(span.textContent),
 		)!;
 		expect(label.scrollWidth).toBeLessThanOrEqual(label.clientWidth);
+	});
+
+	it("makes inherited disabled editor actions visibly unavailable", async () => {
+		const { screen } = await renderDirectEditor(item(true), "en", { readOnly: true });
+		const unpublish = screen.getByRole("button", { name: "Unpublish Post" });
+		await expect.element(unpublish).toBeDisabled();
+		expect(Number(getComputedStyle(unpublish.element()).opacity)).toBeLessThan(1);
+		await expect
+			.element(screen.getByRole("button", { name: /Enter distraction-free/ }))
+			.toBeEnabled();
 	});
 
 	it("uses four equal action cells for a published post", async () => {
