@@ -1,4 +1,4 @@
-import type { Editor } from "@tiptap/core";
+import { Editor, Node as TipTapNode } from "@tiptap/core";
 import { AllSelection, NodeSelection, TextSelection } from "@tiptap/pm/state";
 import { CellSelection, TableMap } from "@tiptap/pm/tables";
 import { describe, it, expect, vi } from "vitest";
@@ -6,6 +6,7 @@ import { userEvent } from "vitest/browser";
 
 import {
 	PortableTextEditor,
+	getSelectionTextAlignments,
 	type PortableTextEditorProps,
 } from "../../src/components/PortableTextEditor";
 import type { MediaItem } from "../../src/lib/api";
@@ -294,6 +295,34 @@ async function getHeadingMenuItem(
 // =============================================================================
 
 describe("Toolbar Presence and Structure", () => {
+	it.each(["ltr", "rtl"])(
+		"computes %s text alignment before the editor view mounts",
+		(direction) => {
+			const originalDirection = document.documentElement.dir;
+			document.documentElement.dir = direction;
+			const editor = new Editor({
+				element: null,
+				extensions: [
+					TipTapNode.create({ name: "doc", topNode: true, content: "block+" }),
+					TipTapNode.create({ name: "paragraph", group: "block", content: "inline*" }),
+					TipTapNode.create({ name: "text", group: "inline" }),
+				],
+				content: {
+					type: "doc",
+					content: [{ type: "paragraph", content: [{ type: "text", text: "Hello" }] }],
+				},
+			});
+			try {
+				expect(getSelectionTextAlignments(editor).alignments).toEqual(
+					new Set([direction === "rtl" ? "right" : "left"]),
+				);
+			} finally {
+				editor.destroy();
+				document.documentElement.dir = originalDirection;
+			}
+		},
+	);
+
 	it("has role='toolbar' with correct aria-label", async () => {
 		const { screen } = await renderEditor();
 		const toolbar = screen.getByRole("toolbar");

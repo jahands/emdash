@@ -16,6 +16,7 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import {
+	lazyRouteComponent,
 	createRouter,
 	createRootRouteWithContext,
 	createRoute,
@@ -28,11 +29,9 @@ import {
 } from "@tanstack/react-router";
 import * as React from "react";
 
-import { BlockTypeList } from "./components/BlockTypeList.js";
 import { EMPTY_BYLINE_FILTER, type BylineFilterState } from "./components/BylineFilter";
 import type { BylineFormValues } from "./components/BylineFormDialog.js";
-import { CommentInbox } from "./components/comments/CommentInbox";
-import { ContentEditor, type ReferenceEntryRow } from "./components/ContentEditor";
+import type { ReferenceEntryRow } from "./components/ContentEditor";
 import {
 	CONTENT_LIST_PAGE_SIZES,
 	ContentList,
@@ -41,44 +40,9 @@ import {
 	type ContentListSort,
 	type ContentStatusFilter,
 } from "./components/ContentList";
-import { ContentTypeEditor } from "./components/ContentTypeEditor";
-import { ContentTypeList } from "./components/ContentTypeList";
-import { Dashboard } from "./components/Dashboard";
-import { DeviceAuthorizePage } from "./components/DeviceAuthorizePage";
 import { EntryLockNotice } from "./components/EntryLockNotice";
-import { InviteAcceptPage } from "./components/InviteAcceptPage";
-import { LoginPage } from "./components/LoginPage";
-import { MagicLinkConfirmPage } from "./components/MagicLinkConfirmPage";
-import { MediaLibrary } from "./components/MediaLibrary";
-import { MenuEditor } from "./components/MenuEditor";
-import { MenuList } from "./components/MenuList";
-import { PluginManager } from "./components/PluginManager";
-import { PluginSettings } from "./components/PluginSettings";
-import { Redirects } from "./components/Redirects";
-import { RegistryBrowse } from "./components/RegistryBrowse";
-import { RegistryPluginDetail } from "./components/RegistryPluginDetail";
-import { RelationList } from "./components/RelationList";
 import { RequireAdmin } from "./components/RequireAdmin.js";
-import { SandboxedPluginPage } from "./components/SandboxedPluginPage";
-import { SectionEditor } from "./components/SectionEditor";
-import { Sections } from "./components/Sections";
-import { Settings } from "./components/Settings";
-import { AllowedDomainsSettings } from "./components/settings/AllowedDomainsSettings";
-import { ApiTokenSettings } from "./components/settings/ApiTokenSettings";
-import { BackupSettings } from "./components/settings/BackupSettings";
-import { EmailSettings } from "./components/settings/EmailSettings";
-import { GeneralSettings } from "./components/settings/GeneralSettings";
-import { MediaUsageSettings } from "./components/settings/MediaUsageSettings";
-import { SecuritySettings } from "./components/settings/SecuritySettings";
-import { SeoSettings } from "./components/settings/SeoSettings";
-import { SocialSettings } from "./components/settings/SocialSettings";
-import { TransferSettings } from "./components/settings/TransferSettings";
-import { SetupWizard } from "./components/SetupWizard";
 import { Shell } from "./components/Shell";
-import { SignupPage } from "./components/SignupPage";
-import { TaxonomyManager } from "./components/TaxonomyManager";
-import { Widgets } from "./components/Widgets";
-import { WordPressImport } from "./components/WordPressImport";
 import { useAdminBranding } from "./lib/admin-branding-context.js";
 import {
 	apiFetch,
@@ -176,10 +140,136 @@ import { sanitizeRedirectUrl } from "./lib/url";
 import { useHistoryEntryState, useRestoreMainScroll } from "./lib/use-history-entry";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
-import { BylineSchemaPage } from "./routes/byline-schema";
-import { BylinesPage } from "./routes/bylines";
-import { CalendarPage } from "./routes/calendar";
-import { UsersPage } from "./routes/users";
+
+const BlockTypeList = lazyRouteComponent(
+	() => import("./components/BlockTypeList.js"),
+	"BlockTypeList",
+);
+const CommentInbox = lazyRouteComponent(
+	() => import("./components/comments/CommentInbox.js"),
+	"CommentInbox",
+);
+const ContentEditor = lazyRouteComponent(
+	() => import("./components/ContentEditor.js"),
+	"ContentEditor",
+);
+const ContentTypeEditor = lazyRouteComponent(
+	() => import("./components/ContentTypeEditor.js"),
+	"ContentTypeEditor",
+);
+const ContentTypeList = lazyRouteComponent(
+	() => import("./components/ContentTypeList.js"),
+	"ContentTypeList",
+);
+const Dashboard = lazyRouteComponent(() => import("./components/Dashboard.js"), "Dashboard");
+const DeviceAuthorizePage = lazyRouteComponent(
+	() => import("./components/DeviceAuthorizePage.js"),
+	"DeviceAuthorizePage",
+);
+const InviteAcceptPage = lazyRouteComponent(
+	() => import("./components/InviteAcceptPage.js"),
+	"InviteAcceptPage",
+);
+const LoginPage = lazyRouteComponent(() => import("./components/LoginPage.js"), "LoginPage");
+const MagicLinkConfirmPage = lazyRouteComponent(
+	() => import("./components/MagicLinkConfirmPage.js"),
+	"MagicLinkConfirmPage",
+);
+const MediaLibrary = lazyRouteComponent(
+	() => import("./components/MediaLibrary.js"),
+	"MediaLibrary",
+);
+const MenuEditor = lazyRouteComponent(() => import("./components/MenuEditor.js"), "MenuEditor");
+const MenuList = lazyRouteComponent(() => import("./components/MenuList.js"), "MenuList");
+const PluginManager = lazyRouteComponent(
+	() => import("./components/PluginManager.js"),
+	"PluginManager",
+);
+const PluginSettings = lazyRouteComponent(
+	() => import("./components/PluginSettings.js"),
+	"PluginSettings",
+);
+const Redirects = lazyRouteComponent(() => import("./components/Redirects.js"), "Redirects");
+const RegistryBrowse = lazyRouteComponent(
+	() => import("./components/RegistryBrowse.js"),
+	"RegistryBrowse",
+);
+const RegistryPluginDetail = lazyRouteComponent(
+	() => import("./components/RegistryPluginDetail.js"),
+	"RegistryPluginDetail",
+);
+const RelationList = lazyRouteComponent(
+	() => import("./components/RelationList.js"),
+	"RelationList",
+);
+const SandboxedPluginPage = lazyRouteComponent(
+	() => import("./components/SandboxedPluginPage.js"),
+	"SandboxedPluginPage",
+);
+const SectionEditor = lazyRouteComponent(
+	() => import("./components/SectionEditor.js"),
+	"SectionEditor",
+);
+const Sections = lazyRouteComponent(() => import("./components/Sections.js"), "Sections");
+const Settings = lazyRouteComponent(() => import("./components/Settings.js"), "Settings");
+const AllowedDomainsSettings = lazyRouteComponent(
+	() => import("./components/settings/AllowedDomainsSettings.js"),
+	"AllowedDomainsSettings",
+);
+const ApiTokenSettings = lazyRouteComponent(
+	() => import("./components/settings/ApiTokenSettings.js"),
+	"ApiTokenSettings",
+);
+const BackupSettings = lazyRouteComponent(
+	() => import("./components/settings/BackupSettings.js"),
+	"BackupSettings",
+);
+const EmailSettings = lazyRouteComponent(
+	() => import("./components/settings/EmailSettings.js"),
+	"EmailSettings",
+);
+const GeneralSettings = lazyRouteComponent(
+	() => import("./components/settings/GeneralSettings.js"),
+	"GeneralSettings",
+);
+const MediaUsageSettings = lazyRouteComponent(
+	() => import("./components/settings/MediaUsageSettings.js"),
+	"MediaUsageSettings",
+);
+const SecuritySettings = lazyRouteComponent(
+	() => import("./components/settings/SecuritySettings.js"),
+	"SecuritySettings",
+);
+const SeoSettings = lazyRouteComponent(
+	() => import("./components/settings/SeoSettings.js"),
+	"SeoSettings",
+);
+const SocialSettings = lazyRouteComponent(
+	() => import("./components/settings/SocialSettings.js"),
+	"SocialSettings",
+);
+const TransferSettings = lazyRouteComponent(
+	() => import("./components/settings/TransferSettings.js"),
+	"TransferSettings",
+);
+const SetupWizard = lazyRouteComponent(() => import("./components/SetupWizard.js"), "SetupWizard");
+const SignupPage = lazyRouteComponent(() => import("./components/SignupPage.js"), "SignupPage");
+const TaxonomyManager = lazyRouteComponent(
+	() => import("./components/TaxonomyManager.js"),
+	"TaxonomyManager",
+);
+const Widgets = lazyRouteComponent(() => import("./components/Widgets.js"), "Widgets");
+const WordPressImport = lazyRouteComponent(
+	() => import("./components/WordPressImport.js"),
+	"WordPressImport",
+);
+const BylineSchemaPage = lazyRouteComponent(
+	() => import("./routes/byline-schema.js"),
+	"BylineSchemaPage",
+);
+const BylinesPage = lazyRouteComponent(() => import("./routes/bylines.js"), "BylinesPage");
+const CalendarPage = lazyRouteComponent(() => import("./routes/calendar.js"), "CalendarPage");
+const UsersPage = lazyRouteComponent(() => import("./routes/users.js"), "UsersPage");
 
 // Router context type
 interface RouterContext {
@@ -531,8 +621,19 @@ function RootComponent() {
 	// Plugin admin components are passed via props and available through PluginAdminContext
 	return (
 		<Shell manifest={manifest}>
-			<Outlet />
+			<React.Suspense fallback={<RouteLoadingScreen />}>
+				<Outlet />
+			</React.Suspense>
 		</Shell>
+	);
+}
+
+function RouteLoadingScreen() {
+	const { t } = useLingui();
+	return (
+		<div className="flex min-h-full items-center justify-center">
+			<Loader aria-label={t`Loading`} />
+		</div>
 	);
 }
 
@@ -541,6 +642,7 @@ const dashboardRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/",
 	component: DashboardPage,
+	loader: () => Dashboard.preload!(),
 	staticData: { pageTitle: msg`Dashboard` },
 });
 
@@ -956,6 +1058,7 @@ const contentNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/new",
 	component: ContentNewPage,
+	loader: () => ContentEditor.preload!(),
 	staticData: { fullBleed: true, pageTitle: msg`New content` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
@@ -1118,6 +1221,7 @@ const contentEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/$id",
 	component: ContentEditPage,
+	loader: () => ContentEditor.preload!(),
 	staticData: { fullBleed: true, pageTitle: msg`Edit content` },
 	validateSearch: (search) => ({
 		...(typeof search.field === "string" && { field: search.field }),
@@ -2199,6 +2303,7 @@ const mediaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/media",
 	component: MediaPage,
+	loader: () => MediaLibrary.preload!(),
 	staticData: { pageTitle: msg`Media` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		folder:
@@ -3532,6 +3637,7 @@ export function createAdminRouter(queryClient: QueryClient) {
 		context: { queryClient },
 		basepath: "/_emdash/admin",
 		defaultPreload: "intent",
+		defaultPendingComponent: RouteLoadingScreen,
 	});
 }
 

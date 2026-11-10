@@ -1,4 +1,4 @@
-import { normalizePluginPagePath } from "@emdash-cms/blocks";
+import { normalizePluginPagePath } from "@emdash-cms/blocks/server";
 import type { MessageDescriptor } from "@lingui/core";
 import { useLingui } from "@lingui/react/macro";
 import { useLocation, useMatches } from "@tanstack/react-router";

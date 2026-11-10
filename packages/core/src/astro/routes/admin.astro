@@ -18,12 +18,11 @@ import { componentDataByCssVariable } from "virtual:astro:assets/fonts/internal"
 
 export const prerender = false;
 
-import { resolveLocale, loadMessages, getLocaleDir } from "@emdash-cms/admin/locales";
+import { resolveLocale, getLocaleDir } from "@emdash-cms/admin/locales/config";
 import { getSiteSettingsWithDb } from "#settings/index.js";
 
 const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
-const messages = await loadMessages(resolvedLocale);
 
 const adminConfig = Astro.locals.emdash?.config?.admin;
 const pageTitle = adminConfig?.siteName ? `${adminConfig.siteName} Admin` : "EmDash Admin";
@@ -145,7 +144,6 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 			<AdminWrapper
 				client:only="react"
 				locale={resolvedLocale}
-				messages={messages}
 				adminBranding={{ logo: adminConfig?.logo, siteName: adminConfig?.siteName }}
 			/>
 		</div>

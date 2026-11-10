@@ -416,6 +416,7 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
  */
 // Matches the admin stylesheet import with or without a trailing query (e.g.
 // `?url`), so both forms resolve to dist rather than the source alias.
+const ADMIN_APP_ALIAS = /^@emdash-cms\/admin\/app$/;
 const ADMIN_STYLES_ALIAS = /^@emdash-cms\/admin\/styles\.css/;
 
 const NODE_NATIVE_EXTERNALS = ["@libsql/kysely-libsql", "pg"];
@@ -515,6 +516,13 @@ export function createViteConfig(
 				// resolves to dist; a string `find` only matches on a `/` or end
 				// boundary, so `styles.css?url` would slip through to the source alias.
 				{ find: ADMIN_STYLES_ALIAS, replacement: resolve(adminDistPath, "styles.css") },
+				{
+					find: ADMIN_APP_ALIAS,
+					replacement: resolve(
+						useSource ? adminSourcePath : adminDistPath,
+						useSource ? "app-entry.ts" : "app-entry.js",
+					),
+				},
 				{ find: "@emdash-cms/admin", replacement: useSource ? adminSourcePath : adminDistPath },
 				// `use-sync-external-store/shim` is a React <18 polyfill that ships
 				// only as CJS. It's pulled in transitively by `@tiptap/react`. With

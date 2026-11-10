@@ -160,7 +160,14 @@ export function AdminApp({
 	}, [locale, dateLocaleReady]);
 
 	React.useEffect(() => {
-		if (dateLocaleReady) document.getElementById("emdash-boot-loader")?.remove();
+		if (!dateLocaleReady) return;
+		const removeBootLoader = () => {
+			if (router.state.matches.length > 0 && !router.state.isLoading) {
+				document.getElementById("emdash-boot-loader")?.remove();
+			}
+		};
+		removeBootLoader();
+		return router.subscribe("onResolved", removeBootLoader);
 	}, [dateLocaleReady]);
 
 	const i18nInitialized = React.useRef(false);

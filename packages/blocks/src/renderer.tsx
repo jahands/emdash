@@ -1,7 +1,8 @@
+import { lazy, Suspense } from "react";
+
 import { AccordionBlockComponent } from "./blocks/accordion.js";
 import { ActionsBlockComponent } from "./blocks/actions.js";
 import { BannerBlockComponent } from "./blocks/banner.js";
-import { ChartBlockComponent } from "./blocks/chart.js";
 import { CodeBlockComponent } from "./blocks/code.js";
 import { ColumnsBlockComponent } from "./blocks/columns.js";
 import { ContextBlockComponent } from "./blocks/context.js";
@@ -17,6 +18,10 @@ import { StatsBlockComponent } from "./blocks/stats.js";
 import { TabBlockComponent } from "./blocks/tab.js";
 import { TableBlockComponent } from "./blocks/table.js";
 import type { Block, BlockInteraction, LinkTargetResolver } from "./types.js";
+
+const ChartBlockComponent = lazy(() =>
+	import("./blocks/chart.js").then((mod) => ({ default: mod.ChartBlockComponent })),
+);
 
 function renderBlock(
 	block: Block,
@@ -71,7 +76,17 @@ function renderBlock(
 				/>
 			);
 		case "chart":
-			return <ChartBlockComponent block={block} />;
+			return (
+				<Suspense
+					fallback={
+						<div className="rounded-lg border border-kumo-line p-4">
+							<div style={{ height: block.config.height ?? 350 }} />
+						</div>
+					}
+				>
+					<ChartBlockComponent block={block} />
+				</Suspense>
+			);
 		case "meter":
 			return <MeterBlockComponent block={block} />;
 		case "banner":

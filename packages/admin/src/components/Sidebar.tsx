@@ -1,5 +1,5 @@
 import { Sidebar as KumoSidebar, useSidebar } from "@cloudflare/kumo";
-import { isSafePluginPagePath, normalizePluginPagePath } from "@emdash-cms/blocks";
+import { isSafePluginPagePath, normalizePluginPagePath } from "@emdash-cms/blocks/server";
 import type { I18n } from "@lingui/core";
 import { useLingui } from "@lingui/react/macro";
 import { Gear, Storefront, Users } from "@phosphor-icons/react";

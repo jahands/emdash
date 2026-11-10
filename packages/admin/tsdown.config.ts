@@ -1,9 +1,63 @@
+import { fileURLToPath } from "node:url";
+
 import { transformAsync } from "@babel/core";
-import type { Plugin } from "rolldown";
+import type { ManualChunksFunction, Plugin } from "rolldown";
 import { defineConfig } from "tsdown";
 
 const JS_TS_RE = /\.[jt]sx?$/;
 const LOCALE_CATALOG_RE = /[/\\]src[/\\]locales[/\\]([^/\\]+)[/\\]messages\.mjs$/;
+
+const APP_ENTRY = fileURLToPath(new URL("./src/app-entry.ts", import.meta.url));
+const INDEPENDENT_ENTRIES = [
+	"locales/index",
+	"locales/server",
+	"locales/config",
+	"locales/emails",
+	"slugify",
+	"html-block",
+	"portable-text-table",
+].map((path) => fileURLToPath(new URL(`./src/${path}.ts`, import.meta.url)));
+
+type ModuleInfoGetter = Parameters<ManualChunksFunction>[1]["getModuleInfo"];
+
+function staticModuleGraph(entries: string[], getModuleInfo: ModuleInfoGetter) {
+	const modules = new Set<string>();
+	const pending = [...entries];
+	while (pending.length > 0) {
+		const id = pending.pop()!;
+		if (modules.has(id)) continue;
+		const info = getModuleInfo(id);
+		if (!info || info.isExternal) continue;
+		modules.add(id);
+		pending.push(...info.importedIds);
+	}
+	return modules;
+}
+
+function adminShellPlugin(): Plugin {
+	let shellModules = new Set<string>();
+	return {
+		name: "emdash-admin-shell-chunks",
+		buildEnd(error) {
+			shellModules = new Set();
+			if (error) return;
+			const getModuleInfo: ModuleInfoGetter = (id) => this.getModuleInfo(id);
+			shellModules = staticModuleGraph([APP_ENTRY], getModuleInfo);
+			for (const id of staticModuleGraph(INDEPENDENT_ENTRIES, getModuleInfo))
+				shellModules.delete(id);
+			for (const id of shellModules) {
+				if (getModuleInfo(id)?.isEntry) shellModules.delete(id);
+			}
+		},
+		outputOptions(options) {
+			// Small shared chunks otherwise form a request waterfall on HTTP/1.1 servers.
+			return {
+				...options,
+				manualChunks: (id) => (shellModules.has(id) ? "admin-shell" : undefined),
+			};
+		},
+	};
+}
 
 function linguiMacroPlugin(): Plugin {
 	return {
@@ -57,6 +111,7 @@ export default defineConfig({
 	// React/Kumo graph must not be pulled into the server bundle.
 	entry: [
 		"src/index.ts",
+		"src/app-entry.ts",
 		"src/locales/index.ts",
 		"src/locales/server.ts",
 		"src/locales/config.ts",
@@ -66,10 +121,11 @@ export default defineConfig({
 		"src/slugify.ts",
 	],
 	format: ["esm"],
+
 	dts: true,
 	clean: true,
 	platform: "browser",
-	plugins: [linguiMacroPlugin(), localeManifestPlugin()],
+	plugins: [linguiMacroPlugin(), localeManifestPlugin(), adminShellPlugin()],
 	// @tiptap/suggestion is intentionally bundled (devDependency)
 	inlineOnly: false,
 	external: [

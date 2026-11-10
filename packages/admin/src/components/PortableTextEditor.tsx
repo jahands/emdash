@@ -6156,7 +6156,7 @@ function getSelectedTableCells(editor: Editor): ProseMirrorNode[] {
 	return cells;
 }
 
-function getSelectionTextAlignments(editor: Editor): {
+export function getSelectionTextAlignments(editor: Editor): {
 	alignments: Set<TextAlignment>;
 	isCellSelection: boolean;
 	isAlignmentUnavailable: boolean;
@@ -6169,9 +6169,13 @@ function getSelectionTextAlignments(editor: Editor): {
 			isAlignmentUnavailable: true,
 		};
 	}
-	const ownerWindow = editor.view.dom.ownerDocument.defaultView;
-	const defaultAlignment: TextAlignment =
-		ownerWindow?.getComputedStyle(editor.view.dom).direction === "rtl" ? "right" : "left";
+	const dom = editor.isInitialized ? editor.view.dom : null;
+	const direction = dom
+		? dom.ownerDocument.defaultView?.getComputedStyle(dom).direction
+		: typeof document !== "undefined"
+			? document.documentElement.dir
+			: "ltr";
+	const defaultAlignment: TextAlignment = direction === "rtl" ? "right" : "left";
 	const alignments = new Set<TextAlignment>();
 	if (tableCells.length > 0) {
 		for (const cell of tableCells) {

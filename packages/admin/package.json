@@ -41,6 +41,10 @@
     "./html-block": {
       "types": "./dist/html-block.d.ts",
       "default": "./dist/html-block.js"
+    },
+    "./app": {
+      "types": "./dist/app-entry.d.ts",
+      "default": "./dist/app-entry.js"
     }
   },
   "scripts": {
@@ -52,7 +56,8 @@
     "typecheck": "tsgo --noEmit",
     "locale:compile": "lingui compile --namespace es",
     "locale:copy": "node ./scripts/copy-locales.js",
-    "locale:extract": "lingui extract --clean"
+    "locale:extract": "lingui extract --clean",
+    "icons:generate": "node ./scripts/generate-nav-icon-loaders.mjs"
   },
   "dependencies": {
     "@atcute/lexicons": "catalog:",

@@ -6,7 +6,7 @@
  */
 
 import { CommandPalette } from "@cloudflare/kumo";
-import { isSafePluginPagePath, normalizePluginPagePath } from "@emdash-cms/blocks";
+import { isSafePluginPagePath, normalizePluginPagePath } from "@emdash-cms/blocks/server";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui as useLinguiContext } from "@lingui/react";
