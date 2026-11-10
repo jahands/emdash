@@ -3,8 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { waitForDeferredTasks } from "../../../src/deferred-tasks.js";
 import {
 	invalidateRedirectCache,
+	isRedirectCandidatePath,
 	loadCachedRedirects,
 	matchCachedPatterns,
+	primeCachedRedirects,
+	redirectCacheGeneration,
 	type RedirectRuleSet,
 	type RedirectSource,
 } from "../../../src/redirects/cache.js";
@@ -55,6 +58,59 @@ class FakeSource implements RedirectSource {
 async function destinationOf(source: RedirectSource): Promise<string | undefined> {
 	return (await loadCachedRedirects(source)).exact.get("/old")?.destination;
 }
+
+describe("primeCachedRedirects", () => {
+	beforeEach(() => {
+		invalidateRedirectCache();
+	});
+
+	it("serves primed rules without loading them", async () => {
+		const source = new FakeSource(ruleSet("v2", "/from-source"));
+		primeCachedRedirects(ruleSet("v1", "/primed"), redirectCacheGeneration());
+
+		const cached = await loadCachedRedirects(source);
+
+		expect(cached.exact.get("/old")?.destination).toBe("/primed");
+		expect(source.loads).toBe(0);
+	});
+
+	it("discards a read that started before an invalidation", async () => {
+		const source = new FakeSource(ruleSet("v2", "/from-source"));
+		const generation = redirectCacheGeneration();
+		invalidateRedirectCache();
+		primeCachedRedirects(ruleSet("v1", "/stale"), generation);
+
+		const cached = await loadCachedRedirects(source);
+
+		expect(cached.exact.get("/old")?.destination).toBe("/from-source");
+		expect(source.loads).toBe(1);
+	});
+
+	it("keeps rules a concurrent load already installed", async () => {
+		const source = new FakeSource(ruleSet("v2", "/from-source"));
+		const generation = redirectCacheGeneration();
+		await loadCachedRedirects(source);
+		primeCachedRedirects(ruleSet("v1", "/primed"), generation);
+
+		const cached = await loadCachedRedirects(source);
+
+		expect(cached.exact.get("/old")?.destination).toBe("/from-source");
+	});
+});
+
+describe("isRedirectCandidatePath", () => {
+	it.each([
+		["/about", true],
+		["/", true],
+		["/blog/v1.2/post", true],
+		["/_emdash/admin", false],
+		["/_image", false],
+		["/rss.xml", false],
+		["/logo.png", false],
+	])("%s -> %s", (pathname, expected) => {
+		expect(isRedirectCandidatePath(pathname)).toBe(expected);
+	});
+});
 
 describe("redirect cache", () => {
 	beforeEach(() => {

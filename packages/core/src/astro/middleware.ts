@@ -52,6 +52,7 @@ import { createDeferredTaskTracker } from "../deferred-tasks.js";
 import {
 	DB_INIT_DEADLINE_MS,
 	EmDashRuntime,
+	type RuntimeCreateOptions,
 	type RuntimeDependencies,
 	type SandboxedPluginEntry,
 	type MediaProviderEntry,
@@ -65,6 +66,7 @@ import type { PluginContentCacheInvalidator } from "../plugins/routes.js";
 import type { SandboxRunnerFactory } from "../plugins/sandbox/types.js";
 import type { ResolvedPlugin } from "../plugins/types.js";
 import { invalidateUrlPatternCache } from "../query.js";
+import { isRedirectCandidatePath } from "../redirects/cache.js";
 import {
 	createRequestMetrics,
 	getRequestContext,
@@ -237,6 +239,7 @@ async function getRuntime(
 	config: EmDashConfig,
 	migrationMode: RuntimeMigrationMode,
 	initTimings?: Array<{ name: string; dur: number; desc?: string }>,
+	createOptions?: RuntimeCreateOptions,
 ): Promise<EmDashRuntime> {
 	// Waiters poll rather than awaiting the initializing request's promise —
 	// workerd flags cross-request promise resolution (warnings + potential
@@ -255,7 +258,7 @@ async function getRuntime(
 		async (isCurrentClaim) => {
 			if (holder.closed) throw new Error("EmDash dev server has closed");
 			const deps = buildDependencies(config, migrationMode);
-			const runtime = await EmDashRuntime.create(deps, initTimings);
+			const runtime = await EmDashRuntime.create(deps, initTimings, createOptions);
 			// A restart can close the server while the first request is initializing.
 			if (holder.closed) {
 				await runtime.shutdown();
@@ -867,7 +870,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
 				// requests hit the cached runtime and leave this empty.
 				const initSubTimings: Array<{ name: string; dur: number; desc?: string }> = [];
 				const runtimeInitStart = performance.now();
-				const runtimeInit = config ? getRuntime(config, migrationMode, initSubTimings) : undefined;
+				const runtimeInit = config
+					? getRuntime(config, migrationMode, initSubTimings, {
+							readRedirects: isRedirectCandidatePath(url.pathname),
+						})
+					: undefined;
 				// Awaited below unless the probe fails; then it settles in the background.
 				runtimeInit?.catch(() => {});
 

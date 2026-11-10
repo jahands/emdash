@@ -106,6 +106,18 @@ export function invalidateRedirectCache(): void {
 	invalidateSingleFlightCache(cacheState.refresh);
 }
 
+/** Paths the redirect middleware never matches: internal routes and static files. */
+const REDIRECT_SKIP_PREFIXES = ["/_emdash", "/_image"];
+const REDIRECT_ASSET_EXTENSION = /\.\w{1,10}$/;
+
+/** Whether the redirect middleware consults the rules for this path. */
+export function isRedirectCandidatePath(pathname: string): boolean {
+	return (
+		!REDIRECT_SKIP_PREFIXES.some((prefix) => pathname.startsWith(prefix)) &&
+		!REDIRECT_ASSET_EXTENSION.test(pathname)
+	);
+}
+
 /** Compile a rule set into the in-memory lookup structures. */
 function compileRedirects(rules: RedirectRuleSet): CachedRedirects {
 	const exact = new Map<string, RedirectRule>();
@@ -147,6 +159,21 @@ function revalidateInBackground(source: RedirectSource, cached: CachedRedirects)
 			console.error("[emdash:redirects] revalidating redirects failed:", error);
 		}
 	});
+}
+
+/**
+ * Fill an empty cache with rules already read elsewhere, so runtime init can
+ * read them in its startup batch instead of the first request paying a round
+ * trip of its own. A concurrent load or invalidation wins over the primed rules.
+ */
+export function primeCachedRedirects(rules: RedirectRuleSet, generation: number): void {
+	if (cacheState.redirects || generation !== cacheState.generation) return;
+	installCachedRedirects(compileRedirects(rules));
+}
+
+/** The generation a primed read must still match when it is installed. */
+export function redirectCacheGeneration(): number {
+	return cacheState.generation;
 }
 
 export interface LoadCachedRedirectsOptions {

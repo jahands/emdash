@@ -376,6 +376,23 @@ async function loadPublishedRedirects(
 	return { version: state.generation, exact, patterns };
 }
 
+/**
+ * Reads the published generation for runtime init to fold into its startup
+ * reads. Resolves to null when nothing current is published or the tables do
+ * not exist yet, leaving the middleware to load the rules and repair the
+ * generation on a connection that outlives init.
+ */
+export async function readPublishedRedirects(
+	db: Kysely<Database>,
+): Promise<RedirectRuleSet | null> {
+	try {
+		return await loadPublishedRedirects(db);
+	} catch (error) {
+		if (isMissingTableError(error)) return null;
+		throw error;
+	}
+}
+
 async function loadRulesTable(db: Kysely<Database>): Promise<RedirectRuleSet> {
 	const redirects = await new RedirectRepository(db).findAllEnabled();
 	return toRuleSet(

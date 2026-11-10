@@ -310,6 +310,12 @@ import {
 	syncDeclaredStorageIndexes,
 	type StorageIndexSyncResult,
 } from "./plugins/storage-indexes.js";
+import { readPublishedRedirects } from "./redirects/artifacts.js";
+import {
+	primeCachedRedirects,
+	redirectCacheGeneration,
+	type RedirectRuleSet,
+} from "./redirects/cache.js";
 import { getRegistryConfigInput, resolveManifestRegistryConfig } from "./registry/config.js";
 import { requestCached } from "./request-cache.js";
 import { getRequestContext } from "./request-context.js";
@@ -459,6 +465,15 @@ export type CreateSchedulerFn = (executor: CronExecutor) => CronScheduler;
 /**
  * Dependencies injected from virtual modules (middleware reads these)
  */
+export interface RuntimeCreateOptions {
+	/**
+	 * Read the published redirect rules with the startup reads. Set when the
+	 * request that triggers init will consult them, so the read is not paid by
+	 * paths the redirect middleware skips.
+	 */
+	readRedirects?: boolean;
+}
+
 export interface RuntimeDependencies {
 	config: EmDashConfig;
 	/** Effective migration mode, resolved once by the runtime entrypoint. */
@@ -1859,6 +1874,7 @@ export class EmDashRuntime {
 	static async create(
 		deps: RuntimeDependencies,
 		timings?: Array<{ name: string; dur: number; desc?: string }>,
+		createOptions: RuntimeCreateOptions = {},
 	): Promise<EmDashRuntime> {
 		// Helper: time a phase and push into the shared timings array when
 		// provided. Uses performance.now() — monotonic across async boundaries.
@@ -1926,6 +1942,7 @@ export class EmDashRuntime {
 				// Fall back to the singleton below.
 			}
 		}
+		const redirectGeneration = redirectCacheGeneration();
 		let missingManualSchemaError: unknown;
 		const captureMissingManualSchema = (error: unknown) => {
 			if ((deps.migrationMode ?? "auto") === "manual" && isMissingTableError(error)) {
@@ -1982,6 +1999,7 @@ export class EmDashRuntime {
 				exclusiveHookSelections?: Map<string, string | undefined>;
 				site?: Awaited<ReturnType<typeof readSiteInfo>>;
 				seedCollectionsReadable: boolean;
+				publishedRedirects?: RedirectRuleSet | null;
 			} = {
 				pluginStates: new Map(),
 				pluginStatesRead: false,
@@ -2036,6 +2054,18 @@ export class EmDashRuntime {
 					}
 				}),
 			];
+
+			if (ownsConfiguredDb && createOptions.readRedirects) {
+				coldStartReads.push(
+					phase("rt.redirects", "Published redirects", async () => {
+						try {
+							reads.publishedRedirects = await readPublishedRedirects(readDb);
+						} catch {
+							// The redirect middleware loads the rules itself.
+						}
+					}),
+				);
+			}
 
 			if (ownsConfiguredDb) {
 				coldStartReads.push(
@@ -2119,6 +2149,9 @@ export class EmDashRuntime {
 		const readDb = coalescingDb ?? db;
 		const foldedReads = await foldedColdStartReads;
 		const reads = foldedReads && migrationsCurrent ? foldedReads : await runColdStartReads(readDb);
+		if (reads.publishedRedirects) {
+			primeCachedRedirects(reads.publishedRedirects, redirectGeneration);
+		}
 		const {
 			pluginStates,
 			pluginStatesRead,

@@ -20,6 +20,7 @@ import { z } from "zod";
 
 import { NodeSqliteCompatDatabase as Database } from "#node-sqlite";
 
+import { handleRedirectCreate } from "../../../src/api/handlers/redirects.js";
 import { DEFAULT_COMMENT_MODERATOR_PLUGIN_ID } from "../../../src/comments/moderator.js";
 import { LockingSqliteAdapter } from "../../../src/database/migration-lock.js";
 import {
@@ -42,6 +43,7 @@ import type { RuntimeDependencies } from "../../../src/emdash-runtime.js";
 import { getI18nConfig, setI18nConfig } from "../../../src/i18n/config.js";
 import { definePlugin } from "../../../src/plugins/define-plugin.js";
 import type { ContentBeforeSaveHandler } from "../../../src/plugins/types.js";
+import { invalidateRedirectCache, loadCachedRedirects } from "../../../src/redirects/cache.js";
 import { runWithContext } from "../../../src/request-context.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 
@@ -339,6 +341,60 @@ describe("EmDashRuntime.create — cold boot", () => {
 			await setupDb.destroy();
 			setI18nConfig(previousI18nConfig);
 		}
+	});
+
+	describe("published redirect priming", () => {
+		const source = () => ({
+			load: vi.fn(async () => ({ version: "from-source", exact: [], patterns: [] })),
+			isCurrent: vi.fn(async () => true),
+		});
+
+		afterEach(() => {
+			invalidateRedirectCache();
+		});
+
+		async function createMigratedRuntime(readRedirects: boolean) {
+			const sqlite = new Database(":memory:");
+			const setupDb = new Kysely<EmDashDatabase>({
+				dialect: new SqliteDialect({ database: sqlite }),
+			});
+			await runMigrations(setupDb);
+			await new OptionsRepository(setupDb).set("emdash:setup_complete", true);
+			await handleRedirectCreate(setupDb, { source: "/old", destination: "/new" });
+			invalidateRedirectCache();
+			const deps = createDeps();
+			deps.createDialect = () => new SqliteDialect({ database: sqlite });
+			const runtime = await EmDashRuntime.create(deps, undefined, { readRedirects });
+			return {
+				async cleanup() {
+					await runtime.stopCron();
+					await setupDb.destroy();
+				},
+			};
+		}
+
+		it("loads the published rules with the startup reads for the first request", async () => {
+			const { cleanup } = await createMigratedRuntime(true);
+			try {
+				const redirects = source();
+				const cached = await loadCachedRedirects(redirects);
+				expect(redirects.load).not.toHaveBeenCalled();
+				expect(cached.exact.get("/old")?.destination).toBe("/new");
+			} finally {
+				await cleanup();
+			}
+		});
+
+		it("leaves the rules to the middleware when the request will not use them", async () => {
+			const { cleanup } = await createMigratedRuntime(false);
+			try {
+				const redirects = source();
+				await loadCachedRedirects(redirects);
+				expect(redirects.load).toHaveBeenCalledTimes(1);
+			} finally {
+				await cleanup();
+			}
+		});
 	});
 
 	it("warns about historical taxonomy locales when the operator manifest is built", async () => {
