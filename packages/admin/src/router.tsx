@@ -4,7 +4,7 @@
  * Defines all admin routes and their components.
  */
 
-import { Banner, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Loader, useKumoToastManager } from "@cloudflare/kumo";
 import { msg, plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type { QueryClient } from "@tanstack/react-query";
@@ -16,7 +16,6 @@ import {
 	useQueryClient,
 } from "@tanstack/react-query";
 import {
-	lazyRouteComponent,
 	createRouter,
 	createRootRouteWithContext,
 	createRoute,
@@ -41,6 +40,7 @@ import {
 	type ContentStatusFilter,
 } from "./components/ContentList";
 import { EntryLockNotice } from "./components/EntryLockNotice";
+import { QueryErrorState } from "./components/QueryErrorState.js";
 import { RequireAdmin } from "./components/RequireAdmin.js";
 import { Shell } from "./components/Shell";
 import { useAdminBranding } from "./lib/admin-branding-context.js";
@@ -135,6 +135,7 @@ import {
 } from "./lib/content-list-search";
 import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/content-permissions";
 import { describeContentValidationError } from "./lib/content-validation-errors";
+import { lazyRouteComponent, retryFailedScreens } from "./lib/lazy-screen.js";
 import { usePluginPage } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
 import { withAutosavedDraft } from "./lib/revision-list-cache.js";
@@ -1074,7 +1075,7 @@ const contentNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/new",
 	component: ContentNewPage,
-	loader: () => ContentEditor.preload!(),
+	loader: () => ContentEditor.preload(),
 	staticData: { fullBleed: true, pageTitle: msg`New content` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
@@ -1237,7 +1238,7 @@ const contentEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/$id",
 	component: ContentEditPage,
-	loader: () => ContentEditor.preload!(),
+	loader: () => ContentEditor.preload(),
 	staticData: { fullBleed: true, pageTitle: msg`Edit content` },
 	validateSearch: (search) => ({
 		...(typeof search.field === "string" && { field: search.field }),
@@ -2319,7 +2320,7 @@ const mediaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/media",
 	component: MediaPage,
-	loader: () => MediaLibrary.preload!(),
+	loader: () => MediaLibrary.preload(),
 	staticData: { pageTitle: msg`Media` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		folder:
@@ -2660,6 +2661,8 @@ function CommentsPage() {
 	const {
 		data: commentsData,
 		isLoading,
+		isError: commentsError,
+		refetch: refetchComments,
 		fetchNextPage,
 		hasNextPage,
 	} = useInfiniteQuery({
@@ -2677,7 +2680,11 @@ function CommentsPage() {
 	});
 
 	// Fetch counts
-	const { data: counts } = useQuery({
+	const {
+		data: counts,
+		isError: countsError,
+		refetch: refetchCounts,
+	} = useQuery({
 		queryKey: ["commentCounts"],
 		queryFn: fetchCommentCounts,
 	});
@@ -2755,6 +2762,11 @@ function CommentsPage() {
 			comments={allComments}
 			counts={counts ?? { pending: 0, approved: 0, spam: 0, trash: 0 }}
 			isLoading={isLoading}
+			loadError={commentsError || countsError}
+			onRetry={() => {
+				void refetchComments();
+				void refetchCounts();
+			}}
 			nextCursor={lastPage?.nextCursor}
 			collections={manifest?.collections ?? {}}
 			activeStatus={activeStatus}
@@ -3655,6 +3667,14 @@ export function createAdminRouter(queryClient: QueryClient) {
 		defaultPreload: "intent",
 		defaultPreloadStaleTime: 0,
 		defaultPendingComponent: RouteLoadingScreen,
+		defaultErrorComponent: ({ reset }) => (
+			<QueryErrorState
+				onRetry={() => {
+					retryFailedScreens();
+					reset();
+				}}
+			/>
+		),
 	});
 }
 
@@ -3689,24 +3709,23 @@ function LoadingScreen() {
 		<div className="flex items-center justify-center min-h-screen">
 			<div className="text-center">
 				<Loader />
-				<p className="mt-4 text-kumo-subtle">{t`Loading configuration...`}</p>
+				<p className="mt-4 text-kumo-subtle">{t`Loading...`}</p>
 			</div>
 		</div>
 	);
 }
 
-function ErrorScreen({ error }: { error: string }) {
-	const { t } = useLingui();
+function ErrorScreen({ error: _error }: { error: string }) {
+	const queryClient = useQueryClient();
 	return (
-		<div className="flex items-center justify-center min-h-screen">
-			<div className="text-center">
-				<h1 className="text-2xl font-semibold leading-tight text-kumo-danger">{t`Error`}</h1>
-				<p className="mt-2 text-sm text-kumo-subtle">{error}</p>
-				<Button onClick={() => window.location.reload()} className="mt-4">
-					{t`Retry`}
-				</Button>
-			</div>
-		</div>
+		<QueryErrorState
+			onRetry={() => {
+				void queryClient.refetchQueries({
+					type: "active",
+					predicate: (query) => query.state.status === "error",
+				});
+			}}
+		/>
 	);
 }
 

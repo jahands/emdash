@@ -68,6 +68,7 @@ import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { CaretNext } from "./ArrowIcons.js";
 import { CapabilityConsentDialog } from "./CapabilityConsentDialog.js";
 import { DialogError, getMutationError } from "./DialogError.js";
+import { QueryErrorState } from "./QueryErrorState.js";
 import { RegistryPluginIdentity, useRegistryPluginIdentity } from "./RegistryPluginIdentity.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
 
@@ -114,6 +115,7 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 		data: plugins,
 		isLoading,
 		error,
+		refetch,
 	} = useQuery({
 		queryKey: ["plugins"],
 		queryFn: fetchPlugins,
@@ -189,7 +191,7 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 		return (
 			<div className="space-y-6">
 				<h1 className="text-2xl font-semibold leading-tight">{t`Plugins`}</h1>
-				<div className="text-kumo-danger">{t`Failed to load plugins: ${error.message}`}</div>
+				<QueryErrorState onRetry={() => void refetch()} />
 			</div>
 		);
 	}

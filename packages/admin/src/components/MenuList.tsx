@@ -27,6 +27,7 @@ import { DialogError, getMutationError } from "./DialogError.js";
 import { HelpLabel } from "./FieldHelpLabel.js";
 import { LocaleSwitcher, useI18nConfig } from "./LocaleSwitcher.js";
 import { MenuCard } from "./MenuCard.js";
+import { QueryErrorState } from "./QueryErrorState.js";
 
 const MENU_NAME_PATTERN = /^[a-z0-9-]+$/;
 
@@ -74,7 +75,12 @@ export function MenuList() {
 		if (i18n && !activeLocale) setActiveLocale(i18n.defaultLocale);
 	}, [i18n, activeLocale]);
 
-	const { data: menus, isLoading } = useQuery({
+	const {
+		data: menus,
+		isLoading,
+		isError,
+		refetch,
+	} = useQuery({
 		queryKey: ["menus", activeLocale],
 		queryFn: () => fetchMenus({ locale: activeLocale }),
 	});
@@ -249,7 +255,9 @@ export function MenuList() {
 				</div>
 			</header>
 
-			{!menus || menus.length === 0 ? (
+			{isError ? (
+				<QueryErrorState onRetry={() => void refetch()} />
+			) : !menus || menus.length === 0 ? (
 				<LayerCard className="flex flex-col items-center px-6 py-16 text-center">
 					<span className="mb-5 flex size-14 items-center justify-center rounded-xl bg-kumo-tint text-kumo-brand">
 						<ADMIN_NAV_ICONS.menus size={28} aria-hidden="true" />

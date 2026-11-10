@@ -2,7 +2,7 @@ import { Toasty } from "@cloudflare/kumo";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { userEvent } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 
 import "../../dist/styles.css";
 import { Widgets } from "../../src/components/Widgets";
@@ -74,6 +74,27 @@ describe("Widgets", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
 		mockDefaults();
+	});
+
+	it("keeps a failed load and Retry visible on a phone, then restores the areas", async () => {
+		const viewport = { width: window.innerWidth, height: window.innerHeight };
+		await page.viewport(390, 844);
+		try {
+			vi.mocked(api.fetchWidgetAreas).mockRejectedValueOnce(new Error("offline"));
+			const screen = await render(<Widgets />, { wrapper: Wrapper });
+			const alert = screen.getByRole("alert");
+			await expect.element(alert).toBeInTheDocument();
+			await expect
+				.element(screen.getByRole("heading", { name: "Widgets", exact: true }))
+				.toBeInTheDocument();
+			const bounds = alert.element().getBoundingClientRect();
+			expect(bounds.left).toBeGreaterThanOrEqual(0);
+			expect(bounds.right).toBeLessThanOrEqual(window.innerWidth);
+			await screen.getByRole("button", { name: "Retry", exact: true }).click();
+			await expect.element(screen.getByText("Sidebar", { exact: true })).toBeInTheDocument();
+		} finally {
+			await page.viewport(viewport.width, viewport.height);
+		}
 	});
 
 	it("displays widget areas with labels", async () => {

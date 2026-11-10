@@ -472,6 +472,29 @@ describe("TaxonomyManager", () => {
 		mockApiFetch();
 	});
 
+	it("shows failed term loads as an error while retaining the taxonomy heading", async () => {
+		const original = vi.mocked(apiFetch).getMockImplementation()!;
+		vi.mocked(apiFetch).mockImplementation((input, init) =>
+			(typeof input === "string" ? input : input instanceof URL ? input.href : input.url).includes(
+				"/terms",
+			)
+				? Promise.resolve(
+						new Response(
+							JSON.stringify({ error: { code: "INTERNAL_ERROR", message: "offline" } }),
+							{ status: 500, headers: { "Content-Type": "application/json" } },
+						),
+					)
+				: original(input, init),
+		);
+		const screen = await render(<TaxonomyManager taxonomyName="categories" />, {
+			wrapper: Wrapper,
+		});
+		await expect
+			.element(screen.getByRole("heading", { name: "Categories", exact: true }))
+			.toBeInTheDocument();
+		await expect.element(screen.getByRole("alert")).toBeInTheDocument();
+	});
+
 	it("displays taxonomy name as heading", async () => {
 		const screen = await render(<TaxonomyManager taxonomyName="categories" />, {
 			wrapper: Wrapper,

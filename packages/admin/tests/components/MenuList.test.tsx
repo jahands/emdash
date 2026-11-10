@@ -89,6 +89,17 @@ describe("MenuList", () => {
 		mockMenus();
 	});
 
+	it("keeps failed loads distinct from empty menus and retries in place", async () => {
+		vi.mocked(api.fetchMenus).mockRejectedValueOnce(new Error("offline"));
+		const screen = await render(<MenuList />, { wrapper: Wrapper });
+		await expect.element(screen.getByRole("alert")).toBeInTheDocument();
+		await expect
+			.element(screen.getByRole("heading", { name: "Menus", exact: true }))
+			.toBeInTheDocument();
+		await screen.getByRole("button", { name: "Retry", exact: true }).click();
+		await expect.element(screen.getByRole("heading", { name: "Main Menu" })).toBeInTheDocument();
+	});
+
 	it("displays list of menus with labels and item counts", async () => {
 		const screen = await render(<MenuList />, { wrapper: Wrapper });
 

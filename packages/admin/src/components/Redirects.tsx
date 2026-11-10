@@ -59,6 +59,7 @@ import {
 } from "./DataTable.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { PageHeader } from "./PageHeader.js";
+import { QueryErrorState } from "./QueryErrorState.js";
 import { TableToolbarSearch } from "./TableToolbar.js";
 
 const REDIRECT_LIST_KEY = ["redirects", "list"] as const;
@@ -784,7 +785,9 @@ export function Redirects() {
 					)}
 
 					{/* Redirect list */}
-					{redirectsQuery.isLoading ? (
+					{redirectsQuery.isError ? (
+						<QueryErrorState onRetry={() => void redirectsQuery.refetch()} />
+					) : redirectsQuery.isLoading ? (
 						<div className="py-12 text-center text-kumo-subtle">{t`Loading redirects...`}</div>
 					) : redirects.length === 0 ? (
 						<div className="py-10 text-center text-kumo-subtle">

@@ -137,7 +137,7 @@ describe("ContentEditPage when the entry fails to load", () => {
 		expect(document.body.textContent).not.toContain("Your role can only view published content.");
 	});
 
-	it("shows the server error for other failures", async () => {
+	it("shows an in-shell error for other failures and retries the entry", async () => {
 		mockFetch
 			.on("GET", "/_emdash/api/auth/me", { data: { id: "user_01", role: 40 } })
 			.on(
@@ -149,8 +149,15 @@ describe("ContentEditPage when the entry fails to load", () => {
 
 		const screen = await openEntry();
 
-		await expect.element(screen.getByRole("heading", { name: "Error" })).toBeVisible();
-		await expect.element(screen.getByText("Failed to get content")).toBeVisible();
+		await expect.element(screen.getByRole("alert")).toBeVisible();
+		await expect
+			.element(screen.getByRole("heading", { name: "Something went wrong" }))
+			.toBeVisible();
+		mockFetch
+			.on("GET", ITEM_URL, { data: { item: publishedPost() } })
+			.on("GET", "/_emdash/api/revisions", { data: { item: null } });
+		await screen.getByRole("button", { name: "Retry", exact: true }).click();
+		await expect.element(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Hello");
 	});
 
 	it("keeps the open editor when a background refetch fails", async () => {

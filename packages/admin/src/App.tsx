@@ -21,6 +21,7 @@ import { AdminBrandingProvider, type AdminBranding } from "./lib/admin-branding-
 import { refetchCurrentUserOnForbidden } from "./lib/api/current-user";
 import { AuthProviderProvider, type AuthProviders } from "./lib/auth-provider-context";
 import { PluginAdminProvider, type PluginAdmins } from "./lib/plugin-context";
+import { retryAdminQuery } from "./lib/query-retry.js";
 import { getLoadedDateLocale, waitForDateLocale } from "./locales/date-locale.js";
 import { LocaleDirectionProvider } from "./locales/index.js";
 import { KumoTranslationsProvider } from "./locales/KumoTranslationsProvider.js";
@@ -31,7 +32,9 @@ const queryClient = new QueryClient({
 	defaultOptions: {
 		queries: {
 			staleTime: 1000 * 60, // 1 minute
-			retry: 1,
+			retry: retryAdminQuery,
+			retryDelay: 250,
+			retryOnMount: false,
 		},
 	},
 });

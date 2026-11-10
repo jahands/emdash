@@ -22,6 +22,7 @@ import {
 import { CoreUpdateBanner } from "./CoreUpdateBanner.js";
 import { getMutationError } from "./DialogError.js";
 import { MarketplaceMigrationBanner } from "./MarketplaceMigrationBanner.js";
+import { QueryErrorState } from "./QueryErrorState.js";
 import { RouterLinkButton } from "./RouterLinkButton";
 import { SandboxedPluginWidget } from "./SandboxedPluginWidget";
 import {
@@ -63,6 +64,7 @@ export function Dashboard({ manifest }: DashboardProps) {
 		data: stats,
 		isLoading,
 		isError,
+		refetch,
 	} = useQuery({
 		queryKey: ["dashboard-stats"],
 		queryFn: fetchDashboardStats,
@@ -81,7 +83,7 @@ export function Dashboard({ manifest }: DashboardProps) {
 
 			<CoreUpdateBanner />
 
-			{isError && <DashboardDataError />}
+			{isError && <QueryErrorState onRetry={() => void refetch()} />}
 
 			{showDashboardData && (
 				<>
@@ -305,18 +307,6 @@ function SiteImportHint({ stats }: { stats: DashboardStats }) {
 					</Button>
 				</div>
 			}
-		/>
-	);
-}
-
-function DashboardDataError() {
-	const { t } = useLingui();
-
-	return (
-		<Banner
-			variant="error"
-			title={t`Could not load dashboard data`}
-			description={t`Refresh the page or try again.`}
 		/>
 	);
 }

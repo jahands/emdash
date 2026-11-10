@@ -101,6 +101,15 @@ describe("Redirects", () => {
 		});
 	});
 
+	it("keeps a failed request distinct from an empty redirect list and retries", async () => {
+		vi.mocked(fetchRedirects).mockRejectedValueOnce(new Error("offline"));
+		const screen = await render(<Redirects />);
+		await expect.element(screen.getByRole("alert")).toBeInTheDocument();
+		await expect.element(screen.getByText("No redirects yet")).not.toBeInTheDocument();
+		await screen.getByRole("button", { name: "Retry", exact: true }).click();
+		await expect.element(screen.getByText("/source-100")).toBeInTheDocument();
+	});
+
 	it("loads redirects beyond the first page", async () => {
 		const screen = await render(<Redirects />);
 

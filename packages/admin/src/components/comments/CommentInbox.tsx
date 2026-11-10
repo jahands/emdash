@@ -1,11 +1,10 @@
+import { Badge, Button, Checkbox, DropdownMenu, Select } from "@cloudflare/kumo";
 /**
  * Comment moderation inbox.
  *
  * Status tabs (Pending, Approved, Spam, Trash), search, collection filter,
  * table with row actions, bulk selection, and detail slide-over.
  */
-
-import { Badge, Button, Checkbox, DropdownMenu, Select } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import {
@@ -39,6 +38,7 @@ import {
 	tertiaryColumn,
 } from "../DataTable.js";
 import { PageHeader } from "../PageHeader.js";
+import { QueryErrorState } from "../QueryErrorState.js";
 import { TableToolbarSearch } from "../TableToolbar.js";
 import { CommentDetail } from "./CommentDetail.js";
 
@@ -50,6 +50,8 @@ export interface CommentInboxProps {
 	comments: AdminComment[];
 	counts: CommentCounts;
 	isLoading: boolean;
+	loadError?: boolean;
+	onRetry?: () => void;
 	nextCursor?: string;
 	collections: Record<string, { label: string }>;
 	activeStatus: CommentStatus;
@@ -91,6 +93,8 @@ export function CommentInbox({
 	comments,
 	counts,
 	isLoading,
+	loadError,
+	onRetry,
 	nextCursor,
 	collections,
 	activeStatus,
@@ -341,7 +345,9 @@ export function CommentInbox({
 			)}
 
 			{/* Table */}
-			{!showLoading && paginatedComments.length === 0 ? (
+			{loadError ? (
+				<QueryErrorState onRetry={() => onRetry?.()} />
+			) : !showLoading && paginatedComments.length === 0 ? (
 				<EmptyState status={activeStatus} hasFilters={Boolean(searchQuery || collectionFilter)} />
 			) : (
 				<DataTable>

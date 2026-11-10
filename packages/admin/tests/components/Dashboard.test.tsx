@@ -138,6 +138,19 @@ describe("Dashboard", () => {
 		window.localStorage.clear();
 	});
 
+	it("keeps the dashboard heading on failure and retries without reloading", async () => {
+		mockFetchDashboardStats
+			.mockRejectedValueOnce(new Error("offline"))
+			.mockResolvedValue({ ...makeStats([]), mediaCount: 7 });
+		const screen = await render(<Dashboard manifest={manifest} />);
+		await expect.element(screen.getByRole("alert")).toBeInTheDocument();
+		await expect
+			.element(screen.getByRole("heading", { name: "Dashboard", exact: true }))
+			.toBeInTheDocument();
+		await screen.getByRole("button", { name: "Retry", exact: true }).click();
+		await expect.element(screen.getByText("7", { exact: true })).toBeInTheDocument();
+	});
+
 	it("shows marketplace migration guidance to admins", async () => {
 		mockFetchDashboardStats.mockResolvedValue(makeStats([]));
 

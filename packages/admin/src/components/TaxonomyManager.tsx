@@ -69,6 +69,7 @@ import { DialogError, getMutationError } from "./DialogError.js";
 import { DialogSection } from "./DialogSection.js";
 import { HelpLabel, HelpTooltip } from "./FieldHelpLabel.js";
 import { LocaleSwitcher, useI18nConfig } from "./LocaleSwitcher.js";
+import { QueryErrorState } from "./QueryErrorState.js";
 import { TableToolbarSearch } from "./TableToolbar.js";
 import { TranslationsPanel } from "./TranslationsPanel.js";
 
@@ -1059,7 +1060,12 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 	// def is primarily structural ("does this taxonomy exist, is it
 	// hierarchical, which collections use it"). Label translations exist per
 	// locale but are not required for the page to render.
-	const { data: taxonomyDef, isLoading: defLoading } = useQuery({
+	const {
+		data: taxonomyDef,
+		isLoading: defLoading,
+		isError: defError,
+		refetch: refetchDef,
+	} = useQuery({
 		queryKey: ["taxonomy-def", taxonomyName],
 		queryFn: () => fetchTaxonomyDef(taxonomyName),
 	});
@@ -1067,7 +1073,12 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 	// The count mode belongs in the key: the editor's taxonomy picker reads the
 	// same endpoint without counts, and this page renders them.
 	const termsQueryKey = ["taxonomy-terms", taxonomyName, activeLocale, { includeCounts: true }];
-	const { data: terms = [], isLoading: termsLoading } = useQuery({
+	const {
+		data: terms = [],
+		isLoading: termsLoading,
+		isError: termsError,
+		refetch: refetchTerms,
+	} = useQuery({
 		queryKey: termsQueryKey,
 		queryFn: () => fetchTerms(taxonomyName, { locale: activeLocale }),
 	});
@@ -1196,6 +1207,8 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 	if (defLoading) {
 		return <div>{t`Loading...`}</div>;
 	}
+
+	if (defError) return <QueryErrorState onRetry={() => void refetchDef()} />;
 
 	if (!taxonomyDef) {
 		return (
@@ -1327,7 +1340,9 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 						</tr>
 					</thead>
 					<tbody>
-						{termsLoading ? (
+						{termsError ? (
+							<QueryErrorState onRetry={() => void refetchTerms()} />
+						) : termsLoading ? (
 							<DataTableMessage colSpan={3}>{t`Loading terms...`}</DataTableMessage>
 						) : terms.length === 0 ? (
 							<DataTableMessage colSpan={3}>

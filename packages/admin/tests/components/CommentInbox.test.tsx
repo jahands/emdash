@@ -60,6 +60,16 @@ describe("CommentInbox", () => {
 		vi.clearAllMocks();
 	});
 
+	it("shows a load error rather than claiming no comments exist", async () => {
+		const screen = await render(
+			<CommentInbox {...noopProps} comments={[]} loadError onRetry={() => {}} />,
+		);
+		await expect.element(screen.getByRole("alert")).toBeInTheDocument();
+		await expect
+			.element(screen.getByText("No comments awaiting moderation."))
+			.not.toBeInTheDocument();
+	});
+
 	it("keeps status switching wired through the page header", async () => {
 		const screen = await render(<CommentInbox {...noopProps} />);
 
