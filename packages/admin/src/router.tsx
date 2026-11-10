@@ -1439,11 +1439,11 @@ function ContentEditPage() {
 		};
 	}, [rawItem, draftRevision]);
 
-	// Fetch users list for author selector (only if user is editor+)
+	// Listing users requires users:read, even when the entry itself is editable.
 	const { data: usersData } = useQuery({
 		queryKey: ["users"],
 		queryFn: () => fetchUsers({ limit: 100 }),
-		enabled: !!currentUser && currentUser.role >= ROLE_EDITOR,
+		enabled: !!currentUser && currentUser.role >= ROLE_ADMIN,
 		staleTime: 5 * 60 * 1000,
 	});
 
@@ -2667,6 +2667,7 @@ function CommentsPage() {
 		hasNextPage,
 	} = useInfiniteQuery({
 		queryKey: ["comments", activeStatus, collectionFilter, debouncedSearch],
+		enabled: !!currentUser && currentUser.role >= ROLE_EDITOR,
 		queryFn: ({ pageParam }) =>
 			fetchComments({
 				status: activeStatus,
@@ -2687,6 +2688,7 @@ function CommentsPage() {
 	} = useQuery({
 		queryKey: ["commentCounts"],
 		queryFn: fetchCommentCounts,
+		enabled: !!currentUser && currentUser.role >= ROLE_EDITOR,
 	});
 
 	// Status change mutation
@@ -2929,7 +2931,11 @@ const seoSettingsRoute = createRoute({
 const pluginManagerRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins-manager",
-	component: PluginManagerPage,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<PluginManagerPage />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Plugins` },
 });
 
@@ -3112,7 +3118,11 @@ const widgetsRoute = createRoute({
 const redirectsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/redirects",
-	component: Redirects,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<Redirects />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Redirects` },
 });
 
@@ -3179,11 +3189,16 @@ const bylineSchemaRoute = createRoute({
 const contentTypesListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types",
-	component: ContentTypesListPage,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<ContentTypesListPage />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Content Types` },
 });
 
 function ContentTypesListPage() {
+	const { data: currentUser } = useCurrentUser();
 	const { t } = useLingui();
 	const queryClient = useQueryClient();
 	const toastManager = useKumoToastManager();
@@ -3204,6 +3219,7 @@ function ContentTypesListPage() {
 	} = useQuery({
 		queryKey: ["schema", "orphans"],
 		queryFn: fetchOrphanedTables,
+		enabled: !!currentUser && currentUser.role >= ROLE_ADMIN,
 	});
 	const {
 		data: blockTypes,
@@ -3279,7 +3295,11 @@ function ContentTypesListPage() {
 const contentTypesNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/new",
-	component: ContentTypesNewPage,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<ContentTypesNewPage />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`New content type` },
 });
 
@@ -3315,7 +3335,11 @@ function ContentTypesNewPage() {
 const relationsListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/relations",
-	component: RelationsListPage,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<RelationsListPage />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Relations` },
 });
 
@@ -3376,7 +3400,11 @@ function useRelationsQuery() {
 const contentTypesEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/$slug",
-	component: ContentTypesEditPage,
+	component: () => (
+		<RequireAdmin minimumRole={ROLE_EDITOR}>
+			<ContentTypesEditPage />
+		</RequireAdmin>
+	),
 	staticData: { pageTitle: msg`Edit content type` },
 });
 

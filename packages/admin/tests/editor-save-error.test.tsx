@@ -87,7 +87,7 @@ function createMockServer(
 					: MANIFEST,
 			});
 		if (method === "GET" && url === "/_emdash/api/auth/me")
-			return jsonResponse({ data: { id: "user-1", role: 40 } });
+			return jsonResponse({ data: { id: "user-1", role: 50 } });
 		if (method === "GET" && url.startsWith("/_emdash/api/bylines"))
 			return jsonResponse({ data: { items: [] } });
 		if (method === "GET" && url.startsWith("/_emdash/api/admin/users"))

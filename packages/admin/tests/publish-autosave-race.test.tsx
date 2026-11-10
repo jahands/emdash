@@ -965,6 +965,7 @@ describe("ContentEditPage actions during a save conflict", () => {
 		const inner = globalThis.fetch;
 		globalThis.fetch = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			if (url === "/_emdash/api/auth/me") return jsonResponse({ data: { id: "user_1", role: 50 } });
 			if (url.includes("/users")) {
 				return jsonResponse({
 					data: {

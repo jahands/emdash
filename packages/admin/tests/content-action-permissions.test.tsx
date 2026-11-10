@@ -244,5 +244,6 @@ describe("content editor Save and Publish offers", () => {
 
 		await expect.element(screen.getByRole("button", { name: "Publish now" })).toBeVisible();
 		await expect.element(screen.getByRole("textbox", { name: "Title" })).toBeEnabled();
+		expect(requests.filter((request) => request.includes("/admin/users"))).toEqual([]);
 	});
 });

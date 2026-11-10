@@ -191,3 +191,32 @@ describe("routes that stay reachable for non-admins", () => {
 		await expect.element(screen.getByText("Access denied")).not.toBeInTheDocument();
 	});
 });
+
+describe("read permission gates", () => {
+	it.each(["/redirects", "/content-types", "/plugins-manager"])(
+		"denies a contributor at %s before requesting protected data",
+		async (to) => {
+			const mockFetch = createMockFetch();
+			mockFetch
+				.on("GET", "/_emdash/api/manifest", { data: MANIFEST })
+				.on("GET", "/_emdash/api/auth/me", { data: { id: "user_01", role: 20 } });
+			const fetchSpy = vi.spyOn(globalThis, "fetch");
+			try {
+				const { router, TestApp } = buildRouter();
+				await router.navigate({ to });
+				const screen = await render(<TestApp />);
+				await expect.element(screen.getByText("Access denied")).toBeInTheDocument();
+				expect(
+					fetchSpy.mock.calls.some(([url]) =>
+						/\/(redirects|schema|relations|admin\/plugins)(\/|\?|$)/.test(
+							typeof url === "string" ? url : url instanceof URL ? url.href : url.url,
+						),
+					),
+				).toBe(false);
+			} finally {
+				fetchSpy.mockRestore();
+				mockFetch.restore();
+			}
+		},
+	);
+});
