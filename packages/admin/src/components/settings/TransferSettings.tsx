@@ -51,22 +51,22 @@ export function TransferSettings({ focusImport = false }: { focusImport?: boolea
 		enabled: isAdmin,
 	});
 
-	const ready = isAdmin && !!capabilitiesQuery.data;
+	const loading =
+		userLoading ||
+		(isAdmin && (capabilitiesQuery.isPending || exportsQuery.isPending || importsQuery.isPending));
+	const importShown = !loading && isAdmin && !capabilitiesQuery.error && !!capabilitiesQuery.data;
 	React.useEffect(() => {
-		if (!focusImport || !ready) return;
+		if (!focusImport || !importShown) return;
 		const target = importRef.current;
 		if (!target) return;
 		target.scrollIntoView({ block: "start" });
 		target.focus({ preventScroll: true });
-	}, [focusImport, ready]);
+	}, [focusImport, importShown]);
 
 	const title = t`Transfer`;
 	const description = t`Move this site to another EmDash installation, or import a site package into this one.`;
 
-	if (
-		userLoading ||
-		(isAdmin && (capabilitiesQuery.isPending || exportsQuery.isPending || importsQuery.isPending))
-	) {
+	if (loading) {
 		return (
 			<SettingsFrame title={title} description={description}>
 				<div

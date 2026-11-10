@@ -215,6 +215,29 @@ describe("TransferSettings", () => {
 		const chooseButton = screen.getByRole("button", { name: "Choose package file" });
 		await expect.element(chooseButton).toBeVisible();
 		await vi.waitFor(() => {
+			expect(document.activeElement).not.toBe(document.body);
+			expect(document.activeElement?.contains(chooseButton.element())).toBe(true);
+		});
+	});
+
+	it("moves focus to the import when the export list arrives after capabilities", async () => {
+		setup({});
+		let resolveExports!: (value: { items: never[] }) => void;
+		api.fetchTransferExports.mockReturnValue(
+			new Promise((resolve) => {
+				resolveExports = resolve;
+			}),
+		);
+		const screen = await render(<TransferSettings focusImport />);
+		await vi.waitFor(() => expect(api.fetchTransferCapabilities).toHaveBeenCalled());
+		await new Promise((settle) => setTimeout(settle, 50));
+		expect(screen.getByText("Loading...").query()).not.toBeNull();
+
+		resolveExports({ items: [] });
+		const chooseButton = screen.getByRole("button", { name: "Choose package file" });
+		await expect.element(chooseButton).toBeVisible();
+		await vi.waitFor(() => {
+			expect(document.activeElement).not.toBe(document.body);
 			expect(document.activeElement?.contains(chooseButton.element())).toBe(true);
 		});
 	});
