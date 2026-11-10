@@ -147,6 +147,26 @@ export interface ImageFieldRendererProps {
 	thumbnail?: "row" | "cell";
 }
 
+/**
+ * A preview requests a resized `/_image` rendition, which the endpoint can refuse
+ * while the original stays readable. A failed rendition is replaced by the
+ * original once; the image is reported missing only when the original fails too.
+ */
+function useRenditionFallback(original: string | undefined, onBroken: () => void) {
+	const [failedRendition, setFailedRendition] = React.useState<string>();
+	return {
+		src: (rendition: string | undefined) =>
+			rendition !== undefined && rendition === failedRendition ? original : rendition,
+		onError: (rendition: string | undefined) => {
+			if (rendition && original && rendition !== original && rendition !== failedRendition) {
+				setFailedRendition(rendition);
+			} else {
+				onBroken();
+			}
+		},
+	};
+}
+
 const HOVER_REVEAL =
 	"opacity-0 transition-opacity duration-0 ease-emdash [@media(hover:none)]:opacity-100 pointer-coarse:opacity-100";
 const PHOTO_REVEAL = cn(
@@ -282,6 +302,9 @@ export function ImageFieldRenderer({
 					)
 				: undefined
 			: darkDisplayUrl;
+
+	const primaryPreview = useRenditionFallback(displayUrl, () => setImageBroken(true));
+	const darkPreview = useRenditionFallback(darkDisplayUrl, () => setDarkImageBroken(true));
 
 	React.useEffect(() => {
 		setImageBroken(false);
@@ -562,11 +585,11 @@ export function ImageFieldRenderer({
 								</div>
 							) : (
 								<img
-									src={darkPreviewUrl}
+									src={darkPreview.src(darkPreviewUrl)}
 									alt=""
 									className="h-full w-full object-cover"
 									style={{ objectPosition: darkObjectPosition }}
-									onError={() => setDarkImageBroken(true)}
+									onError={() => darkPreview.onError(darkPreviewUrl)}
 								/>
 							)}
 						</div>
@@ -711,11 +734,11 @@ export function ImageFieldRenderer({
 					</div>
 				) : (
 					<img
-						src={featuredPreviewUrl}
+						src={primaryPreview.src(featuredPreviewUrl)}
 						alt=""
 						className="emdash-media-transparency-grid h-full w-full object-cover"
 						style={{ objectPosition }}
-						onError={() => setImageBroken(true)}
+						onError={() => primaryPreview.onError(featuredPreviewUrl)}
 					/>
 				)}
 			</div>
@@ -918,7 +941,7 @@ export function ImageFieldRenderer({
 					) : (
 						// Its size is known before it loads, so a block opening around it animates to its full height.
 						<img
-							src={fieldPreviewUrl}
+							src={primaryPreview.src(fieldPreviewUrl)}
 							alt=""
 							className={cn(
 								IMAGE_EDGE,
@@ -929,7 +952,7 @@ export function ImageFieldRenderer({
 								aspectRatio:
 									currentWidth && currentHeight ? `${currentWidth} / ${currentHeight}` : "16 / 9",
 							}}
-							onError={() => setImageBroken(true)}
+							onError={() => primaryPreview.onError(fieldPreviewUrl)}
 						/>
 					)}
 					<div
@@ -953,11 +976,11 @@ export function ImageFieldRenderer({
 				) : (
 					<div className="grid gap-2">
 						<img
-							src={fieldPreviewUrl}
+							src={primaryPreview.src(fieldPreviewUrl)}
 							alt=""
 							className="emdash-media-transparency-grid h-48 w-full rounded-lg border object-cover"
 							style={{ objectPosition }}
-							onError={() => setImageBroken(true)}
+							onError={() => primaryPreview.onError(fieldPreviewUrl)}
 						/>
 						{primaryActions}
 					</div>

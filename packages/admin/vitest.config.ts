@@ -35,22 +35,33 @@ export default defineConfig({
 	},
 	plugins: [
 		{
-			name: "repeater-image-fixture",
+			name: "media-image-fixtures",
 			configureServer(server) {
+				const pixel = Buffer.from(
+					"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
+					"base64",
+				);
+				const mediaRoute = "/_emdash/api/media/file/";
+				// Readable originals whose renditions the image endpoint refuses.
+				const readableOriginals = new Set([`${mediaRoute}rendition-refused.png`]);
+				// Media whose original and rendition both fail.
+				const unreadable = new Set([`${mediaRoute}missing-original.png`]);
 				server.middlewares.use((request, response, next) => {
 					const url = new URL(request.url ?? "/", "http://localhost");
-					if (
-						url.pathname !== "/_image" ||
-						!url.searchParams.get("href")?.endsWith("/_emdash/api/media/file/repeater-preview.png")
-					)
+					if (url.pathname === "/_image") {
+						const href = url.searchParams.get("href");
+						const source = href ? new URL(href).pathname : "";
+						if (!source.startsWith(mediaRoute)) return next();
+						if (readableOriginals.has(source) || unreadable.has(source)) {
+							response.statusCode = 503;
+							response.end();
+							return;
+						}
+					} else if (!readableOriginals.has(url.pathname)) {
 						return next();
+					}
 					response.setHeader("Content-Type", "image/png");
-					response.end(
-						Buffer.from(
-							"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-							"base64",
-						),
-					);
+					response.end(pixel);
 				});
 			},
 		},

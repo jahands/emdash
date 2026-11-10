@@ -484,16 +484,107 @@ describe("ImageFieldRenderer", () => {
 				variant="featured"
 			/>,
 		);
-		const image = screen.container.querySelector("img");
-		expect(image).not.toBeNull();
+		const previewSrc = () => screen.container.querySelector("img")?.getAttribute("src") ?? "";
+		const failPreview = () =>
+			screen.container.querySelector("img")?.dispatchEvent(new Event("error"));
 
-		image!.dispatchEvent(new Event("error"));
+		await expect.poll(previewSrc).toContain("/_image?");
+		failPreview();
+		await expect.poll(previewSrc).not.toContain("/_image?");
+		failPreview();
 
 		await expect.element(screen.getByText("Image not found")).toBeVisible();
 		await expect.element(screen.getByText("notes-on-simplicity.jpg")).toBeVisible();
 		await expect.element(screen.getByRole("button", { name: "Replace" })).toBeVisible();
 		await expect.element(screen.getByRole("button", { name: "Edit asset" })).toBeVisible();
 		await expect.element(screen.getByRole("button", { name: "Remove image" })).toBeVisible();
+	});
+
+	describe("when the image endpoint refuses the rendition", () => {
+		const refused: ImageFieldValue = {
+			...selectedImage,
+			id: "refused-image",
+			mimeType: "image/png",
+			meta: { storageKey: "rendition-refused.png" },
+		};
+		const original = "/_emdash/api/media/file/rendition-refused.png";
+		const currentOriginal = `${original}?_emdash_media=sha256%3Acurrent`;
+
+		beforeEach(() => {
+			vi.mocked(fetchMediaItem).mockImplementation(
+				async (id) =>
+					({
+						id,
+						filename: "rendition-refused.png",
+						mimeType: "image/png",
+						url: "/_emdash/api/media/file/rendition-refused.png",
+						storageKey: "rendition-refused.png",
+						size: 1,
+						width: 1,
+						height: 1,
+						contentHash: "sha256:current",
+						createdAt: "2026-01-01T00:00:00.000Z",
+						authorId: "author-1",
+						folderId: null,
+					}) as LocalMediaItem,
+			);
+		});
+
+		async function expectLoadedOriginal(image: HTMLImageElement, src: string) {
+			await expect.element(image).toHaveAttribute("src", src);
+			await expect.poll(() => image.complete && image.naturalWidth).toBe(1);
+		}
+
+		it("shows the readable original in the featured card", async () => {
+			const screen = await render(
+				<ImageFieldRenderer
+					label="Featured image"
+					value={refused}
+					onChange={vi.fn()}
+					variant="featured"
+				/>,
+			);
+
+			await expectLoadedOriginal(screen.container.querySelector("img")!, currentOriginal);
+			expect(screen.getByText("Image not found").query()).toBeNull();
+		});
+
+		it("shows the readable original in the default field", async () => {
+			const screen = await render(
+				<ImageFieldRenderer label="Image" value={refused} onChange={vi.fn()} />,
+			);
+
+			await expectLoadedOriginal(screen.container.querySelector("img")!, original);
+			expect(screen.getByText("Image not found").query()).toBeNull();
+		});
+
+		it("shows the readable original for the featured dark mode variant", async () => {
+			const screen = await render(
+				<ImageFieldRenderer
+					label="Featured image"
+					value={{ ...selectedImage, darkVariant: { ...refused, id: "refused-dark" } }}
+					onChange={vi.fn()}
+					variant="featured"
+					darkVariant
+				/>,
+			);
+
+			await expect.element(screen.getByText("Dark mode variant")).toBeVisible();
+			await expectLoadedOriginal(screen.container.querySelectorAll("img")[1]!, currentOriginal);
+		});
+
+		it("shows the image as missing once the original fails too", async () => {
+			const screen = await render(
+				<ImageFieldRenderer
+					label="Featured image"
+					value={{ ...refused, meta: { storageKey: "missing-original.png" } }}
+					onChange={vi.fn()}
+					variant="featured"
+				/>,
+			);
+
+			await expect.element(screen.getByText("Image not found")).toBeVisible();
+		});
 	});
 
 	it("opens the picker from the featured empty state and reports required validation", async () => {
