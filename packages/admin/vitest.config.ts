@@ -20,6 +20,7 @@ export default defineConfig({
 			"@codemirror/state",
 			"@codemirror/view",
 			"@lezer/highlight",
+			"@phosphor-icons/react/dist/csr/*",
 			"react-image-crop",
 			"date-fns",
 			"react-day-picker/locale/*",
