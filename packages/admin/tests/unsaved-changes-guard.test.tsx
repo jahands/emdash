@@ -50,6 +50,9 @@ const CREATED = {
 
 const OTHER = { ...CREATED, id: "post_other", slug: "other", data: { title: "Other title" } };
 
+const SAVE_URL = `/_emdash/api/content/posts/${CREATED.id}?locale=en`;
+const AUTOSAVE_URL = `/_emdash/api/content/posts/${CREATED.id}?includeLiveData=false&locale=en`;
+
 const CONFLICT = { error: { code: "CONFLICT", message: "This entry changed somewhere else." } };
 const LOCKED = {
 	error: {
@@ -399,7 +402,7 @@ describe("leaving the content editor", () => {
 		async (_writer, leave) => {
 			mockFetch
 				.on("GET", `/_emdash/api/content/posts/${OTHER.id}`, { data: { item: OTHER } })
-				.on("PUT", `/_emdash/api/content/posts/${CREATED.id}?locale=en`, {
+				.on("PUT", AUTOSAVE_URL, {
 					data: { item: { ...CREATED, data: { title: "Edited title" } }, _rev: "rev-2" },
 				});
 			const { router, title } = await renderEditor((start, queryClient) => {
@@ -432,7 +435,7 @@ describe("leaving the content editor", () => {
 	it("after switching entries, saves a revert made while the autosave is on its way", async () => {
 		mockFetch
 			.on("GET", `/_emdash/api/content/posts/${OTHER.id}`, { data: { item: OTHER } })
-			.on("PUT", `/_emdash/api/content/posts/${CREATED.id}?locale=en`, {
+			.on("PUT", AUTOSAVE_URL, {
 				data: { item: { ...CREATED, data: { title: "Edited title" } }, _rev: "rev-2" },
 			});
 		const { router, title } = await renderEditor((start, queryClient) => {
@@ -464,7 +467,7 @@ describe("leaving the content editor", () => {
 	] as const)(
 		"reports %s refused because of %s after the editor has closed",
 		async (write, _refusal, body, toast) => {
-			mockFetch.on("PUT", `/_emdash/api/content/posts/${CREATED.id}?locale=en`, body, 409);
+			mockFetch.on("PUT", SAVE_URL, body, 409).on("PUT", AUTOSAVE_URL, body, 409);
 			const { router, screen, title } = await renderSavedEntry();
 			await title.fill("Edited title");
 
@@ -492,7 +495,7 @@ describe("leaving the content editor", () => {
 		it("asks before leaving a saved entry", async () => {
 			mockFetch.on(
 				"PUT",
-				`/_emdash/api/content/posts/${CREATED.id}?locale=en`,
+				AUTOSAVE_URL,
 				{ error: { code: "INTERNAL_ERROR", message: "Unavailable" } },
 				500,
 			);
@@ -512,8 +515,12 @@ describe("leaving the content editor", () => {
 		});
 
 		it("saves on leaving again once a Save has gone through", async () => {
-			const url = `/_emdash/api/content/posts/${CREATED.id}?locale=en`;
-			mockFetch.on("PUT", url, { error: { code: "INTERNAL_ERROR", message: "Unavailable" } }, 500);
+			mockFetch.on(
+				"PUT",
+				AUTOSAVE_URL,
+				{ error: { code: "INTERNAL_ERROR", message: "Unavailable" } },
+				500,
+			);
 			const puts = recordPuts();
 			const { router, screen, title } = await renderSavedEntry();
 			await title.fill("Edited title");
@@ -522,7 +529,8 @@ describe("leaving the content editor", () => {
 
 			const saved = { ...CREATED, data: { title: "Saved title" } };
 			mockFetch
-				.on("PUT", url, { data: { item: saved, _rev: "rev-2" } })
+				.on("PUT", SAVE_URL, { data: { item: saved, _rev: "rev-2" } })
+				.on("PUT", AUTOSAVE_URL, { data: { item: saved, _rev: "rev-2" } })
 				.on("GET", `/_emdash/api/content/posts/${CREATED.id}`, { data: { item: saved } });
 			screen.getByRole("button", { name: "Save", exact: true }).element().click();
 			await expect.element(title).toHaveValue("Saved title");

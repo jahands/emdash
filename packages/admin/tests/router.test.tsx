@@ -1221,6 +1221,17 @@ describe("ContentListPage – numbered pages", () => {
 		mockFetch.restore();
 	});
 
+	function requestedPostsPage(page: number) {
+		return requests.some((request) => {
+			const url = new URL(request, location.origin);
+			return (
+				url.pathname === "/_emdash/api/content/posts" &&
+				url.searchParams.get("page") === String(page) &&
+				url.searchParams.get("limit") === "20"
+			);
+		});
+	}
+
 	async function renderPosts() {
 		const harness = buildRouter();
 		await harness.router.navigate({ to: "/content/$collection", params: { collection: "posts" } });
@@ -1233,18 +1244,14 @@ describe("ContentListPage – numbered pages", () => {
 		const { screen } = await renderPosts();
 
 		expect(requests).toContain("/_emdash/api/content/posts/trash?page=1&limit=20&locale=fr");
-		expect(
-			requests.some((url) => url.startsWith("/_emdash/api/content/posts?page=1&limit=20&")),
-		).toBe(true);
+		expect(requestedPostsPage(1)).toBe(true);
 		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("25");
 
 		await screen.getByRole("button", { name: "Next page" }).click();
 
 		await expect.element(screen.getByText("Showing 21-40 of 45")).toBeInTheDocument();
 		await expect.element(screen.getByText("posts entry 21")).toBeInTheDocument();
-		expect(
-			requests.some((url) => url.startsWith("/_emdash/api/content/posts?page=2&limit=20&")),
-		).toBe(true);
+		expect(requestedPostsPage(2)).toBe(true);
 	});
 
 	it("starts a changed search at page 1 without requesting the old page for it", async () => {
@@ -2136,7 +2143,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 	it("signals a rejected autosave to the editor", async () => {
 		mockFetch.on(
 			"PUT",
-			"/_emdash/api/content/posts/post_1?locale=en",
+			"/_emdash/api/content/posts/post_1?includeLiveData=false&locale=en",
 			{ error: { code: "VALIDATION_ERROR", message: "title: Too big" } },
 			400,
 		);
@@ -2176,7 +2183,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 			})
 			.on(
 				"PUT",
-				"/_emdash/api/content/posts/post_1?locale=en",
+				"/_emdash/api/content/posts/post_1?includeLiveData=false&locale=en",
 				{
 					error: {
 						code: "VALIDATION_ERROR",
@@ -2218,7 +2225,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 	it("does not signal a rejection for a server error", async () => {
 		mockFetch.on(
 			"PUT",
-			"/_emdash/api/content/posts/post_1?locale=en",
+			"/_emdash/api/content/posts/post_1?includeLiveData=false&locale=en",
 			{ error: { code: "INTERNAL_ERROR", message: "boom" } },
 			500,
 		);

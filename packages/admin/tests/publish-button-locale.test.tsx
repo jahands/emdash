@@ -361,7 +361,7 @@ describe("ContentEditPage – publish button appears after an autosave", () => {
 			// create one, so the response carries live !== draft. The query string is
 			// part of the key: without it the mock's prefix fallback would serve the
 			// GET handler's clean item to the PUT.
-			.on("PUT", "/_emdash/api/content/posts/post_1?locale=en", {
+			.on("PUT", "/_emdash/api/content/posts/post_1?includeLiveData=false&locale=en", {
 				data: { item: publishedDirty() },
 			});
 	});
