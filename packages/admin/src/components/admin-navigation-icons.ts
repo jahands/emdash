@@ -141,7 +141,10 @@ function isIconComponent(value: unknown): value is React.ComponentType<{ classNa
 
 /**
  * Resolve a declared icon name while keeping uncommon Phosphor icons
- * code-split. Missing or unknown names render `fallback`.
+ * code-split. Missing or unknown names render `fallback`, and so does an icon
+ * whose code fails to load; the next call for that name loads it again. Render
+ * the result under a Suspense boundary below the caller, so a failed load is
+ * retried only when the caller renders again.
  */
 export function resolveNavIcon(
 	name?: string,
@@ -159,14 +162,21 @@ export function resolveNavIcon(
 		perFallback = new Map();
 		lazyIconCache.set(fallback, perFallback);
 	}
-	let icon = perFallback.get(componentName);
-	if (!icon) {
-		icon = React.lazy(async () => {
+	const cached = perFallback.get(componentName);
+	if (cached) {
+		return cached;
+	}
+	const icons = perFallback;
+	const icon: React.ElementType = React.lazy(async () => {
+		try {
 			const { loadNavIcon } = await import("../lib/nav-icon-loaders.js");
 			const candidate = await loadNavIcon(componentName);
 			return { default: isIconComponent(candidate) ? candidate : fallback };
-		});
-		perFallback.set(componentName, icon);
-	}
+		} catch {
+			if (icons.get(componentName) === icon) icons.delete(componentName);
+			return { default: fallback };
+		}
+	});
+	perFallback.set(componentName, icon);
 	return icon;
 }

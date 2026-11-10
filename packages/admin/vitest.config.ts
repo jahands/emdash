@@ -65,6 +65,26 @@ export default defineConfig({
 				});
 			},
 		},
+		{
+			name: "nav-icon-table-failure",
+			configureServer(server) {
+				let failNextTableRequest = false;
+				server.middlewares.use((request, response, next) => {
+					if (request.method === "POST" && request.url === "/__test/fail-nav-icon-table") {
+						failNextTableRequest = true;
+						response.end();
+						return;
+					}
+					if (failNextTableRequest && request.url?.startsWith("/src/lib/nav-icon-loaders.ts")) {
+						failNextTableRequest = false;
+						response.statusCode = 503;
+						response.end();
+						return;
+					}
+					next();
+				});
+			},
+		},
 		react({
 			babel: {
 				plugins: [
