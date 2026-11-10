@@ -2,6 +2,7 @@ import { sql, type Kysely, type Selectable } from "kysely";
 import { B32_CHARACTERS, decodeTime, encodeTime, monotonicFactory, ULID_REGEX } from "ulidx";
 
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
+import { runConcurrently } from "../concurrent.js";
 import { ContentDatetimeNormalizer, type DatetimeContextCache } from "../content-datetime.js";
 import type { Database, RevisionTable } from "../types.js";
 import { validateIdentifier } from "../validate.js";
@@ -114,16 +115,15 @@ export class RevisionRepository {
 			author_id: input.authorId ?? null,
 		};
 
-		await this.db.insertInto("revisions").values(row).execute();
-
-		const revision = await this.findById(id);
-		if (!revision) {
+		const [inserted] = await runConcurrently(this.db, [
+			() => this.db.insertInto("revisions").values(row).returningAll().executeTakeFirst(),
+			() => this.queuePruning(input.collection, input.entryId, id),
+		]);
+		if (!inserted) {
 			throw new Error("Failed to create revision");
 		}
 
-		await this.queuePruning(input.collection, input.entryId, id);
-
-		return revision;
+		return this.normalizeRow(inserted);
 	}
 
 	/**

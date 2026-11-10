@@ -8,6 +8,7 @@
 import type { Element } from "@emdash-cms/blocks";
 import type { Kysely } from "kysely";
 
+import type { ContentUpdateSnapshot } from "../api/handlers/content.js";
 import type { ContentFieldFilters } from "../content-list-query.js";
 import type { ContentSeoInput } from "../database/repositories/types.js";
 import type {
@@ -386,6 +387,7 @@ export interface EmDashHandlers {
 			replaceBlocks?: boolean;
 			actor?: { id: string; role: number };
 		},
+		options?: { snapshot?: ContentUpdateSnapshot },
 	) => Promise<HandlerResponse>;
 
 	handleContentDelete: (collection: string, id: string) => Promise<HandlerResponse>;
@@ -406,6 +408,18 @@ export interface EmDashHandlers {
 	) => Promise<HandlerResponse>;
 
 	handleContentGetIncludingTrashed: (collection: string, id: string) => Promise<HandlerResponse>;
+
+	handleContentGetForUpdate: (
+		collection: string,
+		id: string,
+		locale?: string,
+	) => Promise<
+		HandlerResponse<{
+			item: { id: string; authorId: string | null; status: string; [key: string]: unknown };
+			_rev?: string;
+			snapshot: ContentUpdateSnapshot;
+		}>
+	>;
 
 	handleContentGetEntry: (
 		collection: string,

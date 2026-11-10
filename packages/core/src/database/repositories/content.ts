@@ -2983,14 +2983,39 @@ export class ContentRepository {
 		revisionId: string,
 		expected: Pick<ContentItem, "version" | "liveRevisionId" | "draftRevisionId">,
 	): Promise<boolean> {
+		return (await this.swapDraftRevision(type, id, revisionId, expected)) !== null;
+	}
+
+	/**
+	 * Points the entry at a new draft revision if it is still exactly the row
+	 * the caller read, `updated_at` included, and returns the updated row, or
+	 * `null` when the row has changed since.
+	 */
+	async stageDraftRevision(
+		type: string,
+		id: string,
+		revisionId: string,
+		expected: Pick<ContentItem, "version" | "updatedAt" | "liveRevisionId" | "draftRevisionId">,
+	): Promise<ContentItem | null> {
+		return this.swapDraftRevision(type, id, revisionId, expected, expected.updatedAt);
+	}
+
+	private async swapDraftRevision(
+		type: string,
+		id: string,
+		revisionId: string,
+		expected: Pick<ContentItem, "version" | "liveRevisionId" | "draftRevisionId">,
+		expectedUpdatedAt?: string,
+	): Promise<ContentItem | null> {
 		const tableName = getTableName(type);
-		const result = await sql`
+		const result = await sql<Record<string, unknown>>`
 			UPDATE ${sql.ref(tableName)}
 			SET draft_revision_id = ${revisionId},
 				version = version + 1
 			WHERE id = ${id}
 			AND deleted_at IS NULL
 			AND version = ${expected.version}
+			${expectedUpdatedAt === undefined ? sql`` : sql`AND updated_at = ${expectedUpdatedAt}`}
 			AND ${nullableColumnMatch("live_revision_id", expected.liveRevisionId)}
 			AND ${nullableColumnMatch("draft_revision_id", expected.draftRevisionId)}
 			AND EXISTS (
@@ -2999,8 +3024,10 @@ export class ContentRepository {
 				AND revisions.collection = ${type}
 				AND revisions.entry_id = ${id}
 			)
+			RETURNING *
 		`.execute(this.db);
-		return (result.numAffectedRows ?? 0n) > 0n;
+		const row = result.rows[0];
+		return row ? this.mapRow(type, row) : null;
 	}
 
 	/**

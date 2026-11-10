@@ -35,7 +35,7 @@ export function recordQueries(source: Kysely<Database>): QueryRecorder {
 	const plugin: KyselyPlugin = {
 		transformQuery({ node, queryId }) {
 			queries.set(queryId, {
-				sql: source.getExecutor().compileQuery(node, queryId).sql,
+				sql: source.getExecutor().compileQuery(node, queryId).sql.replace(/\s+/g, " ").trim(),
 				startedAt: ++tick,
 				endedAt: null,
 			});

@@ -1074,6 +1074,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 					handleContentList: runtime.handleContentList.bind(runtime),
 					handleContentGet: runtime.handleContentGet.bind(runtime),
 					handleContentGetEntry: runtime.handleContentGetEntry.bind(runtime),
+					handleContentGetForUpdate: runtime.handleContentGetForUpdate.bind(runtime),
 					handleContentAuthors: runtime.handleContentAuthors.bind(runtime),
 					handleContentCreate: runtime.handleContentCreate.bind(runtime),
 					handleContentUpdate: runtime.handleContentUpdate.bind(runtime),

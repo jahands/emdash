@@ -82,12 +82,12 @@ export const PUT: APIRoute = async ({ params, request, locals, cache }) => {
 	const body = await parseBody(request, contentUpdateBody);
 	if (isParseError(body)) return body;
 
-	if (!emdash?.handleContentUpdate || !emdash?.handleContentGet) {
+	if (!emdash?.handleContentUpdate || !emdash?.handleContentGetForUpdate) {
 		return apiError("NOT_CONFIGURED", "EmDash is not initialized", 500);
 	}
 
 	// Fetch item to check ownership
-	const existing = await emdash.handleContentGet(collection, id, locale);
+	const existing = await emdash.handleContentGetForUpdate(collection, id, locale);
 	if (!existing.success) {
 		return apiError(
 			existing.error?.code ?? "UNKNOWN_ERROR",
@@ -148,12 +148,17 @@ export const PUT: APIRoute = async ({ params, request, locals, cache }) => {
 	const actor = user ? { id: user.id, role: user.role } : undefined;
 
 	// Pass _rev through for optimistic concurrency validation
-	const result = await emdash.handleContentUpdate(collection, resolvedId, {
-		...writeBody,
-		locale,
-		_rev: rev,
-		actor,
-	});
+	const result = await emdash.handleContentUpdate(
+		collection,
+		resolvedId,
+		{
+			...writeBody,
+			locale,
+			_rev: rev,
+			actor,
+		},
+		{ snapshot: existing.data?.snapshot },
+	);
 
 	if (!result.success) return unwrapResult(result);
 

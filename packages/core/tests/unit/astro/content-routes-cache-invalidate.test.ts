@@ -58,7 +58,7 @@ describe("PUT content route — edge cache invalidation", () => {
 			request,
 			url: new URL(request.url),
 			locals: {
-				emdash: { handleContentUpdate, handleContentGet, db },
+				emdash: { handleContentUpdate, handleContentGetForUpdate: handleContentGet, db },
 				user: makeUser(),
 			},
 			cache: { enabled: true, invalidate },

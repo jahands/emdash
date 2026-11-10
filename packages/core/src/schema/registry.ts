@@ -11,6 +11,7 @@ import { ulid } from "ulidx";
 
 import { refreshDevTypes } from "../astro/dev-typegen.js";
 import { deleteSharedCollectionRecords } from "../database/collection-cleanup.js";
+import { runConcurrently } from "../database/concurrent.js";
 import {
 	columnExists,
 	currentTimestamp,
@@ -396,10 +397,25 @@ export class SchemaRegistry {
 	 * Get a collection with all its fields
 	 */
 	async getCollectionWithFields(slug: string): Promise<CollectionWithFields | null> {
-		const collection = await this.getCollection(slug);
+		const [collection, rows] = await runConcurrently(this.db, [
+			() => this.getCollection(slug),
+			() =>
+				this.db
+					.selectFrom("_emdash_fields")
+					.innerJoin(
+						"_emdash_collections",
+						"_emdash_collections.id",
+						"_emdash_fields.collection_id",
+					)
+					.selectAll("_emdash_fields")
+					.where("_emdash_collections.slug", "=", slug)
+					.orderBy("_emdash_fields.sort_order", "asc")
+					.orderBy("_emdash_fields.created_at", "asc")
+					.execute(),
+		]);
 		if (!collection) return null;
 
-		const fields = await this.listFields(collection.id);
+		const fields = rows.filter((row) => row.collection_id === collection.id).map(this.mapFieldRow);
 
 		return { ...collection, fields };
 	}

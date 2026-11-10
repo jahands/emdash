@@ -153,8 +153,8 @@ describeEachDialect("Contributor editing their own drafts", (dialect) => {
 			const id = await seed("draft", { collection: "note" });
 			const publishAfterCheck: EmDashHandlers = {
 				...handlers,
-				handleContentGet: async (...args) => {
-					const result = await handlers.handleContentGet(...args);
+				handleContentGetForUpdate: async (...args) => {
+					const result = await handlers.handleContentGetForUpdate(...args);
 					const published = await runtime.handleContentPublish("note", id, {});
 					if (!published.success) throw new Error(published.error.message);
 					return result;

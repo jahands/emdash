@@ -59,6 +59,7 @@ const {
 			handleContentList: ok,
 			handleContentGet: ok,
 			handleContentGetEntry: ok,
+			handleContentGetForUpdate: ok,
 			handleContentAuthors: ok,
 			handleContentCreate: ok,
 			handleContentUpdate: ok,

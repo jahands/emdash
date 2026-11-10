@@ -105,9 +105,12 @@ function buildEmdash() {
 		data: { item: { id: "resolved-id" } },
 	}));
 
+	const handleContentGetForUpdate = vi.fn(handleContentGet);
+
 	return {
 		db,
 		handleContentGet,
+		handleContentGetForUpdate,
 		handleContentUpdate,
 		handleContentDelete,
 		handleContentPublish,
@@ -161,7 +164,7 @@ function visualCtx(
 	});
 }
 
-describe("PUT /content/:collection/:id forwards locale to handleContentGet", () => {
+describe("PUT /content/:collection/:id forwards locale to handleContentGetForUpdate", () => {
 	it("passes locale=en when query param is present", async () => {
 		const emdash = buildEmdash();
 		const res = await putItem(
@@ -174,7 +177,7 @@ describe("PUT /content/:collection/:id forwards locale to handleContentGet", () 
 			}),
 		);
 		expect(res.status).toBe(200);
-		expect(emdash.handleContentGet).toHaveBeenCalledWith("post", "hello", "en");
+		expect(emdash.handleContentGetForUpdate).toHaveBeenCalledWith("post", "hello", "en");
 	});
 });
 

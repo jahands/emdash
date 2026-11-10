@@ -58,7 +58,7 @@ import {
 import { publishRedirectChanges } from "../../redirects/artifacts.js";
 import { invalidateRedirectCache } from "../../redirects/cache.js";
 import { requestCached } from "../../request-cache.js";
-import { isStoragelessFieldRow } from "../../schema/types.js";
+import { isStoragelessFieldRow, type CollectionWithFields } from "../../schema/types.js";
 import { FTSManager } from "../../search/fts-manager.js";
 import { invalidateTermCache } from "../../taxonomies/index.js";
 import { isMissingColumnError, isMissingTableError } from "../../utils/db-errors.js";
@@ -1241,6 +1241,40 @@ export async function handleContentGet(
 }
 
 /**
+ * What a save already read while authorizing it: the entry row, the collection
+ * schema and the entry's draft revision. A save reuses these instead of reading
+ * them again and still checks the row's version when it writes.
+ */
+export interface ContentUpdateSnapshot {
+	collection: string;
+	item: ContentItem;
+	collectionInfo: CollectionWithFields | null;
+	revisionReads: RevisionReads;
+}
+
+/**
+ * Wrap a row the caller already holds in the response a read of it returns,
+ * with SEO and bylines.
+ */
+export async function handleContentHydrate(
+	db: Kysely<Database>,
+	collection: string,
+	item: ContentItem,
+	options: { hasSeo?: boolean } = {},
+): Promise<ApiResult<ContentResponse>> {
+	try {
+		await hydrateContentItem(db, collection, item, undefined, options.hasSeo);
+		return { success: true, data: { item, _rev: encodeRev(item) } };
+	} catch (error) {
+		console.error("Content get error:", error);
+		return {
+			success: false,
+			error: { code: "CONTENT_GET_ERROR", message: "Failed to get content" },
+		};
+	}
+}
+
+/**
  * Get a content item's row without SEO, bylines or references, for a caller
  * that only needs its ownership, status and `_rev`.
  */
@@ -1277,11 +1311,12 @@ async function hydrateContentItem(
 	collection: string,
 	item: ContentItem,
 	referenceOptions?: { includeDrafts: boolean; revisionReads?: RevisionReads },
+	hasSeo?: boolean,
 ): Promise<void> {
 	await runConcurrently(db, [
 		async () => {
 			// Hydrate SEO data if the collection has SEO enabled
-			await hydrateSeo(db, collection, item, await collectionHasSeo(db, collection));
+			await hydrateSeo(db, collection, item, hasSeo ?? (await collectionHasSeo(db, collection)));
 		},
 		() => hydrateBylines(db, collection, item),
 		// Opt-in: hydration is skipped entirely unless the caller passes
