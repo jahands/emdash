@@ -10,7 +10,6 @@ import {
 	advanceTransferExport,
 	createTransferExport,
 	fetchTransferExportManifest,
-	fetchTransferExports,
 	transferExportArchiveUrl,
 	TRANSFER_EXPORTS_QUERY_KEY,
 	type TransferOperation,
@@ -29,10 +28,10 @@ import {
 	stageLabel,
 	transferErrorLabel,
 } from "./labels.js";
+import { transferExportsQueryOptions } from "./queries.js";
 import { replaceOperation } from "./state.js";
 import { useAdvanceLoop } from "./useAdvanceLoop.js";
 
-const RECENT_EXPORTS = 10;
 const START_RETRIES = 3;
 /** Above this size, a browser without streaming saves holds too much in memory. */
 const LARGE_IN_MEMORY_BYTES = 500 * 1024 * 1024;
@@ -53,10 +52,7 @@ export function ExportSection() {
 	const [resumeToken, setResumeToken] = React.useState(0);
 	const download = useExportDownload();
 
-	const exportsQuery = useQuery({
-		queryKey: TRANSFER_EXPORTS_QUERY_KEY,
-		queryFn: () => fetchTransferExports({ limit: RECENT_EXPORTS }),
-	});
+	const exportsQuery = useQuery(transferExportsQueryOptions());
 	const exports = exportsQuery.data?.items ?? [];
 	const running = exports.find(isRunning) ?? null;
 	const latest = exports[0] ?? null;

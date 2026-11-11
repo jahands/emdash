@@ -11,7 +11,6 @@ import {
 	analyzeTransferImport,
 	cancelTransferImport,
 	fetchTransferImport,
-	fetchTransferImports,
 	TRANSFER_CAPABILITIES_QUERY_KEY,
 	TRANSFER_IMPORTS_QUERY_KEY,
 	type SiteImportReceipt,
@@ -41,6 +40,7 @@ import {
 	stageLabel,
 	transferErrorLabel,
 } from "./labels.js";
+import { transferImportsQueryOptions } from "./queries.js";
 import {
 	canAbandonImport,
 	canCancelImport,
@@ -49,8 +49,6 @@ import {
 	selectCurrentImport,
 } from "./state.js";
 import { useAdvanceLoop } from "./useAdvanceLoop.js";
-
-const RECENT_IMPORTS = 10;
 
 export function ImportSection({ capabilities }: { capabilities: TransferCapabilities }) {
 	const { t, i18n } = useLingui();
@@ -66,10 +64,7 @@ export function ImportSection({ capabilities }: { capabilities: TransferCapabili
 	const [confirmAction, setConfirmAction] = React.useState<"cancel" | "abandon" | null>(null);
 	const fileInput = React.useRef<HTMLInputElement>(null);
 
-	const importsQuery = useQuery({
-		queryKey: TRANSFER_IMPORTS_QUERY_KEY,
-		queryFn: () => fetchTransferImports({ limit: RECENT_IMPORTS }),
-	});
+	const importsQuery = useQuery(transferImportsQueryOptions());
 	const current = selectCurrentImport(importsQuery.data?.items ?? [], dismissed);
 
 	const statusQuery = useQuery({
