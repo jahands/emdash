@@ -6,6 +6,7 @@
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 
+import { loadAdminCatalog, namesMatcher } from "./admin-strings.mjs";
 import { computeCls } from "./metrics.mjs";
 import { openContext, recordNetwork, waitForSettle } from "./page-run.mjs";
 import { finishGeometry, installProbe, snapshotGeometry } from "./probe.mjs";
@@ -14,11 +15,12 @@ import { apiClient } from "./seed.mjs";
 
 const ADMIN = "/_emdash/admin";
 const EDITOR_SELECTOR = ".ProseMirror";
-const SAVE_BUTTONS = [/^save draft$/i, /^save$/i, /publish changes/i, /^update$/i];
-const UPLOAD_BUTTON = [/upload/i];
-const ERROR_TEXT = /fail|error|could not/i;
-const LIST_ERROR_TEXT = /fail|error|could not|try again/i;
-const OFFLINE_ERROR_TEXT = /offline|network|fail|error|connection|try again/i;
+const EDITED_BLOCK = `${EDITOR_SELECTOR} > p:first-of-type`;
+const SAVE_MESSAGES = ["Save draft", "Save", "Publish changes", "Update"];
+const UPLOAD_MESSAGES = ["Upload", "Upload Files"];
+const SUBMIT = 'form button[type="submit"]';
+const DIALOG = '[role="dialog"]';
+const ANNOUNCEMENTS = '[role="alert"], [role="status"]';
 const ORIGIN_PREFIX = /^https?:\/\/[^/]+/;
 const NON_SLUG = /[^a-z0-9]+/gi;
 
@@ -50,7 +52,7 @@ async function watch(page, network, action, geometry = {}) {
 	const detail = await action();
 	await waitForSettle(page, network, { quietMs: 800, maxMs: 15_000 });
 	await sleep(300);
-	const result = await page.evaluate(finishGeometry);
+	const result = await page.evaluate(finishGeometry, geometry.key ?? "default");
 	const shifts = await page.evaluate(
 		(since) => (window.__perfProbe?.shifts ?? []).filter((s) => s.startTime >= since),
 		mark,
@@ -59,7 +61,9 @@ async function watch(page, network, action, geometry = {}) {
 	return {
 		passed: positional.length === 0,
 		tracked: result.tracked,
+		truncated: result.truncated,
 		moved: positional,
+		removed: result.removed,
 		resized: result.moved.filter((m) => m.dx <= 1 && m.dy <= 1),
 		cls: Math.round(computeCls(shifts).value * 10000) / 10000,
 		shiftsDuringInput: shifts.filter((s) => s.hadRecentInput).length,
@@ -67,25 +71,68 @@ async function watch(page, network, action, geometry = {}) {
 	};
 }
 
-async function clickByName(page, names) {
-	for (const name of names) {
-		const button = page.getByRole("button", { name, exact: false });
-		if ((await button.count()) > 0 && (await button.first().isVisible())) {
-			await button.first().click();
+/** Click the first visible button whose accessible name matches `name`. */
+async function clickByName(page, name) {
+	const buttons = page.getByRole("button", { name });
+	for (let i = 0; i < (await buttons.count()); i++) {
+		if (await buttons.nth(i).isVisible()) {
+			await buttons.nth(i).click();
 			return true;
 		}
 	}
 	return false;
 }
 
+/** The editor form's visible submit button, else a save button by its localized name. */
+async function clickSave(page, strings) {
+	const submits = page.locator(SUBMIT);
+	for (let i = 0; i < (await submits.count()); i++) {
+		if (await submits.nth(i).isVisible()) {
+			await submits.nth(i).click();
+			return true;
+		}
+	}
+	return clickByName(page, strings.save);
+}
+
+/** Visible alert and status texts, for telling which ones an action added. */
+async function announcements(page) {
+	const texts = await page
+		.locator(ANNOUNCEMENTS)
+		.evaluateAll((els) =>
+			els
+				.filter((el) => el.getClientRects().length > 0)
+				.map((el) => (el.textContent ?? "").trim())
+				.filter(Boolean),
+		)
+		.catch(() => []);
+	return texts;
+}
+
+const added = (before, after) => after.filter((t) => !before.includes(t));
+
+/** Sample geometry inside an overlay that just opened while it settles. */
+async function watchOverlay(page, network, ms = 1500) {
+	if ((await page.locator(DIALOG).count()) === 0) return null;
+	return watch(
+		page,
+		network,
+		async () => {
+			await sleep(ms);
+			return {};
+		},
+		{ within: DIALOG, key: "overlay" },
+	);
+}
+
 async function focusEditorEnd(page) {
-	const paragraph = page.locator(`${EDITOR_SELECTOR} p`).first();
+	const paragraph = page.locator(EDITED_BLOCK).first();
 	await paragraph.waitFor({ state: "visible", timeout: 15_000 });
 	await paragraph.click();
 	await page.keyboard.press("End");
 }
 
-const editorGeometry = { exclude: EDITOR_SELECTOR, belowSelector: EDITOR_SELECTOR };
+const editorGeometry = { grows: EDITED_BLOCK };
 
 const SCENARIOS = [
 	{
@@ -141,7 +188,7 @@ const SCENARIOS = [
 		viewports: ["desktop"],
 		writes: true,
 		path: ({ heaviest }) => `${ADMIN}/content/${heaviest.collection}/${heaviest.id}`,
-		async run({ page, network, heaviest }) {
+		async run({ page, network, heaviest, strings }) {
 			await focusEditorEnd(page);
 			const writes = [];
 			page.on("request", (r) => {
@@ -168,7 +215,7 @@ const SCENARIOS = [
 				network,
 				async () => {
 					await page.keyboard.type(" Saved by hand.", { delay: 40 });
-					const clicked = await clickByName(page, SAVE_BUTTONS);
+					const clicked = await clickSave(page, strings);
 					return { clicked };
 				},
 				editorGeometry,
@@ -208,24 +255,27 @@ const SCENARIOS = [
 				},
 			);
 		},
-		async run({ page, network }) {
+		async run({ page, network, strings, shot }) {
 			await focusEditorEnd(page);
+			const before = await announcements(page);
 			const result = await watch(
 				page,
 				network,
 				async () => {
 					await page.keyboard.type(" This save fails.", { delay: 40 });
-					const clicked = await clickByName(page, SAVE_BUTTONS);
+					const clicked = await clickSave(page, strings);
 					await sleep(3000);
 					return { clicked };
 				},
 				editorGeometry,
 			);
-			const alerts = await page.locator('[role="alert"], [role="status"]').allInnerTexts();
+			await shot("error");
+			const shown = added(before, await announcements(page));
 			return {
 				...result,
-				errorShown: alerts.some((t) => ERROR_TEXT.test(t)),
-				summary: `save ${result.clicked ? "clicked" : "autosave only"}; error shown: ${alerts.some((t) => ERROR_TEXT.test(t))}`,
+				announced: shown,
+				serverMessageShown: shown.some((t) => t.includes("Simulated save failure")),
+				summary: `save ${result.clicked ? "clicked" : "autosave only"}; ${shown.length} new alert or status message(s)${shown.length ? `: ${shown[0].slice(0, 80)}` : ""}`,
 			};
 		},
 	},
@@ -234,7 +284,7 @@ const SCENARIOS = [
 		viewports: ["desktop"],
 		writes: true,
 		path: ({ heaviest }) => `${ADMIN}/content/${heaviest.collection}/${heaviest.id}`,
-		async run({ page, network, site, cookies, heaviest }) {
+		async run({ page, network, site, cookies, heaviest, strings, shot }) {
 			await focusEditorEnd(page);
 			const api = apiClient(site.origin, cookies);
 			const current = await api("GET", `/content/${heaviest.collection}/${heaviest.id}`);
@@ -263,12 +313,13 @@ const SCENARIOS = [
 				network,
 				async () => {
 					await page.keyboard.type(" Conflicting edit.", { delay: 40 });
-					const clicked = await clickByName(page, SAVE_BUTTONS);
+					const clicked = await clickSave(page, strings);
 					await sleep(3000);
 					return { clicked };
 				},
 				editorGeometry,
 			);
+			await shot("conflict");
 			return {
 				...result,
 				conflictWrite,
@@ -282,27 +333,37 @@ const SCENARIOS = [
 		viewports: ["desktop", "mobile"],
 		writes: false,
 		path: () => `${ADMIN}/media`,
-		async run({ page, network }) {
+		async run({ page, network, strings, shot }) {
+			let paletteInside = null;
 			const palette = await watch(page, network, async () => {
 				await page.keyboard.press("Control+k");
-				await sleep(800);
-				const open = await page.locator('[role="dialog"], [role="combobox"]').count();
+				await sleep(300);
+				const open = await page.locator(`${DIALOG}, [role="combobox"]`).count();
+				paletteInside = await watchOverlay(page, network);
+				await shot("palette-open");
 				await page.keyboard.press("Escape");
 				await sleep(500);
 				return { paletteOpened: open > 0 };
 			});
+			let dialogInside = null;
 			const dialog = await watch(page, network, async () => {
-				const opened = await clickByName(page, UPLOAD_BUTTON);
-				await sleep(800);
+				const opened = await clickByName(page, strings.upload);
+				await sleep(300);
+				if (opened) {
+					dialogInside = await watchOverlay(page, network);
+					await shot("upload-dialog-open");
+				}
 				await page.keyboard.press("Escape");
 				await sleep(500);
 				return { dialogOpened: opened };
 			});
+			const insides = [paletteInside, dialogInside].filter(Boolean);
 			return {
-				passed: palette.passed && dialog.passed,
-				moved: [...palette.moved, ...dialog.moved],
+				passed: palette.passed && dialog.passed && insides.every((r) => r.passed),
+				moved: [...palette.moved, ...dialog.moved, ...insides.flatMap((r) => r.moved)],
 				cls: Math.max(palette.cls, dialog.cls),
-				summary: `palette ${palette.paletteOpened ? "opened" : "did not open"}, upload dialog ${dialog.dialogOpened ? "opened" : "not found"}`,
+				insideOverlays: insides.map((r) => ({ tracked: r.tracked, moved: r.moved.length })),
+				summary: `palette ${palette.paletteOpened ? "opened" : "did not open"}${paletteInside ? ` (${paletteInside.moved.length} moved inside)` : ""}, upload dialog ${dialog.dialogOpened ? "opened" : "not found"}${dialogInside ? ` (${dialogInside.moved.length} moved inside)` : ""}`,
 			};
 		},
 	},
@@ -346,7 +407,7 @@ const SCENARIOS = [
 		viewports: ["mobile"],
 		writes: false,
 		path: () => `${ADMIN}/`,
-		async run({ page, network }) {
+		async run({ page, network, shot }) {
 			const trigger = page.locator("header button").first();
 			const r = await watch(
 				page,
@@ -354,6 +415,7 @@ const SCENARIOS = [
 				async () => {
 					await trigger.click();
 					await sleep(600);
+					await shot("menu-open");
 					const link = page.locator(`a[href$="${ADMIN}/media"]`).first();
 					const found = (await link.count()) > 0 && (await link.isVisible());
 					if (found) await link.click();
@@ -372,12 +434,12 @@ const SCENARIOS = [
 		viewports: ["desktop"],
 		writes: true,
 		path: () => `${ADMIN}/media`,
-		async run({ page, network, mediaFile }) {
+		async run({ page, network, mediaFile, strings, shot }) {
 			const r = await watch(
 				page,
 				network,
 				async () => {
-					await clickByName(page, UPLOAD_BUTTON);
+					await clickByName(page, strings.upload);
 					const [response] = await Promise.all([
 						page.waitForResponse(
 							(res) =>
@@ -387,10 +449,11 @@ const SCENARIOS = [
 						page.locator('input[type="file"][multiple]').setInputFiles(mediaFile),
 					]);
 					await sleep(1000);
+					await shot("uploaded");
 					await page.keyboard.press("Escape");
 					return { uploadStatus: response.status() };
 				},
-				{ exclude: "main .grid" },
+				{ grows: "main .grid" },
 			);
 			return { ...r, summary: `upload ${r.uploadStatus}` };
 		},
@@ -416,18 +479,16 @@ const SCENARIOS = [
 			);
 			await page.goto(`${site.origin}${ADMIN}/content/${collection}`, { waitUntil: "load" });
 			await sleep(700);
+			const before = await announcements(page);
 			const r = await watch(page, network, async () => {
 				await sleep(2500);
 				return {};
 			});
-			const text = await page
-				.locator("main")
-				.innerText()
-				.catch(() => "");
+			const shown = added(before, await announcements(page));
 			return {
 				...r,
-				errorShown: LIST_ERROR_TEXT.test(text),
-				summary: `error message ${LIST_ERROR_TEXT.test(text) ? "shown" : "not found"}`,
+				announced: shown,
+				summary: `${shown.length} new alert or status message(s)${shown.length ? `: ${shown[0].slice(0, 80)}` : ""}`,
 			};
 		},
 	},
@@ -445,6 +506,7 @@ const SCENARIOS = [
 				.first();
 			if ((await link.count()) === 0)
 				return { passed: null, summary: "no link to an unloaded screen" };
+			const announcedBefore = await announcements(page);
 			await context.setOffline(true);
 			try {
 				const r = await watch(
@@ -464,12 +526,13 @@ const SCENARIOS = [
 						.catch(() => "")
 				).trim();
 				const failed = network.requests.slice(before).filter((q) => q.failed);
+				const shown = added(announcedBefore, await announcements(page));
 				return {
 					...r,
 					failedRequests: failed.map((q) => q.url.replace(ORIGIN_PREFIX, "")),
 					mainTextLength: text.length,
-					errorShown: OFFLINE_ERROR_TEXT.test(text),
-					summary: `${failed.length} request(s) failed offline; main shows ${text.length} characters; error message ${OFFLINE_ERROR_TEXT.test(text) ? "shown" : "not found"}`,
+					announced: shown,
+					summary: `${failed.length} request(s) failed offline; main shows ${text.length} characters; ${shown.length} new alert or status message(s)`,
 				};
 			} finally {
 				await context.setOffline(false);
@@ -481,6 +544,7 @@ const SCENARIOS = [
 export async function runScenarios({
 	browser,
 	site,
+	workspace,
 	cookies,
 	options,
 	prepared,
@@ -493,6 +557,11 @@ export async function runScenarios({
 	const heaviestEntry = prepared.seed.edits?.heaviestEntry;
 	const collection = prepared.seed.edits?.collection ?? "pages";
 	const heaviest = heaviestEntry ? { ...heaviestEntry, collection } : null;
+	const catalog = loadAdminCatalog(workspace, options.locale);
+	const strings = {
+		save: namesMatcher(catalog, SAVE_MESSAGES),
+		upload: namesMatcher(catalog, UPLOAD_MESSAGES),
+	};
 	const results = [];
 	mkdirSync(screenshotDir, { recursive: true });
 	for (const scenario of SCENARIOS) {
@@ -510,7 +579,24 @@ export async function runScenarios({
 			}
 			const phase = `scenario:${name.replace(NON_SLUG, "-")}`;
 			const ctx = await openAdmin(browser, { site, cookies, options, viewport, phase });
-			const args = { ...ctx, site, cookies, heaviest, collection, mediaFile, viewport };
+			const shotBase = join(screenshotDir, phase.slice("scenario:".length));
+			const screenshots = [];
+			const shot = async (label) => {
+				const path = `${shotBase}-${label}.png`;
+				await ctx.page.screenshot({ path }).catch(() => {});
+				screenshots.push(path);
+			};
+			const args = {
+				...ctx,
+				site,
+				cookies,
+				heaviest,
+				collection,
+				mediaFile,
+				viewport,
+				strings,
+				shot,
+			};
 			try {
 				await scenario.before?.(args);
 				if (scenario.path) {
@@ -520,9 +606,9 @@ export async function runScenarios({
 					await waitForSettle(ctx.page, ctx.network);
 				}
 				const result = await scenario.run(args);
-				const screenshot = join(screenshotDir, `${phase.slice("scenario:".length)}.png`);
+				const screenshot = `${shotBase}.png`;
 				await ctx.page.screenshot({ path: screenshot }).catch(() => {});
-				results.push({ name, viewport, screenshot, ...result });
+				results.push({ name, viewport, screenshot, screenshots, ...result });
 				log(
 					`  scenario ${name.padEnd(46)} ${result.passed === false ? "MOVED" : result.passed ? "ok" : "-"}  ${result.summary ?? ""}`,
 				);

@@ -384,12 +384,16 @@ export function renderSummary(run) {
 			s.name,
 			s.passed === false ? "**moved**" : s.passed === true ? "ok" : "-",
 			s.cls === undefined ? "-" : s.cls.toFixed(4),
-			s.moved?.[0] ? `${s.moved[0].element} (${s.moved[0].delta}px)` : "-",
+			s.moved?.[0]
+				? `${s.moved[0].element}${s.moved[0].replacedBy ? ` replaced by ${s.moved[0].replacedBy}` : ""} (${s.moved[0].delta}px)`
+				: "-",
 			s.summary ?? s.error ?? "",
 		]),
 	);
 	lines.push("## Interaction scenarios", "");
-	lines.push("Each scenario samples element positions and fails when something visible moved.\n");
+	lines.push(
+		"Each scenario samples element positions and fails when something visible moved, or was replaced by an element somewhere else. Screenshots, including ones taken while dialogs and menus were open, are listed per scenario in results.json.\n",
+	);
 	lines.push(
 		table(["Profile", "Scenario", "Result", "CLS", "Largest move", "Notes"], scenarioRows),
 	);

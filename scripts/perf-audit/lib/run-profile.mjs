@@ -175,6 +175,7 @@ export async function runProfile(ctx) {
 			result.scenarios = await runScenarios({
 				browser,
 				site,
+				workspace,
 				cookies,
 				options,
 				prepared,
