@@ -666,16 +666,36 @@ describe("MediaLibrary", () => {
 			expect(rows[2]?.element()).toHaveTextContent("photo.jpg");
 		});
 
-		it("renders the initial folder loader and error inside the list table", async () => {
-			const onRetryFolders = vi.fn();
+		it("waits for the first folder list before showing the library", async () => {
 			const screen = await renderLibrary({
 				foldersLoading: true,
+				items: [makeMediaItem({ filename: "photo.jpg" })],
+				pagination: makePagination(),
+			});
+
+			expect(screen.getByText("photo.jpg").query()).toBeNull();
+			expect(screen.getByRole("tab", { name: "List view" }).query()).toBeNull();
+		});
+
+		it("renders the folder loader and error inside the list table", async () => {
+			const onRetryFolders = vi.fn();
+			const screen = await renderLibrary({
 				items: [makeMediaItem({ filename: "photo.jpg" })],
 				pagination: makePagination(),
 				onRetryFolders,
 			});
 
 			await screen.getByRole("tab", { name: "List view" }).click();
+			await screen.rerender(
+				<QueryWrapper>
+					<MediaLibrary
+						foldersLoading
+						items={[makeMediaItem({ filename: "photo.jpg" })]}
+						pagination={makePagination()}
+						onRetryFolders={onRetryFolders}
+					/>
+				</QueryWrapper>,
+			);
 			let rows = screen.getByRole("row").all();
 			expect(rows[1]?.element()).toHaveTextContent("Loading folders");
 			expect(rows[1]?.element().querySelector("td")).toHaveAttribute("colspan", "5");

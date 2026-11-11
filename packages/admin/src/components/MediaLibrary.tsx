@@ -454,15 +454,24 @@ export function MediaLibrary({
 	// Get current items based on active provider
 	const currentItems = activeProvider === "local" ? items : [];
 	const currentProviderItems = activeProvider !== "local" ? providerData?.items || [] : [];
-	const awaitingSetupStatus = isAdmin && activeProvider === "local" && activationQuery.isPending;
+	const awaitingSetupStatus =
+		isAdmin && activeProvider === "local" && (activationQuery.isPending || progressQuery.isLoading);
 	const currentLoading =
 		(activeProvider === "local" ? isLoading : providerLoading) || awaitingSetupStatus;
-	// Until the first results arrive, nothing below the heading is shown: the setup banner,
-	// toolbar and folders would otherwise appear one by one and push each other down.
+	const assetPage = pagination?.page ?? 1;
+	const showFolderResults =
+		activeProvider === "local" &&
+		assetPage === 1 &&
+		localTypeFilter === "all" &&
+		(!folderId || searchQuery.trim() !== "");
+	// Until the first results, the setup status and the folder list arrive, nothing below the
+	// heading is shown: the setup banner, toolbar and folders would otherwise appear one by one
+	// and push each other down.
 	const [shownFirstResults, setShownFirstResults] = React.useState(false);
 	const awaitingFirstResults =
 		!shownFirstResults &&
 		(awaitingSetupStatus ||
+			(showFolderResults && Boolean(foldersLoading) && folders.length === 0) ||
 			(currentLoading && currentItems.length === 0 && currentProviderItems.length === 0));
 	if (!awaitingFirstResults && !shownFirstResults) setShownFirstResults(true);
 	React.useEffect(() => {
@@ -514,12 +523,6 @@ export function MediaLibrary({
 			hasActiveQuery ||
 			(activeProvider === "local" &&
 				(folders.length > 0 || Boolean(foldersLoading) || Boolean(foldersError))));
-	const assetPage = pagination?.page ?? 1;
-	const showFolderResults =
-		activeProvider === "local" &&
-		assetPage === 1 &&
-		localTypeFilter === "all" &&
-		(!folderId || searchQuery.trim() !== "");
 	const visibleFolders = showFolderResults ? folders : [];
 	const hasFolderSurface =
 		showFolderResults &&

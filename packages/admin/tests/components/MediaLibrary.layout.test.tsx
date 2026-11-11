@@ -36,9 +36,11 @@ vi.mock("../../src/lib/api/current-user.js", () => ({
 }));
 
 const activationStatus = vi.hoisted(() => vi.fn());
+const usageProgress = vi.hoisted(() => vi.fn());
 vi.mock("../../src/lib/api/media-usage-activation.js", async (importOriginal) => ({
 	...(await importOriginal<typeof import("../../src/lib/api/media-usage-activation.js")>()),
 	fetchMediaUsageActivationStatus: () => activationStatus(),
+	fetchMediaUsageProgress: () => usageProgress(),
 }));
 
 const items: MediaItem[] = Array.from({ length: 35 }, (_, index) => ({
@@ -447,6 +449,64 @@ describe("Media library setup banner", () => {
 		await expectStableLayout(async () => {
 			resolveStatus({ state: "expanded" });
 			await expect.element(screen.getByText("Set up media usage tracking")).toBeInTheDocument();
+			await expect.element(screen.getByText("document-0.txt")).toBeInTheDocument();
+		});
+	});
+
+	it("doesn't push the grid down when indexing progress arrives after activation", async () => {
+		await page.viewport(390, 844);
+		currentRole.value = 50;
+		activationStatus.mockResolvedValueOnce({ state: "active" });
+		let resolveProgress!: (value: unknown) => void;
+		usageProgress.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveProgress = resolve;
+				}),
+		);
+		const screen = await render(
+			<Toasty>
+				<Sidebar.Provider>
+					<main style={{ width: 390 }}>
+						<MediaLibrary items={items} canUpload />
+					</main>
+				</Sidebar.Provider>
+			</Toasty>,
+		);
+		await expect
+			.element(screen.getByRole("heading", { name: "Media Library" }))
+			.toBeInTheDocument();
+		await vi.waitFor(() => expect(usageProgress).toHaveBeenCalled());
+
+		await expectStableLayout(async () => {
+			resolveProgress({ status: "indexing", readyCollections: 0, totalCollections: 1 });
+			await expect
+				.element(screen.getByText("Media usage tracking is indexing existing content"))
+				.toBeInTheDocument();
+			await expect.element(screen.getByText("document-0.txt")).toBeInTheDocument();
+		});
+	});
+});
+
+describe("Media library folders", () => {
+	it("doesn't move the grid when the folder list loads empty", async () => {
+		await page.viewport(390, 844);
+		const library = (foldersLoading: boolean) => (
+			<Toasty>
+				<Sidebar.Provider>
+					<main style={{ width: 390 }}>
+						<MediaLibrary items={items} folders={[]} foldersLoading={foldersLoading} canUpload />
+					</main>
+				</Sidebar.Provider>
+			</Toasty>
+		);
+		const screen = await render(library(true));
+		await expect
+			.element(screen.getByRole("heading", { name: "Media Library" }))
+			.toBeInTheDocument();
+
+		await expectStableLayout(async () => {
+			await screen.rerender(library(false));
 			await expect.element(screen.getByText("document-0.txt")).toBeInTheDocument();
 		});
 	});
