@@ -816,6 +816,9 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 				// port isn't known yet here. Nothing useful to print for build.
 			},
 			"astro:config:done": async ({ config: finalConfig, logger }) => {
+				serializableConfig.cloudflareImageResizing =
+					finalConfig.adapter?.name === "@astrojs/cloudflare" &&
+					finalConfig.image.service.entrypoint === "@astrojs/cloudflare/image-service";
 				const warning = missingReactIntegrationWarning(finalConfig.integrations);
 				if (warning) logger.warn(warning);
 				const adapterWarning = adapterVersionMismatchWarning(finalConfig.root);

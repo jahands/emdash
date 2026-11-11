@@ -235,8 +235,11 @@ async function imageConfigFor(config: EmDashConfig, warn = vi.fn()) {
 async function runtimeConfigFor(
 	config: EmDashConfig,
 	image: { endpoint?: { entrypoint?: string; route?: string } } = {},
+	finalService?: string,
+	adapter = "@astrojs/cloudflare",
 ) {
-	const setup = emdash(config).hooks["astro:config:setup"] as NonNullable<
+	const integration = emdash(config);
+	const setup = integration.hooks["astro:config:setup"] as NonNullable<
 		AstroIntegration["hooks"]["astro:config:setup"]
 	>;
 	const updateConfig = vi.fn();
@@ -256,6 +259,20 @@ async function runtimeConfigFor(
 		addMiddleware: vi.fn(),
 		updateConfig,
 	} as never);
+	if (finalService) {
+		const done = integration.hooks["astro:config:done"] as NonNullable<
+			AstroIntegration["hooks"]["astro:config:done"]
+		>;
+		await done({
+			config: {
+				root,
+				adapter: { name: adapter },
+				image: { service: { entrypoint: finalService } },
+				integrations: [{ name: "@astrojs/react" }],
+			},
+			logger: { warn: vi.fn() },
+		} as never);
+	}
 	const plugins = updateConfig.mock.calls.flatMap(([update]) => update?.vite?.plugins ?? []);
 	const virtualModules = plugins.find(
 		(plugin: { name?: string }) => plugin?.name === "emdash-virtual-modules",
@@ -263,6 +280,7 @@ async function runtimeConfigFor(
 	const source = String(virtualModules.load(RESOLVED_VIRTUAL_CONFIG_ID));
 	return JSON.parse(source.replace(/^export default /, "").replace(/;$/, "")) as {
 		imageEndpointRoute?: string;
+		cloudflareImageResizing?: boolean;
 	};
 }
 
@@ -324,5 +342,18 @@ describe("image endpoint route in the runtime config", () => {
 			(await runtimeConfigFor({}, { endpoint: { entrypoint: "./src/my-endpoint.ts" } }))
 				.imageEndpointRoute,
 		).toBeUndefined();
+	});
+});
+
+describe("Cloudflare rendition mode in runtime config", () => {
+	it.each([
+		["@astrojs/cloudflare/image-service", "@astrojs/cloudflare", true],
+		["@astrojs/cloudflare/image-service-workerd", "@astrojs/cloudflare", false],
+		["astro/assets/services/noop", "@astrojs/cloudflare", false],
+		["custom-service", "@astrojs/cloudflare", false],
+		["@astrojs/cloudflare/image-service", "@astrojs/node", false],
+	])("uses finalized service %s on %s", async (service, adapter, expected) => {
+		const config = await runtimeConfigFor({}, {}, service, adapter);
+		expect(config.cloudflareImageResizing).toBe(expected);
 	});
 });

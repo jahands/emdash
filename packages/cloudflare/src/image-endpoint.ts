@@ -4,7 +4,8 @@
  *
  * For an EmDash media URL it reads the source bytes straight from the storage
  * adapter (the R2 binding) and resizes them with the Cloudflare `IMAGES`
- * binding -- no HTTP fetch, so it works behind Cloudflare Access and with
+ * binding, or redirects to zone Image Resizing in URL mode. Binding transforms
+ * use no HTTP fetch, so they work behind Cloudflare Access and with
  * `global_fetch_strictly_public`. Every other image is delegated to the
  * adapter's stock transform endpoint unchanged (bundled assets via the `ASSETS`
  * binding, allowed-remote via fetch).
@@ -26,6 +27,8 @@ import {
 	isNotModified,
 	type ImageTransformFormat,
 } from "emdash/media/image-endpoint";
+// @ts-ignore - virtual module
+import virtualConfig from "virtual:emdash/config";
 
 export const prerender = false;
 
@@ -122,11 +125,35 @@ export const GET: APIRoute = async (ctx) => {
 		// Only raster images are transformable; serve anything else unchanged.
 		if (!source.contentType.startsWith("image/")) return serveOriginal(source);
 
-		const images = resolveImagesBinding();
 		const parsed = parseTransformParams(url.searchParams);
 
-		// No binding or unparseable params: serve the original so the URL resolves.
-		if (!images || !parsed.ok) return serveOriginal(source);
+		if (!parsed.ok) return serveOriginal(source);
+
+		if (virtualConfig.cloudflareImageResizing) {
+			const { width, height, format, quality } = parsed.options;
+			const options = ["onerror=redirect"];
+			if (width) options.push(`width=${width}`);
+			if (height) options.push(`height=${height}`);
+			if (quality) options.push(`quality=${quality}`);
+			options.push(`format=${format}`);
+			// matchInternalMediaKey ignores the href host because binding mode never
+			// fetches it. Reconstruct the source on this origin before redirecting.
+			const sourceUrl = new URL(`/_emdash/api/media/file/${key}`, url.origin);
+			// Image Resizing can cache sources beyond their origin freshness lifetime.
+			if (source.lastModified) {
+				sourceUrl.searchParams.set("v", `${source.size}-${source.lastModified.getTime()}`);
+			}
+			return new Response(null, {
+				status: 302,
+				headers: {
+					Location: `/cdn-cgi/image/${options.join(",")}/${sourceUrl.href}`,
+					"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
+				},
+			});
+		}
+
+		const images = resolveImagesBinding();
+		if (!images) return serveOriginal(source);
 
 		const fingerprint = getTransformFingerprint(url.searchParams);
 		if (isNotModified(ctx.request, source.size, source.lastModified, fingerprint)) {

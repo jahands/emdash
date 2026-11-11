@@ -1,11 +1,13 @@
 import type { APIContext } from "astro";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { fakeEnv, adapterGET } = vi.hoisted(() => ({
+const { fakeEnv, adapterGET, config } = vi.hoisted(() => ({
 	fakeEnv: {} as Record<string, unknown>,
+	config: { cloudflareImageResizing: false },
 	adapterGET: vi.fn(async () => new Response("adapter", { status: 418 })),
 }));
 
+vi.mock("virtual:emdash/config", () => ({ default: config }));
 vi.mock("cloudflare:workers", () => ({ env: fakeEnv }));
 vi.mock("@astrojs/cloudflare/image-transform-endpoint", () => ({ GET: adapterGET }));
 vi.mock(
@@ -28,6 +30,7 @@ function context(query: string, contentType = "image/jpeg") {
 		}),
 		contentType,
 		size: sourceBytes.length,
+		lastModified: undefined as Date | undefined,
 		downloads: 0,
 	};
 	const storage = {
@@ -69,11 +72,94 @@ function installImages() {
 }
 
 afterEach(() => {
+	config.cloudflareImageResizing = false;
 	for (const key of Object.keys(fakeEnv)) delete fakeEnv[key];
 	vi.clearAllMocks();
 });
 
 describe("Cloudflare image endpoint", () => {
+	it("redirects URL-mode renditions without an Images binding", async () => {
+		config.cloudflareImageResizing = true;
+		const { ctx, input } = context("w=384&h=200&f=webp&q=high");
+		const response = await GET(ctx as never);
+		expect(response.status).toBe(302);
+		expect(response.headers.get("Location")).toBe(
+			"/cdn-cgi/image/onerror=redirect,width=384,height=200,quality=80,format=webp/https://example.test/_emdash/api/media/file/photo.jpg",
+		);
+		expect(response.headers.get("Cache-Control")).toBe("public, max-age=0, must-revalidate");
+		expect(response.headers.has("ETag")).toBe(false);
+		expect(input.body.locked).toBe(false);
+		expect((await input.body.getReader().read()).done).toBe(true);
+	});
+
+	it.each(["GET", "HEAD"])(
+		"redirects a conditional %s without reusing original validators",
+		async (method) => {
+			config.cloudflareImageResizing = true;
+			const { ctx } = context("w=176");
+			ctx.request = new Request(ctx.request.url, { method, headers: { "If-None-Match": "*" } });
+			const response = await GET(ctx as never);
+			expect(response.status).toBe(302);
+			expect(response.body).toBeNull();
+			expect(response.headers.has("ETag")).toBe(false);
+			expect(response.headers.has("Last-Modified")).toBe(false);
+		},
+	);
+
+	it("changes the resizing cache key when a same-size original is replaced", async () => {
+		config.cloudflareImageResizing = true;
+		const { ctx, input } = context("w=176");
+		input.lastModified = new Date("2026-01-01T00:00:00Z");
+		const before = await GET(ctx as never);
+		const replacement = context("w=176");
+		replacement.input.lastModified = new Date("2026-01-02T00:00:00Z");
+		const after = await GET(replacement.ctx as never);
+		expect(before.headers.get("Location")).toContain("?v=6-1767225600000");
+		expect(after.headers.get("Location")).toContain("?v=6-1767312000000");
+	});
+
+	it("reconstructs URL-mode sources locally even for a hostile href origin", async () => {
+		config.cloudflareImageResizing = true;
+		const { ctx } = context("w=176&f=webp");
+		const url = new URL(ctx.request.url);
+		url.searchParams.set(
+			"href",
+			"https://private.example/_emdash/api/media/file/photo.jpg?secret=1#fragment",
+		);
+		ctx.request = new Request(url);
+		const response = await GET(ctx as never);
+		expect(response.headers.get("Location")).toBe(
+			"/cdn-cgi/image/onerror=redirect,width=176,format=webp/https://example.test/_emdash/api/media/file/photo.jpg",
+		);
+	});
+
+	it.each(["w=0", "w=4001", "w=176&f=svg", "w=176&q=evil"])(
+		"preserves original for invalid URL-mode request %s",
+		async (query) => {
+			config.cloudflareImageResizing = true;
+			const { ctx } = context(query);
+			const response = await GET(ctx as never);
+			expect(response.status).toBe(200);
+			expect(await response.text()).toBe("source");
+		},
+	);
+
+	it("does not redirect unrelated or unsafe media URLs in URL mode", async () => {
+		config.cloudflareImageResizing = true;
+		for (const href of [
+			"https://private.example/photo.jpg",
+			"/_emdash/api/media/file/nested/photo.jpg",
+			"/_emdash/api/media/file/a%2Fb.jpg",
+		]) {
+			const { ctx, storage } = context("w=176");
+			const url = new URL(ctx.request.url);
+			url.searchParams.set("href", href);
+			ctx.request = new Request(url);
+			const response = await GET(ctx as never);
+			expect(response.status).toBe(418);
+			expect(storage.download).not.toHaveBeenCalled();
+		}
+	});
 	it.each([
 		["low", 25],
 		["mid", 50],
