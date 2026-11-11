@@ -163,17 +163,53 @@ function paragraph(i, key) {
 	};
 }
 
-/** A long body with images between sections. */
+/**
+ * A long body with `imageCount` distinct images spread between its
+ * paragraphs, starting at `media[offset]`.
+ */
 export function longBody(media, offset, imageCount) {
+	if (imageCount > media.length) {
+		throw new Error(`A body cannot hold ${imageCount} distinct images from ${media.length} files`);
+	}
+	const paragraphs = Math.max(BODY_PARAGRAPHS, imageCount + 1);
+	const after = new Set(
+		Array.from({ length: imageCount }, (_, k) =>
+			Math.floor(((k + 1) * paragraphs) / (imageCount + 1)),
+		),
+	);
 	const blocks = [];
-	for (let i = 0; i < BODY_PARAGRAPHS; i++) {
+	let placed = 0;
+	for (let i = 0; i < paragraphs; i++) {
 		blocks.push(paragraph(i + offset, `p${offset}-${i}`));
-		if (i % 4 === 3 && blocks.filter((b) => b._type === "image").length < imageCount) {
-			const item = media[(offset + i) % media.length];
-			blocks.push(imageBlock(item, `img${offset}-${i}`, `Photo ${item.filename}`));
+		if (after.has(i + 1) && placed < imageCount) {
+			const item = media[(offset + placed) % media.length];
+			blocks.push(imageBlock(item, `img${offset}-${placed}`, `Photo ${item.filename}`));
+			placed++;
 		}
 	}
 	return blocks;
+}
+
+/** Image blocks in a Portable Text body and how many distinct assets they use. */
+export function countBodyImages(blocks) {
+	const images = (Array.isArray(blocks) ? blocks : []).filter((b) => b?._type === "image");
+	return { blocks: images.length, distinct: new Set(images.map((b) => b.asset?._ref)).size };
+}
+
+/**
+ * Throw when the image-heavy entry as stored does not have one body image
+ * per uploaded file and a featured image, so the seed cannot drift from
+ * what the summary says it measured.
+ */
+export function assertHeaviestEntry(stored, { mediaCount, imageField, bodyField }) {
+	const counts = countBodyImages(stored?.[bodyField]);
+	const featured = Boolean(stored?.[imageField]?.id ?? stored?.[imageField]?.src);
+	if (counts.blocks !== mediaCount || counts.distinct !== mediaCount || !featured) {
+		throw new Error(
+			`The image-heavy entry has ${counts.blocks} body image blocks using ${counts.distinct} distinct files and ${featured ? "a" : "no"} featured image; expected ${mediaCount} distinct body images and a featured image.`,
+		);
+	}
+	return { bodyImages: counts.blocks, distinctBodyImages: counts.distinct, featured };
 }
 
 /**
@@ -267,7 +303,21 @@ export async function ownerEdits(api, media, plan) {
 	});
 	const heavyId = (heavy.item ?? heavy).id;
 	await publish(api, collection, heavyId);
-	summary.heaviestEntry = { id: heavyId, slug: "field-guide-every-photo", images: media.length };
+	const stored = await api("GET", `/content/${collection}/${heavyId}`);
+	const counts = assertHeaviestEntry((stored.item ?? stored).data, {
+		mediaCount: media.length,
+		imageField,
+		bodyField,
+	});
+	summary.heaviestEntry = {
+		id: heavyId,
+		slug: "field-guide-every-photo",
+		images: counts.bodyImages,
+		distinctImages: counts.distinctBodyImages,
+		featuredImage: counts.featured,
+	};
+	summary.bodyImages += counts.bodyImages;
+	summary.featured++;
 	summary.created++;
 
 	for (let i = 0; i < EXTRA_ENTRIES; i++) {

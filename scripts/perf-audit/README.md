@@ -46,7 +46,7 @@ Each profile starts empty and is set up the way an owner would set it up:
 1. The setup wizard routes apply the template seed.
 2. The first admin is created through the setup routes, with a Chromium virtual authenticator answering the passkey prompt.
 3. The owner uploads 12 generated photos and screenshots (1600–4000 px, 0.6–3.5 MB) through the media library.
-4. Every entry gets a featured image and an image in its body. One long entry gets all 12 images, and 52 more entries make the lists paginate.
+4. Every entry gets a featured image and an image in its body. One long entry gets a featured image and all 12 uploads as distinct image blocks in its body, and 52 more entries with two body images each make the lists paginate. The seed reads the long entry back and stops when it does not hold those 13 images.
 5. Media usage tracking is switched on and left indexing. No media folders are created.
 
 Production builds return 403 from the dev bypass, so the harness signs in by writing a magic-link token row, the same row `createMagicLinkUrl()` writes, and posting it to `/_emdash/api/auth/magic-link/verify`.
@@ -161,4 +161,4 @@ FONTCONFIG_FILE=/path/to/arabic-fonts.conf pnpm perf:audit --locale ar
 node --test scripts/perf-audit/tests/*.test.mjs
 ```
 
-The tests cover profile materialization against the real templates, port leasing and slot locks, CLS session windows, blocking time, oversized-image detection, waves, the resize emulation, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
+The tests cover profile materialization against the real templates, port leasing and slot locks, the seeded image counts, CLS session windows, blocking time, oversized-image detection, waves, the resize emulation, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
