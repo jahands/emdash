@@ -227,6 +227,9 @@ export function renderSummary(run) {
 
 	lines.push("## Slowest screens", "");
 	lines.push(
+		"Transfer is what crossed the wire. If compressed swaps each text response that arrived without `Content-Encoding` for its brotli-5 size, as a CDN would send it; local `wrangler dev` never compresses, so on workerd profiles that column is closer to a deployed Worker.\n",
+	);
+	lines.push(
 		table(
 			[
 				"Profile",
@@ -237,6 +240,7 @@ export function renderSummary(run) {
 				"API waves",
 				"Last API response",
 				"Transfer",
+				"If compressed",
 			],
 			allPages
 				.toSorted((a, b) => (b.page.lcpMs ?? 0) - (a.page.lcpMs ?? 0))
@@ -250,6 +254,7 @@ export function renderSummary(run) {
 					page.api.waves,
 					ms(page.api.lastResponseMs),
 					kib(page.transferBytes),
+					kib(page.compressedTransferBytes ?? page.transferBytes),
 				]),
 		),
 	);

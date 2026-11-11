@@ -4,6 +4,8 @@
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { promisify } from "node:util";
+import zlib from "node:zlib";
 
 import { measurePixels } from "./image-pixels.mjs";
 import {
@@ -12,6 +14,7 @@ import {
 	imageStates,
 	computeTbt,
 	isApiRequest,
+	isCompressibleMime,
 	parseServerTiming,
 	summarizeRequests,
 } from "./metrics.mjs";
@@ -85,10 +88,42 @@ async function applyThrottling(cdp, options) {
 	}
 }
 
-/** Record every request the page makes through the DevTools protocol. */
-export function recordNetwork(cdp) {
+const brotliCompress = promisify(zlib.brotliCompress);
+
+/**
+ * Size a text response that arrived uncompressed as a CDN would send it:
+ * the bytes on the wire with the body replaced by its brotli-5 encoding.
+ */
+async function sizeAsCompressed(cdp, record) {
+	try {
+		const { body, base64Encoded } = await cdp.send("Network.getResponseBody", {
+			requestId: record.id,
+		});
+		const raw = Buffer.from(body, base64Encoded ? "base64" : "utf8");
+		const encoded = await brotliCompress(raw, {
+			params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5 },
+		});
+		record.compressedBytes = Math.max(0, record.bytes - raw.length) + encoded.length;
+	} catch {
+		// The body is gone (redirect, aborted or evicted); count the bytes as sent.
+	}
+}
+
+/**
+ * Record every request the page makes through the DevTools protocol. With
+ * `sizeCompressed`, uncompressed text responses also get `compressedBytes`
+ * once `pendingSizes` settles.
+ */
+export function recordNetwork(cdp, { sizeCompressed = false } = {}) {
 	const byId = new Map();
-	const state = { navStart: null, inflight: 0, lastActivity: Date.now(), requests: [] };
+	const state = {
+		navStart: null,
+		inflight: 0,
+		lastActivity: Date.now(),
+		requests: [],
+		/** @type {Promise<void>[]} */
+		pendingSizes: [],
+	};
 	cdp.on("Network.requestWillBeSent", (e) => {
 		if (e.redirectResponse && byId.has(e.requestId)) {
 			const prev = byId.get(e.requestId);
@@ -113,6 +148,8 @@ export function recordNetwork(cdp) {
 			failed: false,
 			serverTiming: null,
 			fromCache: false,
+			encoding: null,
+			compressedBytes: null,
 		};
 		byId.set(e.requestId, record);
 		state.requests.push(record);
@@ -132,6 +169,7 @@ export function recordNetwork(cdp) {
 			Object.entries(e.response.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]),
 		);
 		r.serverTiming = parseServerTiming(headers["server-timing"]);
+		r.encoding = headers["content-encoding"] ?? null;
 		r.emulated = headers["x-perf-audit-emulated"] ?? null;
 		state.lastActivity = Date.now();
 	});
@@ -142,6 +180,16 @@ export function recordNetwork(cdp) {
 		r.bytes = e.encodedDataLength ?? r.bytes;
 		r.failed = failed;
 		if (failed) r.errorText = e.errorText;
+		if (
+			sizeCompressed &&
+			!failed &&
+			!r.encoding &&
+			!r.fromCache &&
+			r.bytes > 1024 &&
+			isCompressibleMime(r.mimeType)
+		) {
+			state.pendingSizes.push(sizeAsCompressed(cdp, r));
+		}
 		byId.delete(e.requestId);
 		state.inflight--;
 		state.lastActivity = Date.now();
@@ -170,6 +218,8 @@ export function normalizeRequests(state) {
 		dbCount: r.serverTiming?.["db.count"] ?? null,
 		emulated: r.emulated ?? null,
 		fromCache: r.fromCache,
+		encoding: r.encoding,
+		compressedBytes: r.compressedBytes,
 	}));
 }
 
@@ -235,7 +285,7 @@ export async function measurePage({
 		await cdp.send("Network.enable");
 		await cdp.send("Network.setCacheDisabled", { cacheDisabled: false });
 		await applyThrottling(cdp, options);
-		const network = recordNetwork(cdp);
+		const network = recordNetwork(cdp, { sizeCompressed: true });
 		if (options.hold) await installHold(context, page, options.hold, paths.hold, notes);
 
 		const consoleErrors = [];
@@ -255,6 +305,7 @@ export async function measurePage({
 		}
 		const finalUrl = page.url();
 
+		await Promise.all(network.pendingSizes);
 		const requests = normalizeRequests(network);
 		const summary = summarizeRequests(requests);
 		const bytesForUrl = (src) => {
@@ -303,6 +354,7 @@ export async function measurePage({
 				.reduce((sum, r) => sum + (r.dbCount ?? 0), 0),
 			requestCount: summary.requestCount,
 			transferBytes: summary.totalBytes,
+			compressedTransferBytes: summary.compressedBytes,
 			bytesByType: summary.bytesByType,
 			criticalChain: summary.criticalChain,
 			inferredLinks: summary.inferredLinks,

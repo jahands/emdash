@@ -159,6 +159,21 @@ export function isApiRequest(url) {
 	}
 }
 
+/** Whether a CDN or compressing server would encode a response of this MIME type. */
+export function isCompressibleMime(mime) {
+	if (!mime) return false;
+	const type = mime.split(";")[0].trim().toLowerCase();
+	if (type === "text/event-stream") return false;
+	return (
+		type.startsWith("text/") ||
+		type.endsWith("+json") ||
+		type.endsWith("+xml") ||
+		["application/javascript", "application/json", "application/xml", "application/wasm"].includes(
+			type,
+		)
+	);
+}
+
 /**
  * Summarize recorded requests. Times are milliseconds from navigation
  * start. `waitedOn` links each request to the one it depended on, and
@@ -212,10 +227,12 @@ export function summarizeRequests(requests) {
 
 	const bytesByType = {};
 	let totalBytes = 0;
+	let compressedBytes = 0;
 	for (const r of requests) {
 		const type = r.type ?? "Other";
 		bytesByType[type] = (bytesByType[type] ?? 0) + (r.bytes ?? 0);
 		totalBytes += r.bytes ?? 0;
+		compressedBytes += r.compressedBytes ?? r.bytes ?? 0;
 	}
 
 	const apiIntervals = api
@@ -233,6 +250,7 @@ export function summarizeRequests(requests) {
 	return {
 		requestCount: requests.length,
 		totalBytes,
+		compressedBytes,
 		bytesByType,
 		api: {
 			count: api.length,

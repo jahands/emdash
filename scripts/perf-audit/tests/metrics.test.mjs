@@ -8,6 +8,7 @@ import {
 	computeCls,
 	computeTbt,
 	imageStates,
+	isCompressibleMime,
 	oversizeFactor,
 	parseServerTiming,
 	summarizeRequests,
@@ -212,4 +213,24 @@ void test("Server-Timing values parse by name", () => {
 		"db.count": 12,
 		"rt.init": 3,
 	});
+});
+
+void test("compressed transfer counts uncompressed text at its compressed size", () => {
+	const summary = summarizeRequests([
+		{ url: "http://x/", type: "Document", start: 0, end: 10, bytes: 5000, compressedBytes: 1200 },
+		{ url: "http://x/a.js", type: "Script", start: 10, end: 20, bytes: 800, encoding: "br" },
+		{ url: "http://x/p.png", type: "Image", start: 10, end: 30, bytes: 9000 },
+	]);
+	assert.equal(summary.totalBytes, 14_800);
+	assert.equal(summary.compressedBytes, 11_000);
+});
+
+void test("only text types count as compressible", () => {
+	assert.equal(isCompressibleMime("text/html; charset=utf-8"), true);
+	assert.equal(isCompressibleMime("application/json"), true);
+	assert.equal(isCompressibleMime("image/svg+xml"), true);
+	assert.equal(isCompressibleMime("text/event-stream"), false);
+	assert.equal(isCompressibleMime("image/png"), false);
+	assert.equal(isCompressibleMime("font/woff2"), false);
+	assert.equal(isCompressibleMime(undefined), false);
 });
