@@ -149,9 +149,9 @@ describe("ContentEditor mobile action bar", () => {
 		expect(publish).toBeDefined();
 		expect(settings).toBeDefined();
 		expect(distraction).toBeDefined();
-		expect(toolbar.textContent).not.toContain("Saved");
+		expect(toolbar.innerText).not.toContain("Saved");
 		expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
-		const gap = distraction!.rect.left - settings!.rect.right;
+		const gap = parseFloat(getComputedStyle(grid).columnGap);
 		expect(publish!.rect.width).toBeCloseTo(settings!.rect.width * 2 + gap, 0);
 		expect(settings!.rect.width).toBeCloseTo(distraction!.rect.width, 0);
 		expect(publish!.rect.top).toBeCloseTo(settings!.rect.top, 0);
@@ -198,32 +198,56 @@ describe("ContentEditor mobile action bar", () => {
 		},
 	);
 
-	it("uses four equal action cells for a published post", async () => {
+	it("keeps the other actions in place when saving turns Unpublish into Publish changes", async () => {
 		await page.viewport(390, 800);
-		const { toolbar } = await renderDirectEditor(item(true));
-		const grid = expectFourColumnGrid(toolbar);
-		const buttons = actionRects(toolbar);
-		for (const name of ["Unpublish Post", "Live View", "Settings"]) {
-			expect(buttons.find(({ name: found }) => found === name)).toBeDefined();
+		function PublishStateHarness() {
+			const [changed, setChanged] = React.useState(false);
+			return (
+				<>
+					<button type="button" onClick={() => setChanged(true)}>
+						Save changes
+					</button>
+					<ContentEditor
+						collection="posts"
+						collectionLabel="Post"
+						fields={fields}
+						item={changed ? { ...item(true), draftRevisionId: "changed" } : item(true)}
+						supportsDrafts
+						onAutosave={() => undefined}
+						onSave={() => undefined}
+						onPublish={() => undefined}
+						onUnpublish={() => undefined}
+					/>
+				</>
+			);
 		}
-		const distraction = buttons.find(({ name }) => name?.startsWith("Enter distraction-free"));
-		const actionButtons = buttons.filter(
-			({ name }) => name !== "Save" && name !== "Saved" && !name?.startsWith("Back to"),
+		const router = createAdminRouter(createTestQueryClient());
+		const screen = await render(
+			<LocaleDirectionProvider>
+				<Toasty>
+					<RouterContextProvider router={router}>
+						<PublishStateHarness />
+					</RouterContextProvider>
+				</Toasty>
+			</LocaleDirectionProvider>,
 		);
-		expect(distraction).toBeDefined();
-		expect(actionButtons).toHaveLength(4);
-		expect(new Set(actionButtons.map(({ rect }) => Math.round(rect.width))).size).toBe(1);
-		const byPosition = actionButtons.toSorted((a, b) => a.rect.left - b.rect.left);
-		expect(byPosition.map(({ name }) => name)).toEqual([
-			"Unpublish Post",
-			"Live View",
-			"Settings",
-			"Enter distraction-free mode",
-		]);
-		expect(byPosition[0]!.rect.left).toBeCloseTo(grid.getBoundingClientRect().left, 0);
-		expect(byPosition[3]!.rect.right).toBeCloseTo(grid.getBoundingClientRect().right, 0);
-		expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
-		expect(grid.clientWidth).toBeGreaterThanOrEqual(toolbar.clientWidth - 24);
+		const toolbar = document.querySelector<HTMLElement>("[data-emdash-editor-bar]")!;
+		const grid = expectFourColumnGrid(toolbar);
+		const others = (primary: string) =>
+			actionRects(toolbar)
+				.filter(({ name }) => name !== primary)
+				.map(({ name, rect }) => [name, Math.round(rect.x), Math.round(rect.y)]);
+		const unpublish = actionRects(toolbar).find(({ name }) => name === "Unpublish Post");
+		expect(unpublish!.rect.left).toBeCloseTo(grid.getBoundingClientRect().left, 0);
+		const before = others("Unpublish Post");
+
+		await screen.getByRole("button", { name: "Save changes" }).click();
+		await expect
+			.poll(() => actionRects(toolbar).find(({ name }) => name === "Publish changes"))
+			.toBeDefined();
+		const publish = actionRects(toolbar).find(({ name }) => name === "Publish changes")!;
+		expect(publish.rect.width).toBeCloseTo(unpublish!.rect.width, 0);
+		expect(others("Publish changes")).toEqual(before);
 	});
 
 	it("wraps extra actions into a second row while keeping four fixed columns", async () => {
@@ -234,7 +258,11 @@ describe("ContentEditor mobile action bar", () => {
 		expectFourColumnGrid(toolbar);
 		const buttons = actionRects(toolbar);
 		expect(new Set(buttons.map(({ rect }) => Math.round(rect.top))).size).toBe(2);
-		expect(new Set(buttons.map(({ rect }) => Math.round(rect.width))).size).toBe(1);
+		const singles = buttons.filter(({ name }) => name !== "Unpublish Post");
+		expect(new Set(singles.map(({ rect }) => Math.round(rect.width))).size).toBe(1);
+		const unpublish = buttons.find(({ name }) => name === "Unpublish Post")!;
+		const gap = parseFloat(getComputedStyle(actionGrid(toolbar)).columnGap);
+		expect(unpublish.rect.width).toBeCloseTo(singles[0]!.rect.width * 2 + gap, 0);
 		const settings = screen.getByRole("button", { name: "Settings", exact: true }).first();
 		await settings.click();
 		await expect.element(screen.getByRole("button", { name: "Close settings" })).toBeVisible();
@@ -321,19 +349,21 @@ describe("ContentEditor mobile action bar", () => {
 		expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
 	});
 
-	it("shows a dismissible full-width save error below the bar on mobile and desktop", async () => {
+	it("shows a save error as one notification that leaves the bar alone", async () => {
 		function SaveErrorHarness() {
-			const [error, setError] = React.useState<{ message: string; token: number } | undefined>({
-				message: "The server rejected this save.",
-				token: 1,
-			});
+			const [error, setError] = React.useState<{ message: string; token: number } | undefined>();
 			return (
 				<>
 					<button
 						type="button"
-						onClick={() => setError({ message: "The server rejected this save.", token: 2 })}
+						onClick={() =>
+							setError((current) => ({
+								message: "The server rejected this save.",
+								token: (current?.token ?? 0) + 1,
+							}))
+						}
 					>
-						Retry error
+						Fail save
 					</button>
 					<button type="button" onClick={() => setError(undefined)}>
 						Clear error
@@ -354,38 +384,32 @@ describe("ContentEditor mobile action bar", () => {
 		}
 
 		const router = createAdminRouter(createTestQueryClient());
-		const renderHarness = async () =>
-			render(
-				<LocaleDirectionProvider>
-					<Toasty>
-						<RouterContextProvider router={router}>
-							<SaveErrorHarness />
-						</RouterContextProvider>
-					</Toasty>
-				</LocaleDirectionProvider>,
-			);
+		const notices = () =>
+			[
+				...document.querySelectorAll(
+					'[role="region"][aria-label="Notifications"] [role="dialog"]:not([data-ending-style])',
+				),
+			].filter((toast) => toast.textContent?.includes("The server rejected this save.")).length;
 		await page.viewport(390, 800);
-		const screen = await renderHarness();
-		for (const width of [390, 1280]) {
-			await page.viewport(width, 800);
-			await expect
-				.poll(() => {
-					const toolbar = document.querySelector<HTMLElement>("[data-emdash-editor-bar]")!;
-					const bannerRect = screen.getByRole("alert").element().getBoundingClientRect();
-					const barRect = toolbar.getBoundingClientRect();
-					return (
-						barRect.width === width &&
-						bannerRect.top >= barRect.bottom - 1 &&
-						Math.abs(bannerRect.width - barRect.width) < 1
-					);
-				})
-				.toBe(true);
-		}
-		await screen.getByRole("button", { name: "Dismiss save error" }).click();
+		const screen = await render(
+			<LocaleDirectionProvider>
+				<Toasty>
+					<RouterContextProvider router={router}>
+						<SaveErrorHarness />
+					</RouterContextProvider>
+				</Toasty>
+			</LocaleDirectionProvider>,
+		);
+		const toolbar = document.querySelector<HTMLElement>("[data-emdash-editor-bar]")!;
+		const before = actionRects(toolbar).map(({ rect }) => [rect.x, rect.y]);
+		await screen.getByRole("button", { name: "Fail save" }).click();
+		await expect.poll(notices).toBe(1);
+		expect(actionRects(toolbar).map(({ rect }) => [rect.x, rect.y])).toEqual(before);
 		expect(document.querySelector('[role="alert"]')).toBeNull();
-		await screen.getByRole("button", { name: "Retry error" }).click();
-		await expect.element(screen.getByRole("alert")).toBeVisible();
+		await screen.getByRole("button", { name: "Fail save" }).click();
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		await expect.poll(notices).toBe(1);
 		await screen.getByRole("button", { name: "Clear error" }).click();
-		expect(document.querySelector('[role="alert"]')).toBeNull();
+		await expect.poll(notices).toBe(0);
 	});
 });

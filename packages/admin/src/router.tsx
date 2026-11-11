@@ -945,7 +945,6 @@ function ContentNewPage() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const { t } = useLingui();
-	const toastManager = useKumoToastManager();
 	const [selectedBylines, setSelectedBylines] = React.useState<BylineCreditInput[]>([]);
 	const { data: currentUser } = useCurrentUser();
 	const adminLayout = useAdminLayout();
@@ -977,17 +976,6 @@ function ContentNewPage() {
 				params: { collection, id: result.id },
 				search: { locale: result.locale },
 				ignoreBlocker: true,
-			});
-		},
-		onError: (error) => {
-			toastManager.add({
-				title: t`Failed to save`,
-				description:
-					describeContentValidationError(
-						error,
-						manifest?.collections[collection]?.fields ?? EMPTY_FIELDS,
-					) ?? (error instanceof Error ? error.message : t`An error occurred`),
-				variant: "error",
 			});
 		},
 	});
@@ -1786,6 +1774,7 @@ function ContentEditPage() {
 					title: toastTitle,
 					token: (current?.token ?? 0) + 1,
 				}));
+				return;
 			}
 			toastManager.add({ title: toastTitle, description: message, variant: "error" });
 		},

@@ -2972,7 +2972,9 @@ describe("ContentEditor", () => {
 
 			const bar = getEditorBar();
 			const actionContainer = bar.lastElementChild;
-			const actions = [...(actionContainer?.querySelectorAll("button, a") ?? [])];
+			const actions = [...(actionContainer?.querySelectorAll("button, a") ?? [])].filter(
+				(action) => !action.closest('[aria-hidden="true"]'),
+			);
 			const actionNames = actions.map(
 				(action) => action.getAttribute("aria-label") ?? action.textContent?.trim(),
 			);

@@ -94,6 +94,61 @@ import { TranslationsPanel } from "./TranslationsPanel.js";
 // Editor role level (40) from @emdash-cms/auth
 const ROLE_EDITOR = 40;
 
+/**
+ * Holds room for up to two other texts `children` can switch to, drawn
+ * invisibly in its pseudo-elements, so switching leaves the layout alone.
+ */
+function ReservedText({
+	reserve,
+	children,
+	className,
+	contentClassName,
+}: {
+	reserve: [string, string?];
+	children: React.ReactNode;
+	className?: string;
+	contentClassName?: string;
+}) {
+	return (
+		<span
+			data-reserve-a={reserve[0]}
+			data-reserve-b={reserve[1] ?? ""}
+			className={cn(
+				"grid before:invisible before:col-start-1 before:row-start-1 before:content-[attr(data-reserve-a)] after:invisible after:col-start-1 after:row-start-1 after:content-[attr(data-reserve-b)]",
+				className,
+			)}
+		>
+			<span className={cn("col-start-1 row-start-1", contentClassName)}>{children}</span>
+		</span>
+	);
+}
+
+/**
+ * The wide editor bar's publish label, as wide as the longest label it can
+ * show, so the actions before it keep their place when saving turns
+ * Unpublish into Publish changes.
+ */
+function PublishLabelSlot({
+	label,
+	labels,
+	children,
+}: {
+	label: string;
+	labels: string[];
+	children: React.ReactNode;
+}) {
+	const [first = "", second] = labels.filter((other) => other !== label);
+	return (
+		<ReservedText
+			reserve={[first, second]}
+			className="justify-items-center @max-2xl/editor-bar:contents @max-2xl/editor-bar:before:hidden @max-2xl/editor-bar:after:hidden"
+			contentClassName="@max-2xl/editor-bar:contents"
+		>
+			{children}
+		</ReservedText>
+	);
+}
+
 function PublishingVersionRow({
 	iconState,
 	title,
@@ -193,40 +248,54 @@ function PublishingVersionRelationship({
 			);
 			break;
 		case "published":
-			rows = (
-				<PublishingVersionRow
-					iconState="published"
-					title={t`Live version`}
-					description={t`Visitors see this published version`}
-				/>
-			);
-			break;
-		case "published-with-changes":
+		case "published-with-changes": {
+			// Both states lay out the same rows, so the first save of a published
+			// entry does not push the settings below down.
+			const hasChanges = publishingState === "published-with-changes";
+			const liveDescriptions = [
+				t`Visitors see this published version`,
+				t`Visitors still see the published version`,
+			];
+			const draftDescriptions = [
+				t`Your edits are saved as a draft until you publish them`,
+				t`Ready to publish now or schedule for later`,
+			];
 			rows = (
 				<>
 					<PublishingVersionRow
 						iconState="published"
 						title={t`Live version`}
-						description={t`Visitors still see the published version`}
+						description={
+							<ReservedText reserve={[liveDescriptions[hasChanges ? 0 : 1]!]}>
+								{liveDescriptions[hasChanges ? 1 : 0]}
+							</ReservedText>
+						}
 						connectToNext
 					/>
 					<PublishingVersionRow
-						iconState="pendingChanges"
-						title={t`Draft changes`}
-						description={t`Ready to publish now or schedule for later`}
+						iconState={hasChanges ? "pendingChanges" : "draft"}
+						title={hasChanges ? t`Draft changes` : t`No draft changes`}
+						description={
+							<ReservedText reserve={[draftDescriptions[hasChanges ? 0 : 1]!]}>
+								{draftDescriptions[hasChanges ? 1 : 0]}
+							</ReservedText>
+						}
 						action={
 							onDiscardDraft ? (
-								<DiscardDraftDialog
-									onDiscard={onDiscardDraft}
-									triggerSize="sm"
-									disabled={discardDisabled}
-								/>
+								<div className={hasChanges ? undefined : "invisible"} inert={!hasChanges}>
+									<DiscardDraftDialog
+										onDiscard={onDiscardDraft}
+										triggerSize="sm"
+										disabled={discardDisabled}
+									/>
+								</div>
 							) : undefined
 						}
 					/>
 				</>
 			);
 			break;
+		}
 		case "update-scheduled":
 			rows = (
 				<>
@@ -534,6 +603,7 @@ export function PublishActions({
 		publishingState ??
 		(isLive ? (hasPendingChanges ? "published-with-changes" : "published") : "draft");
 	const hasDraftChanges = state === "published-with-changes" || state === "update-scheduled";
+	const slotLabels = [t`Unpublish ${itemLabel}`, t`Publish changes`, t`Publish now`];
 
 	if (isNew) return null;
 	if (state === "published") {
@@ -546,11 +616,22 @@ export function PublishActions({
 				loading={isPending}
 				disabled={disabled}
 				icon={<EyeSlash />}
-				className={compact ? cn(compactBarButtonClassName, "max-sm:-order-1") : undefined}
+				aria-label={compact ? t`Unpublish ${itemLabel}` : undefined}
+				className={
+					compact
+						? cn(compactBarButtonClassName, "max-sm:col-span-2 max-sm:-order-1 max-sm:min-w-0")
+						: undefined
+				}
 			>
-				<span className={compact ? compactBarLabelClassName : undefined}>
-					{t`Unpublish ${itemLabel}`}
-				</span>
+				{compact ? (
+					<PublishLabelSlot label={t`Unpublish ${itemLabel}`} labels={slotLabels}>
+						<span className={cn(compactBarLabelClassName, "max-sm:not-sr-only max-sm:truncate")}>
+							{t`Unpublish ${itemLabel}`}
+						</span>
+					</PublishLabelSlot>
+				) : (
+					t`Unpublish ${itemLabel}`
+				)}
 			</Button>
 		) : null;
 	}
@@ -588,7 +669,9 @@ export function PublishActions({
 			>
 				{compact ? (
 					<>
-						<span className="@max-2xl/editor-bar:hidden">{publishLabel}</span>
+						<PublishLabelSlot label={publishLabel} labels={slotLabels}>
+							<span className="@max-2xl/editor-bar:hidden">{publishLabel}</span>
+						</PublishLabelSlot>
 						<span className="hidden min-w-0 truncate @max-2xl/editor-bar:inline">{t`Publish`}</span>
 						<CaretDown aria-hidden="true" className="absolute end-2 size-4 sm:hidden" />
 					</>
@@ -646,7 +729,11 @@ export function ScheduleActions({
 		publishingState === "scheduled" ||
 		publishingState === "update-scheduled" ||
 		publishingState === "published-scheduled";
-	const showSchedule = Boolean(onOpenSchedule && (canSchedule || hasSchedule));
+	// A published entry can schedule only its draft changes. Until it has some,
+	// Schedule shows disabled, so it doesn't push the controls below it down on
+	// the first save.
+	const waitsForChanges = publishingState === "published" && !canSchedule;
+	const showSchedule = Boolean(onOpenSchedule && (canSchedule || hasSchedule || waitsForChanges));
 	const showRemove = Boolean(onUnschedule && hasSchedule);
 	if (!showSchedule && !showRemove) return null;
 
@@ -670,7 +757,7 @@ export function ScheduleActions({
 						hasSchedule ? <CalendarDots aria-hidden="true" /> : <CalendarPlus aria-hidden="true" />
 					}
 					loading={isScheduling}
-					disabled={disabled || isUnscheduling}
+					disabled={disabled || isUnscheduling || waitsForChanges}
 					onClick={onOpenSchedule}
 				>
 					<span className={inline ? compactBarExtraLabelClassName : undefined}>
@@ -743,16 +830,21 @@ export function EditorActions({
 	// In a room the button stays, as the room's status. Elsewhere it shows only with something to save.
 	const showSave = sync !== undefined || isDirty || busy;
 	const saveHadFocus = React.useRef(false);
+	const saveRef = React.useRef<HTMLButtonElement>(null);
 	React.useLayoutEffect(() => {
 		if (!showSave && saveHadFocus.current) {
 			saveHadFocus.current = false;
 			const active = document.activeElement;
-			if (!active || active === document.body) onSaveControlRemoved?.();
+			if (!active || active === document.body || saveRef.current?.contains(active))
+				onSaveControlRemoved?.();
 		}
 	}, [showSave, onSaveControlRemoved]);
 	const saveVariant = (!isDirty && !busy) || sync ? "ghost" : isNew ? "primary" : "secondary";
 	const saveButton = (
 		<SaveButton
+			ref={saveRef}
+			inert={!showSave}
+			aria-hidden={!showSave || undefined}
 			announce={false}
 			onFocus={() => {
 				saveHadFocus.current = true;
@@ -768,6 +860,7 @@ export function EditorActions({
 				!savesFirstDraft && compactBarButtonClassName,
 				isNew && "max-sm:col-span-2",
 				!showMobileSave && sync === undefined && "max-sm:hidden",
+				!showSave && "invisible",
 			)}
 			labelClassName={savesFirstDraft ? undefined : "@max-2xl/editor-bar:hidden"}
 			isDirty={isDirty}
@@ -780,12 +873,13 @@ export function EditorActions({
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 max-sm:contents">
+			{/* Hidden rather than removed while there is nothing to save, so the actions after it keep their place. */}
 			{sync !== undefined ? (
 				<SyncStatus problem={sync} readOnly={readOnly} onCopyEdits={onCopyEdits}>
 					{saveButton}
 				</SyncStatus>
 			) : (
-				showSave && saveButton
+				saveButton
 			)}
 			<fieldset disabled={readOnly} className="contents">
 				{liveViewUrl && (
@@ -992,7 +1086,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	const [datesOpen, setDatesOpen] = React.useState(false);
 	const trash = useConfirmedRequest(onDelete);
 	const { blocked: operationsBlocked } = useRoomOperations();
-	const showDiscard = !isNew && supportsDrafts && hasPendingChanges && !!onDiscardDraft;
+	const canDiscard = !isNew && supportsDrafts && !!onDiscardDraft;
 	const activeEntryLocale = item?.locale ?? entryLocale ?? undefined;
 	const resolvedPublishingState =
 		publishingState ??
@@ -1071,7 +1165,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 											supportsDrafts={supportsDrafts}
 											scheduledAt={item?.scheduledAt}
 											locale={lingui.locale}
-											onDiscardDraft={showDiscard ? onDiscardDraft : undefined}
+											onDiscardDraft={canDiscard ? onDiscardDraft : undefined}
 											discardDisabled={viewingRevision}
 										/>
 									) : null}

@@ -283,6 +283,73 @@ function AutosavePausedNotice({
 	return null;
 }
 
+interface PersistentErrorNotice {
+	/** A new key replaces the toast and announces it again. */
+	key: string;
+	title: string;
+	description: string;
+	action?: { label: string; onClick: () => void; disabled?: boolean };
+}
+
+/**
+ * Keeps an error toast open while it is mounted. A toast floats over the
+ * editor, so the fields and the bar stay where the writer left them.
+ */
+function PersistentErrorToast({ notice }: { notice: PersistentErrorNotice }) {
+	const toasts = useKumoToastManager();
+	// The manager's functions change identity on every toast update.
+	const toastsRef = React.useRef(toasts);
+	toastsRef.current = toasts;
+	const shownRef = React.useRef<{ key: string; toastId: string; disabled: boolean } | null>(null);
+	const noticeRef = React.useRef(notice);
+	noticeRef.current = notice;
+	const actionDisabled = Boolean(notice.action?.disabled);
+
+	const actions = () => {
+		const action = noticeRef.current.action;
+		return action
+			? [
+					{
+						children: action.label,
+						variant: "secondary" as const,
+						size: "sm" as const,
+						disabled: action.disabled,
+						onClick: () => noticeRef.current.action?.onClick(),
+					},
+				]
+			: undefined;
+	};
+
+	React.useEffect(() => {
+		const shown = shownRef.current;
+		if (shown?.key === notice.key) {
+			if (shown.disabled !== actionDisabled) {
+				toastsRef.current.update(shown.toastId, { actions: actions() });
+				shown.disabled = actionDisabled;
+			}
+			return;
+		}
+		if (shown) toastsRef.current.close(shown.toastId);
+		const toastId: string = toastsRef.current.add({
+			title: noticeRef.current.title,
+			description: noticeRef.current.description,
+			variant: "error",
+			timeout: 0,
+			actions: actions(),
+		});
+		shownRef.current = { key: notice.key, toastId, disabled: actionDisabled };
+	});
+
+	React.useEffect(
+		() => () => {
+			if (shownRef.current) toastsRef.current.close(shownRef.current.toastId);
+		},
+		[],
+	);
+
+	return null;
+}
+
 function serializeEditorState(input: {
 	data: Record<string, unknown>;
 	slug: string;
@@ -2612,13 +2679,7 @@ export function ContentEditor({
 						isDirty={isDirty}
 						onSaveControlRemoved={focusEditorHeading}
 						showMobileSave={Boolean(
-							isNew ||
-							!onAutosave ||
-							!onPublish ||
-							!supportsDrafts ||
-							!supportsRevisions ||
-							saveError ||
-							hasSaveConflict,
+							isNew || !onAutosave || !onPublish || !supportsDrafts || !supportsRevisions,
 						)}
 						isSaving={roomSaveState ? roomSaveState.saving : Boolean(saveFeedbackActive)}
 						isAutosaving={roomSaveState ? false : autosaveFeedbackActive}
@@ -2703,13 +2764,6 @@ export function ContentEditor({
 					</Button>
 				</div>
 			</div>
-			{saveError && (
-				<EditorSaveError
-					key={`${item?.id ?? "new"}:${item?.locale ?? entryLocale}:${saveError.token}`}
-					message={saveError.message}
-					title={saveError.title}
-				/>
-			)}
 		</div>
 	);
 
@@ -2724,6 +2778,25 @@ export function ContentEditor({
 				isDistractionFree && "fixed inset-0 z-50",
 			)}
 		>
+			{saveError ? (
+				<PersistentErrorToast
+					notice={{
+						key: `save:${item?.id ?? "new"}:${item?.locale ?? entryLocale}:${saveError.token}`,
+						title: saveError.title ?? t`Failed to save`,
+						description: saveError.message,
+					}}
+				/>
+			) : null}
+			{hasSaveConflict && !isViewing ? (
+				<PersistentErrorToast
+					notice={{
+						key: `conflict:${item?.id ?? "new"}:${item?.locale ?? entryLocale}`,
+						title: t`This entry changed somewhere else after you opened it.`,
+						description: t`What you typed is still here. Saving replaces the newer version.`,
+						action: { label: t`Save anyway`, onClick: submitSave, disabled: readOnly },
+					}}
+				/>
+			) : null}
 			{hasBlocksField && (
 				<AutosavePausedNotice
 					heldBy={readOnly || isViewing ? null : autosaveHeldBy}
@@ -2812,19 +2885,6 @@ export function ContentEditor({
 															`${field.label ?? name}: ${field.unsupportedType?.type ?? field.kind}`,
 													)
 													.join(", ")}
-											/>
-										)}
-										{hasSaveConflict && (
-											<Banner
-												variant="error"
-												role="alert"
-												title={t`This entry changed somewhere else after you opened it.`}
-												description={t`What you typed is still here. Saving replaces the newer version.`}
-												action={
-													<Button size="sm" variant="secondary" type="button" onClick={submitSave}>
-														{t`Save anyway`}
-													</Button>
-												}
 											/>
 										)}
 										<div
@@ -3091,13 +3151,11 @@ export function ContentEditor({
 										: t`Saved`
 								: saveFeedbackActive || autosaveFeedbackActive
 									? t`Saving...`
-									: saveError || hasAutosaveError || hasSaveConflict
-										? (saveError?.title ?? t`Failed to save`)
-										: isNew
-											? t`Not saved yet`
-											: isDirty
-												? t`Unsaved changes`
-												: t`Saved`}
+									: isNew
+										? t`Not saved yet`
+										: isDirty
+											? t`Unsaved changes`
+											: t`Saved`}
 			</span>
 			{/* Outside the sidebar, which is inert while the phone sheet is closed. */}
 			<p role="status" aria-live="polite" aria-atomic="true" className="sr-only">
@@ -3344,32 +3402,6 @@ function RevisionViewSheetSync({
 		[sheetRef],
 	);
 	return null;
-}
-
-function EditorSaveError({ message, title }: { message: string; title?: string }) {
-	const { t } = useLingui();
-	const [dismissed, setDismissed] = React.useState(false);
-	if (dismissed) return null;
-	return (
-		<Banner
-			variant="error"
-			role="alert"
-			className="rounded-none"
-			title={title ?? t`Failed to save`}
-			description={message}
-			action={
-				<Button
-					type="button"
-					variant="ghost"
-					shape="square"
-					size="sm"
-					aria-label={t`Dismiss save error`}
-					onClick={() => setDismissed(true)}
-					icon={<X />}
-				/>
-			}
-		/>
-	);
 }
 
 /**

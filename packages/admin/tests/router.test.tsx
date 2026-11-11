@@ -71,6 +71,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		autosaveRejectionToken,
 		onQuickCreateByline,
 		onQuickEditByline,
+		saveError,
 	}: {
 		item?: { data?: { title?: string }; slug?: string | null };
 		onSave?: (payload: { data: Record<string, unknown> }) => void;
@@ -87,6 +88,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		autosaveRejectionToken?: number;
 		onQuickCreateByline?: (input: typeof MOCK_BYLINE_VALUES) => Promise<unknown>;
 		onQuickEditByline?: (bylineId: string, input: typeof MOCK_BYLINE_VALUES) => Promise<unknown>;
+		saveError?: { title?: string; message: string };
 	}) => {
 		const [isDirty, setIsDirty] = React.useState(false);
 		const onDirtyChangeRef = React.useRef(onDirtyChange);
@@ -104,6 +106,12 @@ vi.mock("../src/components/ContentEditor", () => ({
 				<div data-testid="autosave-blocked">{isSaving || isAutosaving ? "blocked" : "ready"}</div>
 				<div data-testid="autosave-completion-token">{autosaveCompletionToken ?? 0}</div>
 				<div data-testid="autosave-rejection-token">{autosaveRejectionToken ?? 0}</div>
+				{saveError ? (
+					<div data-testid="save-error">
+						<p>{saveError.title}</p>
+						<p>{saveError.message}</p>
+					</div>
+				) : null}
 				<form
 					onSubmit={(e) => {
 						e.preventDefault();
@@ -1440,7 +1448,7 @@ describe("ContentNewPage – create failure surfaces the server's error", () => 
 		mockFetch.restore();
 	});
 
-	it("shows a toast with the server's message on a slug conflict (and stays on /new)", async () => {
+	it("hands the server's message to the editor on a slug conflict (and stays on /new)", async () => {
 		const { router, TestApp } = buildRouter();
 
 		await router.navigate({
@@ -1457,19 +1465,17 @@ describe("ContentNewPage – create failure surfaces the server's error", () => 
 
 		await screen.getByRole("button", { name: "Save", exact: true }).click();
 
-		// The UI surfaces WHAT happened — the server's human-readable
-		// conflict message.
-		await expect.element(screen.getByText("Failed to save")).toBeInTheDocument();
+		// The editor reports the server's human-readable conflict message, once.
 		await expect
-			.element(screen.getByText("Slug 'test-post' already exists in collection 'posts'"))
+			.element(
+				screen
+					.getByTestId("save-error")
+					.getByText("Slug 'test-post' already exists in collection 'posts'"),
+			)
 			.toBeInTheDocument();
-
-		// And with the error affordance: Kumo styles severity off `variant`
-		// (Base UI's `type` is inert for styling), and the toast icon only
-		// renders for a non-default variant.
-		await expect
-			.poll(() => document.querySelectorAll("[data-toast-icon]").length)
-			.toBeGreaterThan(0);
+		expect(
+			screen.getByRole("region", { name: "Notifications" }).query()?.textContent ?? "",
+		).not.toContain("already exists");
 
 		// And the failed create must not navigate anywhere.
 		expect(router.state.location.pathname).toContain("/content/posts/new");

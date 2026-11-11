@@ -178,6 +178,15 @@ async function renderEditPage() {
 	return { screen, router };
 }
 
+/** Notifications that show the server's save error. */
+function errorNotices() {
+	return [
+		...document.querySelectorAll(
+			'[role="region"][aria-label="Notifications"] [role="dialog"]:not([data-ending-style])',
+		),
+	].filter((toast) => toast.textContent?.includes("Title is rejected by the server.")).length;
+}
+
 describe("ContentEditPage save error wiring", () => {
 	let server: ReturnType<typeof createMockServer> | undefined;
 	afterEach(async () => {
@@ -261,7 +270,7 @@ describe("ContentEditPage save error wiring", () => {
 		await expect.element(manualSave).toBeEnabled();
 	});
 
-	it("shows, dismisses, replaces, and clears a manual save error", async () => {
+	it("shows, replaces, and clears a manual save error in one notification", async () => {
 		server = createMockServer([500, 500, 200]);
 		const { screen } = await renderEditPage();
 		const title = screen.getByRole("textbox", { name: "Title" });
@@ -269,18 +278,17 @@ describe("ContentEditPage save error wiring", () => {
 
 		await title.fill("Rejected once");
 		await save.click();
-		await expect
-			.element(screen.getByRole("alert"))
-			.toHaveTextContent("Title is rejected by the server.");
-		await screen.getByRole("button", { name: "Dismiss save error" }).click();
+		await vi.waitFor(() => expect(errorNotices()).toBe(1));
 		expect(screen.getByRole("alert").query()).toBeNull();
 
 		await title.fill("Rejected twice");
 		await save.click();
-		await expect.element(screen.getByRole("alert")).toBeVisible();
+		await vi.waitFor(() => expect(server!.writes).toHaveLength(2));
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		await vi.waitFor(() => expect(errorNotices()).toBe(1));
 		await title.fill("Accepted");
 		await save.click();
-		await vi.waitFor(() => expect(screen.getByRole("alert").query()).toBeNull());
+		await vi.waitFor(() => expect(errorNotices()).toBe(0));
 	});
 
 	it("does not show an editor banner for a failed or retried auxiliary write", async () => {
@@ -310,12 +318,8 @@ describe("ContentEditPage save error wiring", () => {
 		await screen.getByRole("textbox", { name: "Title" }).fill("Autosave rejected");
 		await vi.waitFor(async () => {
 			await vi.advanceTimersByTimeAsync(500);
-			expect(screen.getByRole("alert").query()).not.toBeNull();
+			expect(errorNotices()).toBe(1);
 		});
-		await expect.element(screen.getByRole("alert")).toHaveTextContent("Autosave failed");
-		await expect
-			.element(screen.getByRole("alert"))
-			.toHaveTextContent("Title is rejected by the server.");
 		await expect
 			.element(screen.getByRole("region", { name: "Notifications" }))
 			.toHaveTextContent("Autosave failed");
@@ -323,12 +327,12 @@ describe("ContentEditPage save error wiring", () => {
 		await screen.getByRole("textbox", { name: "Title" }).fill("Autosave accepted");
 		await vi.waitFor(async () => {
 			await vi.advanceTimersByTimeAsync(500);
-			expect(screen.getByRole("alert").query()).toBeNull();
+			expect(errorNotices()).toBe(0);
 		});
 		await screen.getByRole("textbox", { name: "Title" }).fill("Another failure");
 		await vi.waitFor(async () => {
 			await vi.advanceTimersByTimeAsync(500);
-			expect(screen.getByRole("alert").query()).not.toBeNull();
+			expect(errorNotices()).toBe(1);
 		});
 		await screen.getByRole("combobox", { name: "Author" }).click();
 		await vi.advanceTimersByTimeAsync(150);
@@ -342,7 +346,7 @@ describe("ContentEditPage save error wiring", () => {
 				"Second author",
 			),
 		);
-		expect(screen.getByRole("alert").query()).not.toBeNull();
+		expect(errorNotices()).toBe(1);
 
 		vi.useRealTimers();
 		await router.navigate({
@@ -353,7 +357,7 @@ describe("ContentEditPage save error wiring", () => {
 		await expect
 			.element(screen.getByRole("textbox", { name: "Title" }))
 			.toHaveValue("Initial title");
-		expect(screen.getByRole("alert").query()).toBeNull();
+		await vi.waitFor(() => expect(errorNotices()).toBe(0));
 
 		await router.navigate({
 			to: "/content/$collection/$id",
@@ -363,6 +367,6 @@ describe("ContentEditPage save error wiring", () => {
 		await expect
 			.element(screen.getByRole("textbox", { name: "Title" }))
 			.toHaveValue("Autosave accepted");
-		expect(screen.getByRole("alert").query()).toBeNull();
+		expect(errorNotices()).toBe(0);
 	});
 });

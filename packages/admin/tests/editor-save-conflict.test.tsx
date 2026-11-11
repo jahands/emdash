@@ -242,7 +242,9 @@ describe("ContentEditPage save conflict", () => {
 		await title.fill("Writer copy");
 		await vi.advanceTimersByTimeAsync(2500);
 
-		await expect.element(screen.getByRole("alert").getByText("Autosave failed")).toBeVisible();
+		await expect
+			.element(screen.getByRole("region", { name: "Notifications" }).getByText("Autosave failed"))
+			.toBeVisible();
 		expect(screen.getByRole("button", { name: "Save anyway", exact: true }).query()).toBeNull();
 	});
 
@@ -284,7 +286,7 @@ describe("ContentEditPage save conflict", () => {
 		trigger.element().focus();
 		await userEvent.keyboard("{Enter}");
 
-		const dialog = screen.getByRole("dialog");
+		const dialog = screen.getByRole("dialog", { name: "Discard draft changes?" });
 		await expect.element(dialog).toBeVisible();
 		const confirm = dialog.getByRole("button", { name: "Discard changes", exact: true });
 		confirm.element().focus();

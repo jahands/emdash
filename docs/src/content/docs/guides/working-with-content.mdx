@@ -152,10 +152,11 @@ an [HTML block](#add-html-css-and-javascript).
 
 After the first save, the editor autosaves changes two seconds after you stop typing. On tablet and
 desktop, the toolbar's **Save** control appears while changes are unsaved, shows **Saving...** while
-the request is in progress, and disappears after a successful save. There is no persistent **Saved**
-label. A screen-reader-only status announces **Saving...** and **Saved**. An autosave replaces the
-version before it when that version is also an autosave, so a run of autosaves leaves one version in
-revision history. The new version keeps the names of everyone who edited the one it replaced.
+the request is in progress, and is hidden after a successful save. Its space stays reserved, so the
+other toolbar actions don't move. There is no persistent **Saved** label. A screen-reader-only
+status announces **Saving...** and **Saved**. An autosave replaces the version before it when that
+version is also an autosave, so a run of autosaves leaves one version in revision history. The new
+version keeps the names of everyone who edited the one it replaced.
 
 On a phone, entries with drafts and revision history offer **Settings** > **Save draft** even after
 autosave finishes. To retain the autosaved version in history, wait for autosave before using this
@@ -164,11 +165,11 @@ changes. Both actions retain the preceding draft revision, and autosave never re
 they save. Autosave also never replaces a version EmDash creates itself, such as the draft that
 unpublishing an entry leaves.
 
-If a save fails, the editor keeps the unsaved fields in place, shows a dismissible error banner below
-the editor header, and displays an error toast. Dismissing the banner does not save the data. Retry
-with the toolbar's **Save** control when it appears, or on a phone use **Settings** > **Save draft**
-when available. Keep the page open until a successful retry clears the banner and the saving control
-settles. If you must leave first, copy the unsaved work elsewhere.
+If a save fails, the editor keeps the unsaved fields in place and shows an error notification that
+stays open until a save succeeds. Closing the notification does not save the data. Retry with the
+toolbar's **Save** control, or on a phone use **Settings** > **Save draft** when the toolbar has no
+**Save** control. Keep the page open until a successful retry closes the notification and the saving
+control settles. If you must leave first, copy the unsaved work elsewhere.
 
 For a published entry, saving changes updates its draft only. Visitors continue to receive the
 previous live revision. Use **Preview draft** to check the pending version, **Live View** to check
@@ -364,7 +365,8 @@ Publishing and scheduling use separate controls:
 
 - **Publish now** makes a new draft live after confirmation.
 - **Publish changes** makes pending changes to a published entry live after confirmation.
-- **Schedule** sets when a new entry or pending changes become live.
+- **Schedule** sets when a new entry or pending changes become live. On a published entry it stays
+  disabled until there are pending changes to schedule.
 - **Change schedule** updates an existing schedule.
 - **Remove schedule** cancels an existing schedule.
 - **Unpublish** removes the live revision from public queries, cancels any schedule, and keeps an
