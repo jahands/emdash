@@ -162,7 +162,9 @@ export function resolveNavIcon(
 	let icon = perFallback.get(componentName);
 	if (!icon) {
 		icon = React.lazy(async () => {
-			const mod = await import("@phosphor-icons/react");
+			// Not the main entry: the admin imports that one statically, which
+			// would pull every icon into the initial bundle.
+			const mod = await import("@phosphor-icons/react/ssr");
 			const candidate: unknown = (mod as Record<string, unknown>)[componentName];
 			return { default: isIconComponent(candidate) ? candidate : fallback };
 		});
