@@ -76,7 +76,19 @@ For each profile:
 
 Interaction scenarios sample element positions with `requestAnimationFrame` and fail when a visible element moves. Scrolling a container does not count, and neither do overlays that appear on top. The scenarios cover typing in the long entry (input-to-frame time per keystroke), autosave and save, a failed save, a save conflict, the command palette and a dialog, moving between admin sections, the phone menu, uploading media, a failed API request, and navigating while offline.
 
-URL-mode profiles serve `/cdn-cgi/image/...`, which `wrangler dev` does not implement, from a Playwright route that resizes with sharp. Those responses carry `x-perf-audit-emulated: cdn-cgi-image`, and the summary marks them as emulated.
+URL-mode profiles serve `/cdn-cgi/image/...`, which `wrangler dev` does not implement, from a Playwright route that resizes with sharp. Those responses carry `x-perf-audit-emulated: cdn-cgi-image`, and the summary marks them as emulated. The emulation follows Cloudflare's documented options for the URLs Astro's Cloudflare image service and EmDash generate:
+
+- `fit`: `scale-down` (the default), `contain`, `cover`, `crop`, `aspect-crop`, `pad` (white background unless `background` is set), `squeeze` and `scale-up` give Cloudflare's output dimensions. A single `width` or `height` scales the other side proportionally.
+- `dpr` multiplies the requested size, up to 2. `quality` defaults to 85. `format=auto` follows the `Accept` header; without `format` the source format is kept.
+- `onerror=redirect` redirects to the source when the transform fails.
+- Responses carry the source's `Cache-Control`, `ETag` and `Last-Modified`, as Cloudflare's variants follow the source's caching rules, and conditional requests are passed to the source.
+
+It differs from Cloudflare in these ways:
+
+- Bytes come from sharp's encoders, so image byte counts are close but not Cloudflare's. AVIF never falls back to WebP or JPEG.
+- There is no edge cache, so the one-hour minimum edge lifetime is not applied. Every request fetches and transforms the source again.
+- `gravity` (crops are centered) and the effect options (`blur`, `sharpen`, `rotate` and the like) are ignored. A page that used one lists it under `resizeEmulation.ignoredOptions` in `results.json`.
+- Zone settings and authorization are not checked, and only `/cdn-cgi/image` is emulated. EmDash's own `/_image` endpoint runs unchanged.
 
 ## Common options
 
@@ -161,4 +173,4 @@ FONTCONFIG_FILE=/path/to/arabic-fonts.conf pnpm perf:audit --locale ar
 node --test scripts/perf-audit/tests/*.test.mjs
 ```
 
-The tests cover profile materialization against the real templates, port leasing and slot locks, the seeded image counts, CLS session windows, blocking time, oversized-image detection, waves, the resize emulation, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
+The tests cover profile materialization against the real templates, port leasing and slot locks, the seeded image counts, CLS session windows, blocking time, oversized-image detection, waves, the resize emulation against Cloudflare's documented examples, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
