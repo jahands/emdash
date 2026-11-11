@@ -190,6 +190,7 @@ import {
 import { sanitizeRedirectUrl } from "./lib/url";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
+import { useDateLocaleReady } from "./locales/date-locale.js";
 import { BylineSchemaPage } from "./routes/byline-schema";
 import { BylinesPage } from "./routes/bylines";
 import { CalendarPage } from "./routes/calendar";
@@ -536,7 +537,7 @@ if (typeof window !== "undefined" && typeof window.requestIdleCallback === "unde
 }
 
 function RootComponent() {
-	const { t } = useLingui();
+	const { t, i18n } = useLingui();
 	const {
 		data: manifest,
 		isLoading,
@@ -550,8 +551,9 @@ function RootComponent() {
 	const currentUser = useCurrentUser();
 	const [userSettled, setUserSettled] = React.useState(false);
 	if (!userSettled && !currentUser.isLoading) setUserSettled(true);
+	const dateLocaleReady = useDateLocaleReady(i18n.locale);
 
-	if (isLoading || !userSettled) {
+	if (isLoading || !userSettled || !dateLocaleReady) {
 		return <ConfigurationLoadingScreen />;
 	}
 
