@@ -302,6 +302,22 @@ describe("MenuList", () => {
 			.toBeInTheDocument();
 	});
 
+	it("reports a failed load with Retry instead of claiming there are no menus", async () => {
+		vi.mocked(api.fetchMenus).mockRejectedValueOnce(new Error("Internal server error"));
+
+		const screen = await render(<MenuList />, { wrapper: Wrapper });
+
+		const alert = screen.getByRole("alert");
+		await expect.element(alert).toHaveTextContent("Menus could not be loaded");
+		await expect.element(alert).toHaveTextContent("Internal server error");
+		await expect.element(screen.getByText("No menus yet")).not.toBeInTheDocument();
+
+		await alert.getByRole("button", { name: "Retry" }).click();
+
+		await expect.element(screen.getByRole("heading", { name: "Main Menu" })).toBeInTheDocument();
+		await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
+	});
+
 	it("each menu has an Edit link", async () => {
 		const screen = await render(<MenuList />, { wrapper: Wrapper });
 
