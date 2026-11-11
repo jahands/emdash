@@ -450,6 +450,8 @@ Media operations cover listing, upload, metadata updates, image replacement, fol
 
 `GET /media` supports cursor or numbered-page pagination, MIME-type and filename filters, folders, and optional usage summaries. Omit `folderId` to include every folder, or pass `folderId=unfiled` to return only the Main library. Set `includeUsage=1` on a list or single-item read to include usage information; any other value is invalid.
 
+To read several known media items in one request, pass their IDs as a comma-separated `ids` list, up to 100. The response holds those items in the order given, leaves out unknown IDs, and has no `nextCursor`. `ids` can't be combined with `cursor`, `page`, `mimeType`, `folderId`, or `q`; `includeUsage=1` works with it.
+
 `usage.count` counts distinct active content rows or locales whose current indexed source references the media item, plus each site setting that selects it (`logo`, `favicon`, `seo.defaultOgImage`). Repeated references in one entry count once, and trashed entries do not count. The number is visible only to callers who may read drafts; other authorized media readers receive `count: null` because the count could reveal draft content.
 
 `GET /media/{id}/usage` returns the referencing content entries in pages. Every page also includes `siteSettings`, the site settings that select the media item, for example `[{ "setting": "favicon" }]`. Site settings are read from the stored settings on each request and do not depend on usage indexing.
