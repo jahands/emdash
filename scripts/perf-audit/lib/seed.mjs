@@ -15,6 +15,7 @@ export const EXTRA_ENTRIES = 52;
 const GET_STARTED = /get started/i;
 const UPLOAD = /upload/i;
 const BODY_PARAGRAPHS = 18;
+const LONG_TEXT_PARAGRAPHS = 600;
 
 export function apiClient(origin, cookies) {
 	const cookie = cookies ? cookieHeader(cookies) : "";
@@ -190,6 +191,41 @@ export function longBody(media, offset, imageCount) {
 	return blocks;
 }
 
+/**
+ * A text-only body of about 30,000 words: 600 paragraphs with a link and
+ * bold text in each, and a heading every 20 paragraphs.
+ */
+export function longTextBody() {
+	const blocks = [];
+	for (let i = 0; i < LONG_TEXT_PARAGRAPHS; i++) {
+		if (i % 20 === 0) {
+			blocks.push({
+				_type: "block",
+				_key: `lt-h${i}`,
+				style: "h2",
+				markDefs: [],
+				children: [{ _type: "span", _key: `lt-h${i}s`, text: `Section ${i / 20 + 1}`, marks: [] }],
+			});
+		}
+		const [first, ...rest] = Array.from(
+			{ length: 3 },
+			(_, j) => SENTENCES[(i + j) % SENTENCES.length],
+		);
+		blocks.push({
+			_type: "block",
+			_key: `lt-${i}`,
+			style: "normal",
+			markDefs: [{ _type: "link", _key: `lt-${i}l`, href: "https://example.com/" }],
+			children: [
+				{ _type: "span", _key: `lt-${i}a`, text: `${first} `, marks: [] },
+				{ _type: "span", _key: `lt-${i}b`, text: "a linked phrase", marks: [`lt-${i}l`] },
+				{ _type: "span", _key: `lt-${i}c`, text: ` ${rest.join(" ")}`, marks: ["strong"] },
+			],
+		});
+	}
+	return blocks;
+}
+
 /** Image blocks in a Portable Text body and how many distinct assets they use. */
 export function countBodyImages(blocks) {
 	const images = (Array.isArray(blocks) ? blocks : []).filter((b) => b?._type === "image");
@@ -263,7 +299,14 @@ export async function ownerEdits(api, media, plan) {
 	const { collection, imageField, bodyField } = plan;
 	const photos = media.filter((m) => m.mimeType === "image/jpeg");
 	const entries = (await api("GET", `/content/${collection}?limit=100`)).items;
-	const summary = { collection, featured: 0, bodyImages: 0, created: 0, heaviestEntry: null };
+	const summary = {
+		collection,
+		featured: 0,
+		bodyImages: 0,
+		created: 0,
+		heaviestEntry: null,
+		longTextEntry: null,
+	};
 	const taxonomies = (i) =>
 		plan.taxonomy && plan.terms.length > 0
 			? { [plan.taxonomy]: [plan.terms[i % plan.terms.length]] }
@@ -318,6 +361,16 @@ export async function ownerEdits(api, media, plan) {
 	};
 	summary.bodyImages += counts.bodyImages;
 	summary.featured++;
+	summary.created++;
+
+	const longText = await api("POST", `/content/${collection}`, {
+		data: {
+			...(plan.titleField ? { [plan.titleField]: "A long essay without photos" } : {}),
+			[bodyField]: longTextBody(),
+		},
+		slug: "long-essay-without-photos",
+	});
+	summary.longTextEntry = { id: (longText.item ?? longText).id, slug: "long-essay-without-photos" };
 	summary.created++;
 
 	for (let i = 0; i < EXTRA_ENTRIES; i++) {

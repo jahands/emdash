@@ -3,6 +3,8 @@
  */
 
 const KiB = 1024;
+const FRAME_BUDGET_MS = 50;
+const INPUT_TO_FRAME_PERCENT = 25;
 
 export function serverGzipBytes(profile) {
 	return profile.build?.upload?.uploadGzipBytes ?? profile.build?.server?.gzipBytes ?? null;
@@ -161,8 +163,22 @@ export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 		}
 		for (const sA of after.scenarios ?? []) {
 			const sB = (before.scenarios ?? []).find((s) => s.name === sA.name);
-			if (!sB || sA.cls === undefined || sB.cls === undefined) continue;
-			add(`scenario ${sA.name}`, "CLS", sB.cls, sA.cls, sA.cls - sB.cls > thresholds.cls);
+			if (!sB) continue;
+			const where = `scenario ${sA.name}`;
+			if (sA.cls !== undefined && sB.cls !== undefined) {
+				add(where, "CLS", sB.cls, sA.cls, sA.cls - sB.cls > thresholds.cls);
+			}
+			const b = sB.keyToFrameP95Ms;
+			const a = sA.keyToFrameP95Ms;
+			if (typeof a === "number" && typeof b === "number") {
+				add(
+					where,
+					"input-to-frame p95 ms",
+					b,
+					a,
+					a > FRAME_BUDGET_MS && pct(b, a) > INPUT_TO_FRAME_PERCENT,
+				);
+			}
 		}
 	}
 	return { rows, regressions: rows.filter((r) => r.regression) };

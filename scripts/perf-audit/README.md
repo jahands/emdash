@@ -46,7 +46,7 @@ Each profile starts empty and is set up the way an owner would set it up:
 1. The setup wizard routes apply the template seed.
 2. The first admin is created through the setup routes, with a Chromium virtual authenticator answering the passkey prompt.
 3. The owner uploads 12 generated photos and screenshots (1600–4000 px, 0.6–3.5 MB) through the media library.
-4. Every entry gets a featured image and an image in its body. One long entry gets a featured image and all 12 uploads as distinct image blocks in its body, and 52 more entries with two body images each make the lists paginate. The seed reads the long entry back and stops when it does not hold those 13 images.
+4. Every entry gets a featured image and an image in its body. One long entry gets a featured image and all 12 uploads as distinct image blocks in its body, and 52 more entries with two body images each make the lists paginate. The seed reads the long entry back and stops when it does not hold those 13 images. A draft essay of about 30,000 words in 600 paragraphs, with no images, is the document the typing scenario edits.
 5. Media usage tracking is switched on and left indexing. No media folders are created.
 
 Production builds return 403 from the dev bypass, so the harness signs in by writing a magic-link token row, the same row `createMagicLinkUrl()` writes, and posting it to `/_emdash/api/auth/magic-link/verify`.
@@ -78,7 +78,7 @@ For each profile:
 
 Interaction scenarios sample element positions with `requestAnimationFrame` and fail when a visible element moves. Scrolling a container does not count, and neither do overlays that appear on top. An element that is removed counts as moved when a new element takes its place somewhere else; one removed with nothing in its place is listed separately. Regions that grow by design are measured rather than skipped: while typing, the paragraph being edited may grow and everything below it may move down by exactly that much, and the same goes for the media grid gaining an upload. When the command palette, the upload dialog or the phone menu opens, the scenario screenshots it while it is open and samples positions inside it while it settles.
 
-Scenarios find controls by role, form structure and URL, and by the admin's own message catalog for the run's locale, so they behave the same under `--locale ar`. Error and status feedback is detected from new `alert` and `status` regions, not English wording. The scenarios cover typing in the long entry (input-to-frame time per keystroke), autosave and save, a failed save, a save conflict, the command palette and a dialog, moving between admin sections, the phone menu, uploading media, a failed API request, and navigating while offline.
+Scenarios find controls by role, form structure and URL, and by the admin's own message catalog for the run's locale, so they behave the same under `--locale ar`. Error and status feedback is detected from new `alert` and `status` regions, not English wording. The scenarios cover typing in the long essay (input-to-frame time per keystroke, and long tasks), autosave and save, a failed save, a save conflict, the command palette and a dialog, moving between admin sections, the phone menu, uploading media, a failed API request, and navigating while offline.
 
 URL-mode profiles serve `/cdn-cgi/image/...`, which `wrangler dev` does not implement, from a Playwright route that resizes with sharp. Those responses carry `x-perf-audit-emulated: cdn-cgi-image`, and the summary marks them as emulated. The emulation follows Cloudflare's documented options for the URLs Astro's Cloudflare image service and EmDash generate:
 
@@ -110,7 +110,7 @@ pnpm perf:audit --compare ../emdash-main
 pnpm perf:audit --max-cls 0.05 --max-server-gz 6000 --max-initial-js-gz 2500 --max-oversized-images 0
 ```
 
-`--workspace <dir>` builds the sites against another checkout's packages. `--compare <dir>` runs the same profiles against a second checkout and prints a before/after table. A row is a regression when CLS rises by more than 0.01, server gzip by more than 5%, API requests by more than 1, image bytes by more than 20%, or a cold start by more than 25%. Change the thresholds with `--threshold-cls`, `--threshold-server-gz`, `--threshold-api`, `--threshold-image-bytes` and `--threshold-cold-start`.
+`--workspace <dir>` builds the sites against another checkout's packages. `--compare <dir>` runs the same profiles against a second checkout and prints a before/after table. A row is a regression when CLS rises by more than 0.01, server gzip by more than 5%, API requests by more than 1, image bytes by more than 20%, or a cold start by more than 25%, or when typing's input-to-frame p95 rises by more than 25% to over 50 ms. Change the thresholds with `--threshold-cls`, `--threshold-server-gz`, `--threshold-api`, `--threshold-image-bytes` and `--threshold-cold-start`.
 
 Layout races and cold starts vary between runs of the same code, so each first-pass regression is measured twice more in both workspaces and judged on the median of three. Differences that don't hold up are listed separately in the summary. Set the number of extra samples with `--confirm-samples` (0 turns confirmation off).
 

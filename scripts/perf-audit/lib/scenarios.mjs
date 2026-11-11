@@ -178,10 +178,13 @@ const SCENARIOS = [
 				keyToFrameMaxMs: percentile(keys, 100),
 				longTasks: tasks.length,
 				longTaskMs: Math.round(tasks.reduce((s, t) => s + t.duration, 0)),
-				summary: `${keys.length} keys, input-to-frame p95 ${percentile(keys, 95)} ms, max ${percentile(keys, 100)} ms`,
+				summary: `${keys.length} keys, input-to-frame p95 ${percentile(keys, 95)} ms, max ${percentile(keys, 100)} ms, ${tasks.length} long tasks`,
 			};
 		},
-		path: ({ heaviest }) => `${ADMIN}/content/${heaviest.collection}/${heaviest.id}`,
+		path: ({ heaviest, longText }) => {
+			const entry = longText ?? heaviest;
+			return `${ADMIN}/content/${entry.collection}/${entry.id}`;
+		},
 	},
 	{
 		name: "editor autosave and save",
@@ -557,6 +560,8 @@ export async function runScenarios({
 	const heaviestEntry = prepared.seed.edits?.heaviestEntry;
 	const collection = prepared.seed.edits?.collection ?? "pages";
 	const heaviest = heaviestEntry ? { ...heaviestEntry, collection } : null;
+	const longTextEntry = prepared.seed.edits?.longTextEntry;
+	const longText = longTextEntry ? { ...longTextEntry, collection } : null;
 	const catalog = loadAdminCatalog(workspace, options.locale);
 	const strings = {
 		save: namesMatcher(catalog, SAVE_MESSAGES),
@@ -591,6 +596,7 @@ export async function runScenarios({
 				site,
 				cookies,
 				heaviest,
+				longText,
 				collection,
 				mediaFile,
 				viewport,
@@ -600,7 +606,7 @@ export async function runScenarios({
 			try {
 				await scenario.before?.(args);
 				if (scenario.path) {
-					await ctx.page.goto(`${site.origin}${scenario.path({ heaviest })}`, {
+					await ctx.page.goto(`${site.origin}${scenario.path({ heaviest, longText })}`, {
 						waitUntil: "load",
 					});
 					await waitForSettle(ctx.page, ctx.network);

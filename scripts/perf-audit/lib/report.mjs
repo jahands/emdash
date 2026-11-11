@@ -157,8 +157,20 @@ export function renderSummary(run) {
 			table(
 				["Profile", "Metric", "Before", "After"],
 				run.comparison.rows
-					.filter((r) => r.where === "build" || r.where === "cold start")
-					.map((r) => [r.profile, r.metric, r.before, r.after]),
+					.filter(
+						(r) =>
+							r.where === "build" ||
+							r.where === "cold start" ||
+							r.metric === "input-to-frame p95 ms",
+					)
+					.map((r) => [
+						r.profile,
+						r.where.startsWith("scenario ")
+							? `${r.where.slice("scenario ".length)} ${r.metric}`
+							: r.metric,
+						r.before,
+						r.after,
+					]),
 			),
 		);
 	}

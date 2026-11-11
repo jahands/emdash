@@ -28,7 +28,7 @@ const profile = (over = {}) => ({
 	initialAdminJs: { gzipBytes: 500_000 },
 	coldStart: { publicPage: { ttfbMs: 200 }, adminApi: { ttfbMs: 100 } },
 	pages: [page()],
-	scenarios: [{ name: "editor typing (desktop)", cls: 0 }],
+	scenarios: [{ name: "editor typing (desktop)", cls: 0, keyToFrameP95Ms: 30 }],
 	...over,
 });
 
@@ -68,7 +68,7 @@ void test("compare flags each metric past its threshold", () => {
 				oversizedImages: [{ src: "a" }],
 			}),
 		],
-		scenarios: [{ name: "editor typing (desktop)", cls: 0.05 }],
+		scenarios: [{ name: "editor typing (desktop)", cls: 0.05, keyToFrameP95Ms: 60 }],
 	});
 	const { regressions } = compareResults([profile()], [after], DEFAULT_THRESHOLDS);
 	assert.deepEqual(regressions.map((r) => `${r.where}: ${r.metric}`).toSorted(), [
@@ -79,6 +79,7 @@ void test("compare flags each metric past its threshold", () => {
 		"desktop admin media library: image bytes",
 		"desktop admin media library: oversized images",
 		"scenario editor typing (desktop): CLS",
+		"scenario editor typing (desktop): input-to-frame p95 ms",
 	]);
 });
 
@@ -88,6 +89,16 @@ void test("small changes stay under the thresholds", () => {
 		coldStart: { publicPage: { ttfbMs: 240 }, adminApi: { ttfbMs: 120 } },
 	});
 	assert.deepEqual(compareResults([profile()], [after], DEFAULT_THRESHOLDS).regressions, []);
+});
+
+void test("typing latency is a regression only past the frame budget", () => {
+	const typing = (keyToFrameP95Ms) =>
+		profile({ scenarios: [{ name: "editor typing (desktop)", cls: 0, keyToFrameP95Ms }] });
+	const regressed = (before, after) =>
+		compareResults([typing(before)], [typing(after)], DEFAULT_THRESHOLDS).regressions.length > 0;
+	assert.equal(regressed(20, 45), false);
+	assert.equal(regressed(50, 60), false);
+	assert.equal(regressed(30, 60), true);
 });
 
 void test("the ledger restores only after a measurement wrote state", () => {
