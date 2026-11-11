@@ -1,0 +1,130 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import { DEFAULT_THRESHOLDS } from "../lib/args.mjs";
+import { compareResults, evaluateBudgets } from "../lib/evaluate.mjs";
+import { RestoreLedger, writeStatements } from "../lib/ledger.mjs";
+
+const page = (over = {}) => ({
+	name: "admin media library",
+	viewport: "desktop",
+	url: "/_emdash/admin/media",
+	cls: 0.01,
+	api: { count: 8 },
+	bytesByType: { Image: 200_000 },
+	oversizedImages: [],
+	...over,
+});
+
+const profile = (over = {}) => ({
+	profile: "blog-workerd-d1",
+	build: { server: { gzipBytes: 1_000_000 }, upload: { uploadGzipBytes: 2_000_000 } },
+	initialAdminJs: { gzipBytes: 500_000 },
+	coldStart: { publicPage: { ttfbMs: 200 }, adminApi: { ttfbMs: 100 } },
+	pages: [page()],
+	scenarios: [{ name: "editor typing (desktop)", cls: 0 }],
+	...over,
+});
+
+void test("budgets fail on CLS, server gzip, initial JS and oversized images", () => {
+	const p = profile({
+		pages: [page({ cls: 0.2, oversizedImages: [{ src: "a" }, { src: "b" }] })],
+	});
+	const failures = evaluateBudgets([p], {
+		cls: 0.1,
+		serverGzipKiB: 1000,
+		initialJsGzipKiB: 1000,
+		oversizedImages: 1,
+	});
+	assert.deepEqual(
+		failures.map((f) => f.budget),
+		["max-cls", "max-server-gz", "max-oversized-images"],
+	);
+	assert.equal(failures[1].actual, 1953);
+	assert.deepEqual(evaluateBudgets([p], {}), []);
+});
+
+void test("identical results compare without regressions", () => {
+	const { rows, regressions } = compareResults([profile()], [profile()], DEFAULT_THRESHOLDS);
+	assert.ok(rows.length > 0);
+	assert.deepEqual(regressions, []);
+});
+
+void test("compare flags each metric past its threshold", () => {
+	const after = profile({
+		build: { server: { gzipBytes: 1 }, upload: { uploadGzipBytes: 2_200_000 } },
+		coldStart: { publicPage: { ttfbMs: 260 }, adminApi: { ttfbMs: 110 } },
+		pages: [
+			page({
+				cls: 0.025,
+				api: { count: 10 },
+				bytesByType: { Image: 260_000 },
+				oversizedImages: [{ src: "a" }],
+			}),
+		],
+		scenarios: [{ name: "editor typing (desktop)", cls: 0.05 }],
+	});
+	const { regressions } = compareResults([profile()], [after], DEFAULT_THRESHOLDS);
+	assert.deepEqual(regressions.map((r) => `${r.where}: ${r.metric}`).toSorted(), [
+		"build: server gzip bytes",
+		"cold start: publicPage ttfb ms",
+		"desktop admin media library: API requests",
+		"desktop admin media library: CLS",
+		"desktop admin media library: image bytes",
+		"desktop admin media library: oversized images",
+		"scenario editor typing (desktop): CLS",
+	]);
+});
+
+void test("small changes stay under the thresholds", () => {
+	const after = profile({
+		pages: [page({ cls: 0.019, api: { count: 9 }, bytesByType: { Image: 230_000 } })],
+		coldStart: { publicPage: { ttfbMs: 240 }, adminApi: { ttfbMs: 120 } },
+	});
+	assert.deepEqual(compareResults([profile()], [after], DEFAULT_THRESHOLDS).regressions, []);
+});
+
+void test("the ledger restores only after a measurement wrote state", () => {
+	const ledger = new RestoreLedger("seeded");
+	assert.equal(ledger.record("desktop public home", { observedSql: ["select 1"] }), false);
+	assert.equal(ledger.needsRestore(), false);
+	ledger.record("desktop admin editor", {
+		observedSql: ['insert into "_emdash_entry_locks" values (?)', "select 1"],
+	});
+	assert.equal(ledger.needsRestore(), true);
+	ledger.restored("desktop admin media library", 250.4);
+	assert.equal(ledger.needsRestore(), false);
+	ledger.record("upload media", { declaredWrites: true });
+	assert.deepEqual(ledger.toJSON().restores, [
+		{
+			snapshot: "seeded",
+			before: "desktop admin media library",
+			after: "desktop admin editor",
+			ms: 250,
+		},
+	]);
+	assert.deepEqual(
+		ledger.toJSON().writes.map((w) => [w.measurement, w.statements, w.declared]),
+		[
+			["desktop admin editor", 1, false],
+			["upload media", 0, true],
+		],
+	);
+});
+
+void test("write detection ignores reads", () => {
+	assert.deepEqual(
+		writeStatements([
+			"SELECT * FROM x",
+			"  UPDATE x SET a = 1",
+			"with t as (select 1) select * from t",
+			"WITH claimed AS (SELECT 1) UPDATE work SET state = 'done'",
+			"DELETE FROM y",
+		]),
+		[
+			"  UPDATE x SET a = 1",
+			"WITH claimed AS (SELECT 1) UPDATE work SET state = 'done'",
+			"DELETE FROM y",
+		],
+	);
+});
