@@ -238,7 +238,8 @@ export async function measurePage({
 
 		const url = `${site.origin}${target.path}`;
 		const response = await page.goto(url, { waitUntil: "load", timeout: 60_000 });
-		const settle = await waitForSettle(page, network);
+		const throttled = options.network || options.cpu > 1 || options.slowApi > 0 || options.hold;
+		const settle = await waitForSettle(page, network, { maxMs: throttled ? 180_000 : 25_000 });
 		const probe = await page.evaluate(collectProbe);
 		if (options.screenshots) {
 			mkdirSync(dirname(paths.screenshot), { recursive: true });
