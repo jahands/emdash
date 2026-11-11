@@ -396,12 +396,20 @@ export class SchemaRegistry {
 	 * Get a collection with all its fields
 	 */
 	async getCollectionWithFields(slug: string): Promise<CollectionWithFields | null> {
-		const collection = await this.getCollection(slug);
+		const [collection, fieldRows] = await Promise.all([
+			this.getCollection(slug),
+			this.db
+				.selectFrom("_emdash_fields as field")
+				.innerJoin("_emdash_collections as collection", "collection.id", "field.collection_id")
+				.where("collection.slug", "=", slug)
+				.selectAll("field")
+				.orderBy("field.sort_order", "asc")
+				.orderBy("field.created_at", "asc")
+				.execute(),
+		]);
 		if (!collection) return null;
 
-		const fields = await this.listFields(collection.id);
-
-		return { ...collection, fields };
+		return { ...collection, fields: fieldRows.map(this.mapFieldRow) };
 	}
 
 	/**

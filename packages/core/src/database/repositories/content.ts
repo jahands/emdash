@@ -19,7 +19,12 @@ import { executeAtomicBatchIfSupported, isPostgres } from "../dialect-helpers.js
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
 import { validateIdentifier } from "../validate.js";
-import { createRevisionId, RevisionRepository, startingRevisionId } from "./revision.js";
+import {
+	createRevisionId,
+	RevisionRepository,
+	startingRevisionId,
+	type Revision,
+} from "./revision.js";
 import type {
 	CreateContentInput,
 	UpdateContentInput,
@@ -2652,11 +2657,13 @@ export class ContentRepository {
 		requireSlug = true,
 		expectedRevision?: ContentRevisionPrecondition,
 		currentTime: Date = new Date(),
+		preloaded?: { existing: ContentItem; draftRevision?: Revision | null },
 	): Promise<ContentItem> {
 		const tableName = getTableName(type);
 		const now = currentTime.toISOString();
 
-		const existing = await this.findById(type, id);
+		const existing =
+			preloaded?.existing.id === id ? preloaded.existing : await this.findById(type, id);
 		if (!existing) {
 			throw new EmDashValidationError("Content item not found");
 		}
@@ -2791,7 +2798,11 @@ export class ContentRepository {
 				provisionalRevisionId = revision.id;
 			}
 
-			const revision = await revisionRepo.findById(revisionToPublish);
+			const preloadedRevision = preloaded?.draftRevision;
+			const revision =
+				preloadedRevision && preloadedRevision.id === revisionToPublish
+					? preloadedRevision
+					: await revisionRepo.findById(revisionToPublish);
 			if (!revision || revision.collection !== type || revision.entryId !== id) {
 				throw new EmDashValidationError("Revision does not belong to the specified content item");
 			}
@@ -2837,8 +2848,9 @@ export class ContentRepository {
 				? sql`AND scheduled_at IS NOT NULL AND scheduled_at <= ${now}`
 				: sql``;
 			let promoted = false;
+			let updated: ContentItem | null = null;
 			try {
-				const result = await sql`
+				const result = await sql<Record<string, unknown>>`
 					UPDATE ${sql.ref(tableName)}
 					SET ${sql.join(assignments, sql`, `)}
 					WHERE id = ${id}
@@ -2856,8 +2868,11 @@ export class ContentRepository {
 						AND revisions.collection = ${type}
 						AND revisions.entry_id = ${id}
 					)
+					RETURNING *
 				`.execute(this.db);
-				promoted = (result.numAffectedRows ?? 0n) > 0n;
+				const row = result.rows[0];
+				if (row) updated = this.mapRow(type, row);
+				promoted = updated !== null;
 			} catch (error) {
 				if (isConfirmedStatementFailure(error)) throw error;
 				let observed: ContentItem | null;
@@ -2896,7 +2911,7 @@ export class ContentRepository {
 
 			invalidateCollectionCache(type);
 			notifyRoom({ collection: type, id }, ["publishedAt"]);
-			const updated = await this.findById(type, id);
+			updated ??= await this.findById(type, id);
 			if (!updated) {
 				throw new Error("Content not found");
 			}
@@ -3042,18 +3057,18 @@ export class ContentRepository {
 	}
 
 	/**
-	 * `replaceDraftRevision`, returning the `version` and `updatedAt` the entry has after the
-	 * update, or null when the entry no longer matches `expected`. Scheduling moves `updatedAt`
-	 * without bumping `version`, so the entry's `_rev` can't be derived from `expected`.
+	 * `replaceDraftRevision`, returning the row as it stands after the update, or null when the
+	 * entry no longer matches `expected`. Scheduling moves `updatedAt` without bumping `version`,
+	 * so the entry's `_rev` can't be derived from `expected`.
 	 */
 	async stageDraftRevision(
 		type: string,
 		id: string,
 		revisionId: string,
 		expected: Pick<ContentItem, "version" | "liveRevisionId" | "draftRevisionId">,
-	): Promise<Pick<ContentItem, "version" | "updatedAt"> | null> {
+	): Promise<ContentItem | null> {
 		const tableName = getTableName(type);
-		const result = await sql<{ version: number; updated_at: string }>`
+		const result = await sql<Record<string, unknown>>`
 			UPDATE ${sql.ref(tableName)}
 			SET draft_revision_id = ${revisionId},
 				version = version + 1
@@ -3068,12 +3083,12 @@ export class ContentRepository {
 				AND revisions.collection = ${type}
 				AND revisions.entry_id = ${id}
 			)
-			RETURNING version, updated_at
+			RETURNING *
 		`.execute(this.db);
 		const row = result.rows[0];
 		if (!row) return null;
 		notifyRoom({ collection: type, id });
-		return { version: row.version, updatedAt: row.updated_at };
+		return this.mapRow(type, row);
 	}
 
 	/**

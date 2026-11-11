@@ -10,7 +10,7 @@ import type { Kysely } from "kysely";
 
 import type { ContentWrite } from "../api/content-save.js";
 import type { ContentFieldFilters } from "../content-list-query.js";
-import type { ContentSeoInput } from "../database/repositories/types.js";
+import type { ContentItem, ContentSeoInput } from "../database/repositories/types.js";
 import type {
 	PluginEditorExtensionDispatch,
 	ResolvedPluginEditorExtension,
@@ -331,7 +331,11 @@ export interface EmDashHandlers {
 		id: string,
 		locale?: string,
 		referenceOptions?: { includeDrafts: boolean },
-		draftOptions?: { includeStagedSlug?: boolean },
+		options?: {
+			includeStagedSlug?: boolean;
+			/** Return the stored row alone, without SEO, byline or draft hydration. */
+			rowOnly?: boolean;
+		},
 	) => Promise<
 		HandlerResponse<{
 			item: {
@@ -391,6 +395,7 @@ export interface EmDashHandlers {
 			/** Users whose edits this save holds, latest first. Defaults to the actor alone. */
 			editedBy?: readonly string[];
 		},
+		options?: { existing?: ContentItem },
 	) => Promise<
 		HandlerResponse & {
 			/** This save's own write, when it staged a draft revision and wrote no live metadata. */
@@ -439,6 +444,7 @@ export interface EmDashHandlers {
 			currentTime?: Date;
 			actor?: ActorInfo;
 			origin?: ContentActionOrigin;
+			existing?: ContentItem;
 		},
 	) => Promise<HandlerResponse>;
 

@@ -7,6 +7,7 @@ import { sql } from "kysely";
 
 import { after } from "../../after.js";
 import type { ContentFieldFilters } from "../../content-list-query.js";
+import { ContentDatetimeNormalizer } from "../../database/content-datetime.js";
 import { isSqlite } from "../../database/dialect-helpers.js";
 import { BylineRepository } from "../../database/repositories/byline.js";
 import type { ContentBylineInput } from "../../database/repositories/byline.js";
@@ -52,6 +53,7 @@ import {
 import { publishRedirectChanges } from "../../redirects/artifacts.js";
 import { invalidateRedirectCache } from "../../redirects/cache.js";
 import { requestCached } from "../../request-cache.js";
+import { getRequestContext } from "../../request-context.js";
 import { isStoragelessFieldRow } from "../../schema/types.js";
 import { FTSManager } from "../../search/fts-manager.js";
 import { invalidateTermCache } from "../../taxonomies/index.js";
@@ -237,57 +239,78 @@ const SEO_DEFAULTS: ContentSeo = {
 	noIndex: false,
 };
 
-/**
- * Check if a collection has SEO enabled.
- *
- * Cached per request so bulk imports do not re-query `_emdash_collections`
- * for every item they create.
- */
-async function collectionHasSeo(db: Kysely<Database>, collection: string): Promise<boolean> {
-	return requestCached(`collectionHasSeo:${collection}`, async () => {
-		const row = await db
-			.selectFrom("_emdash_collections")
-			.select("has_seo")
-			.where("slug", "=", collection)
-			.executeTakeFirst();
-		return row?.has_seo === 1;
-	});
+interface CollectionWriteMeta {
+	hasSeo: boolean;
+	supportsRevisions: boolean;
+	supportsScheduling: boolean;
+	routable: boolean;
+	titleField: string | null;
+	urlPattern: string | null;
 }
 
 /**
- * Collection publication metadata, cached per request for bulk imports.
+ * The collection settings content writes consult, read in one query and
+ * cached per request so a write (or a bulk import) reads them once.
  */
-async function getCollectionPublishConfig(
+function getCollectionWriteMeta(
 	db: Kysely<Database>,
 	collection: string,
-): Promise<{ supportsRevisions: boolean; supportsScheduling: boolean; routable: boolean }> {
-	return requestCached(`collectionPublishConfig:${collection}`, async () => {
+): Promise<CollectionWriteMeta> {
+	return requestCached(`collectionWriteMeta:${collection}`, async () => {
 		const row = await db
 			.selectFrom("_emdash_collections")
-			.select(["supports", "routable"])
+			.select(["has_seo", "supports", "routable", "title_field", "url_pattern"])
 			.where("slug", "=", collection)
 			.executeTakeFirst();
 		const supports: unknown = row?.supports ? JSON.parse(row.supports) : [];
 		return {
+			hasSeo: row?.has_seo === 1,
 			supportsRevisions: Array.isArray(supports) && supports.includes("revisions"),
 			supportsScheduling: !Array.isArray(supports) || !supports.includes("no-scheduling"),
 			routable: row?.routable !== 0,
+			titleField: row?.title_field ?? null,
+			urlPattern: row?.url_pattern ?? null,
 		};
 	});
+}
+
+/**
+ * Load the collection settings and datetime context a content write reads,
+ * together, so they cost one round trip instead of two sequential ones later.
+ */
+export async function prefetchContentWriteContext(
+	db: Kysely<Database>,
+	collection: string,
+): Promise<void> {
+	// Outside a request scope nothing is cached, so loading early would only
+	// repeat the reads the write makes anyway.
+	if (!getRequestContext()) return;
+	await Promise.all([
+		getCollectionWriteMeta(db, collection),
+		new ContentDatetimeNormalizer(db).writableFieldSlugs(collection),
+	]).catch(() => {});
+}
+
+async function collectionHasSeo(db: Kysely<Database>, collection: string): Promise<boolean> {
+	return (await getCollectionWriteMeta(db, collection)).hasSeo;
+}
+
+async function getCollectionPublishConfig(
+	db: Kysely<Database>,
+	collection: string,
+): Promise<{ supportsRevisions: boolean; supportsScheduling: boolean; routable: boolean }> {
+	const { supportsRevisions, supportsScheduling, routable } = await getCollectionWriteMeta(
+		db,
+		collection,
+	);
+	return { supportsRevisions, supportsScheduling, routable };
 }
 
 async function getCollectionTitleField(
 	db: Kysely<Database>,
 	collection: string,
 ): Promise<string | null> {
-	return requestCached(`collectionTitleField:${collection}`, async () => {
-		const row = await db
-			.selectFrom("_emdash_collections")
-			.select("title_field")
-			.where("slug", "=", collection)
-			.executeTakeFirst();
-		return row?.title_field ?? null;
-	});
+	return (await getCollectionWriteMeta(db, collection)).titleField;
 }
 
 function requireRoutablePublishSlug(routable: boolean, slug: string | null | undefined): void {
@@ -340,7 +363,14 @@ async function hydrateBylines(
 	// byline row exists at locale X in the credited translation_group. The
 	// junction itself spans translations; rendering does not fall back.
 	const localeOpt = item.locale ? { locale: item.locale } : undefined;
-	const bylines = await bylineRepo.getContentBylines(collection, item.id, localeOpt);
+	// With no primary credit there are normally no junction rows, so the author
+	// fallback below is the answer and can be read alongside the credits.
+	const [bylines, prefetchedFallback] = await Promise.all([
+		bylineRepo.getContentBylines(collection, item.id, localeOpt),
+		!item.primaryBylineId && item.authorId
+			? bylineRepo.findByUserId(item.authorId, localeOpt)
+			: undefined,
+	]);
 
 	if (bylines.length > 0) {
 		item.bylines = bylines.map((c) => ({ ...c, source: "explicit" as const }));
@@ -362,7 +392,10 @@ async function hydrateBylines(
 		// renders on the entry only when a sibling exists at the entry's
 		// locale. Without this we'd silently surface the default-locale
 		// row, which contradicts the per-locale model.
-		const fallback = await bylineRepo.findByUserId(item.authorId, localeOpt);
+		const fallback =
+			prefetchedFallback === undefined
+				? await bylineRepo.findByUserId(item.authorId, localeOpt)
+				: prefetchedFallback;
 		if (fallback) {
 			item.bylines = [{ byline: fallback, sortOrder: 0, roleLabel: null, source: "inferred" }];
 			item.byline = fallback;
@@ -372,6 +405,38 @@ async function hydrateBylines(
 
 	item.bylines = [];
 	item.byline = null;
+}
+
+async function hydrateSeoAndBylines(
+	db: Kysely<Database>,
+	collection: string,
+	item: ContentItem,
+): Promise<void> {
+	await Promise.all([
+		collectionHasSeo(db, collection).then((hasSeo) => hydrateSeo(db, collection, item, hasSeo)),
+		hydrateBylines(db, collection, item),
+	]);
+}
+
+/**
+ * Build the response for a row the caller already holds, hydrated the way
+ * {@link handleContentGet} hydrates it (without references).
+ */
+export async function contentResponseForRow(
+	db: Kysely<Database>,
+	collection: string,
+	item: ContentItem,
+): Promise<ApiResult<ContentResponse>> {
+	try {
+		await hydrateSeoAndBylines(db, collection, item);
+		return { success: true, data: { item, _rev: encodeRev(item) } };
+	} catch (error) {
+		console.error("Content get error:", error);
+		return {
+			success: false,
+			error: { code: "CONTENT_GET_ERROR", message: "Failed to get content" },
+		};
+	}
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -814,11 +879,7 @@ async function createSlugChangeRedirect(
 	// would otherwise be shadowed by the redirect.
 	if (await slugStillTaken(db, collection, oldSlug, contentId)) return false;
 
-	const collectionRow = await db
-		.selectFrom("_emdash_collections")
-		.select("url_pattern")
-		.where("slug", "=", collection)
-		.executeTakeFirst();
+	const { urlPattern } = await getCollectionWriteMeta(db, collection);
 
 	const redirectRepo = new RedirectRepository(db);
 	const redirect = await redirectRepo.createAutoRedirect(
@@ -826,7 +887,7 @@ async function createSlugChangeRedirect(
 		oldSlug,
 		newSlug,
 		contentId,
-		collectionRow?.url_pattern ?? null,
+		urlPattern,
 		oldPublishedAt,
 		newPublishedAt,
 	);
@@ -849,14 +910,10 @@ async function removeShadowingAutoRedirect(
 	if (!slug) return false;
 	validateIdentifier(collection, "collection slug");
 
-	const collectionRow = await db
-		.selectFrom("_emdash_collections")
-		.select("url_pattern")
-		.where("slug", "=", collection)
-		.executeTakeFirst();
+	const { urlPattern } = await getCollectionWriteMeta(db, collection);
 
 	const url = interpolateUrlPattern({
-		pattern: collectionRow?.url_pattern ?? null,
+		pattern: urlPattern,
 		collection,
 		slug,
 		id: contentId,
@@ -1184,6 +1241,7 @@ export async function handleContentGet(
 	id: string,
 	locale?: string,
 	referenceOptions?: { includeDrafts: boolean },
+	options: { rowOnly?: boolean } = {},
 ): Promise<ApiResult<ContentResponse>> {
 	try {
 		const repo = new ContentRepository(db);
@@ -1202,11 +1260,11 @@ export async function handleContentGet(
 				},
 			};
 		}
+		if (options.rowOnly) {
+			return { success: true, data: { item, _rev: encodeRev(item) } };
+		}
 
-		// Hydrate SEO data if the collection has SEO enabled
-		const hasSeo = await collectionHasSeo(db, collection);
-		await hydrateSeo(db, collection, item, hasSeo);
-		await hydrateBylines(db, collection, item);
+		await hydrateSeoAndBylines(db, collection, item);
 		// Opt-in: hydration is skipped entirely unless the caller passes
 		// `referenceOptions`, since it can leak draft child ids/slugs — see
 		// `hydrateReferences`'s doc comment.
@@ -2503,15 +2561,14 @@ export async function handleContentPublish(
 		let redirectChanged = false;
 		const item = await withTransaction(db, async (trx) => {
 			const repo = new ContentRepository(trx);
-			const resolvedId = (await resolveId(repo, collection, id)) ?? id;
-			const publishConfig = await getCollectionPublishConfig(trx, collection);
-
 			// Capture the pre-publish state. For revision-supporting collections a
 			// slug edit is staged as `_slug` in the draft revision and only lands
 			// on the live `slug` column here, inside `repo.publish()` — it never
 			// passes through handleContentUpdate, where slug-change auto-redirects
 			// are normally created.
-			const existing = await repo.findById(collection, resolvedId);
+			const existing = await repo.findByIdOrSlug(collection, id);
+			const resolvedId = existing?.id ?? id;
+			const publishConfig = await getCollectionPublishConfig(trx, collection);
 
 			// A selection staged in the draft becomes the live one here. Validate
 			// before the publishing statement rather than after: `withTransaction`
@@ -2589,6 +2646,7 @@ export async function handleContentPublish(
 				publishConfig.routable,
 				expectedRevision,
 				options.currentTime,
+				existing ? { existing, draftRevision } : undefined,
 			);
 
 			if (
