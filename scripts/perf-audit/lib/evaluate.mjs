@@ -57,6 +57,20 @@ export function evaluateBudgets(profiles, budgets) {
 				where: "server bundle",
 			});
 		}
+		const upload = p.build?.upload?.uploadGzipBytes;
+		if (
+			budgets.uploadGzipKiB !== undefined &&
+			upload != null &&
+			upload / KiB > budgets.uploadGzipKiB
+		) {
+			failures.push({
+				profile: p.profile,
+				budget: "max-upload-gz",
+				limit: budgets.uploadGzipKiB,
+				actual: Math.round(upload / KiB),
+				where: "worker upload",
+			});
+		}
 		const js = p.initialAdminJs?.gzipBytes;
 		if (
 			budgets.initialJsGzipKiB !== undefined &&
@@ -137,6 +151,11 @@ export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 			if (!pageB) continue;
 			const where = `${pageA.viewport} ${pageA.name}`;
 			add(where, "CLS", pageB.cls, pageA.cls, pageA.cls - pageB.cls > thresholds.cls);
+			const gapB = pageB.api.scriptsToFirstApiMs;
+			const gapA = pageA.api.scriptsToFirstApiMs;
+			if (gapB != null && gapA != null) {
+				add(where, "JS done to first API ms", gapB, gapA, false);
+			}
 			add(
 				where,
 				"API requests",

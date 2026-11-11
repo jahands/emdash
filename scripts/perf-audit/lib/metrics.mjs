@@ -239,6 +239,11 @@ export function summarizeRequests(requests) {
 		.filter((r) => r.end !== null)
 		.map((r) => ({ start: r.start, end: r.end }));
 	const lastApi = api.filter((r) => r.end !== null).toSorted((a, b) => b.end - a.end)[0];
+	const firstApi = sortedApi[0];
+	const scriptEnds = requests
+		.filter((r) => r.type === "Script" && r.end !== null && firstApi && r.start < firstApi.start)
+		.map((r) => r.end);
+	const scriptsDone = scriptEnds.length > 0 ? Math.max(...scriptEnds) : null;
 	const chain = [];
 	for (let r = lastApi && withDeps.find((q) => q.url === lastApi.url); r;) {
 		chain.unshift({ url: r.url, via: r.waitedOnSource });
@@ -256,6 +261,9 @@ export function summarizeRequests(requests) {
 			count: api.length,
 			bytes: api.reduce((sum, r) => sum + (r.bytes ?? 0), 0),
 			lastResponseMs: lastApi ? Math.round(lastApi.end) : null,
+			firstRequestMs: firstApi ? Math.round(firstApi.start) : null,
+			scriptsDoneMs: scriptsDone === null ? null : Math.round(scriptsDone),
+			scriptsToFirstApiMs: scriptsDone === null ? null : Math.round(firstApi.start - scriptsDone),
 			waves: computeWaves(apiIntervals, { toleranceMs: 2 }).waves,
 			failed: api.filter((r) => r.failed || (r.status ?? 0) >= 400).length,
 		},

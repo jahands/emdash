@@ -172,6 +172,9 @@ void test("request summary links API calls to the response they waited for", () 
 	assert.equal(summary.api.count, 2);
 	assert.equal(summary.api.waves, 2);
 	assert.equal(summary.api.lastResponseMs, 400);
+	assert.equal(summary.api.firstRequestMs, 210);
+	assert.equal(summary.api.scriptsDoneMs, 200);
+	assert.equal(summary.api.scriptsToFirstApiMs, 10);
 	assert.equal(summary.api.failed, 1);
 	assert.deepEqual(summary.criticalChain, [
 		{ url: doc, via: null },

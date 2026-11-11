@@ -50,6 +50,19 @@ void test("budgets fail on CLS, server gzip, initial JS and oversized images", (
 	assert.deepEqual(evaluateBudgets([p], {}), []);
 });
 
+void test("the upload budget applies to what wrangler would upload", () => {
+	const failures = evaluateBudgets(
+		[profile(), profile({ build: { server: { gzipBytes: 5_000_000 } } })],
+		{
+			uploadGzipKiB: 1900,
+		},
+	);
+	assert.deepEqual(
+		failures.map((f) => [f.profile, f.budget, f.actual]),
+		[["blog-workerd-d1", "max-upload-gz", 1953]],
+	);
+});
+
 void test("identical results compare without regressions", () => {
 	const { rows, regressions } = compareResults([profile()], [profile()], DEFAULT_THRESHOLDS);
 	assert.ok(rows.length > 0);

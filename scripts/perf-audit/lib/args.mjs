@@ -34,6 +34,7 @@ Workspaces
 Budgets (exit 1 when exceeded)
   --max-cls <n>
   --max-server-gz <KiB>
+  --max-upload-gz <KiB>      Workerd profiles: what \`wrangler deploy\` would upload, gzip
   --max-initial-js-gz <KiB>
   --max-oversized-images <n>
 
@@ -173,6 +174,9 @@ export function parseArgs(argv) {
 				break;
 			case "--max-server-gz":
 				options.budgets.serverGzipKiB = number(flag, take(flag));
+				break;
+			case "--max-upload-gz":
+				options.budgets.uploadGzipKiB = number(flag, take(flag));
 				break;
 			case "--max-initial-js-gz":
 				options.budgets.initialJsGzipKiB = number(flag, take(flag));

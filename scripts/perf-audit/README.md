@@ -62,6 +62,7 @@ For each screen:
 - CLS with Chrome's session windows, plus the elements that moved, by how much, and when
 - LCP, FCP and total blocking time, in Chromium's new headless mode so paint timing is real
 - API requests, their bytes, the time to the last API response, and API waves (calls that waited for an earlier response)
+- the time from the last script that finished before the first API request to that request, which shows main-thread work or idle waiting between loading the admin and asking for data
 - the request waterfall, with the request each one waited on and how that is known: the initiator Chromium recorded, or, for an API call issued right after another API response, a guess from timing, labelled `inferred-timing`. Chromium does not record which response a script awaited, so hold the request (`--hold`) to prove a dependency.
 - transfer bytes by resource type, and the transfer if every text response that arrived without `Content-Encoding` were sent at its brotli-5 size, as a CDN would send it. Local `wrangler dev` never compresses, so on workerd profiles the second figure is closer to a deployed Worker.
 - every image on the page, as painted in the viewport, loaded but outside it, failed, or not loaded (lazy). Painted images are flagged when they have more than twice the pixels the screen needs (rendered size × device pixel ratio) and cost over 50 KiB. Pixels are the selected file's own dimensions: the harness fetches each image's `currentSrc` again and reads its header, because `naturalWidth` is divided by the `srcset` density (a 2560 px file picked for an 1136 px slot reports 1136). For `object-fit: cover` only the uncropped side counts.
@@ -109,9 +110,12 @@ pnpm perf:audit --compare ../emdash-main
 
 # Fail when over budget
 pnpm perf:audit --max-cls 0.05 --max-server-gz 6000 --max-initial-js-gz 2500 --max-oversized-images 0
+
+# Fail when a workerd profile's Worker upload is over the Workers Free 3 MiB limit
+pnpm perf:audit --profile blog-workerd-d1 --max-upload-gz 3072
 ```
 
-`--workspace <dir>` builds the sites against another checkout's packages. `--compare <dir>` runs the same profiles against a second checkout and prints a before/after table. A row is a regression when CLS rises by more than 0.01, server gzip by more than 5%, API requests by more than 1, image bytes by more than 20%, or a cold start by more than 25%, or when typing's input-to-frame p95 rises by more than 25% to over 50 ms. Change the thresholds with `--threshold-cls`, `--threshold-server-gz`, `--threshold-api`, `--threshold-image-bytes` and `--threshold-cold-start`.
+`--workspace <dir>` builds the sites against another checkout's packages. `--compare <dir>` runs the same profiles against a second checkout and prints a before/after table. A row is a regression when CLS rises by more than 0.01, server gzip by more than 5%, API requests by more than 1, image bytes by more than 20%, or a cold start by more than 25%, or when typing's input-to-frame p95 rises by more than 25% to over 50 ms. The table also shows each screen's JS-done-to-first-API time, which is never flagged because it moves with machine load. Change the thresholds with `--threshold-cls`, `--threshold-server-gz`, `--threshold-api`, `--threshold-image-bytes` and `--threshold-cold-start`.
 
 Layout races and cold starts vary between runs of the same code, so each first-pass regression is measured twice more in both workspaces and judged on the median of three. Differences that don't hold up are listed separately in the summary. Set the number of extra samples with `--confirm-samples` (0 turns confirmation off).
 
