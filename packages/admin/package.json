@@ -101,7 +101,6 @@
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@tiptap/core": "catalog:",
-    "@tiptap/extension-character-count": "catalog:",
     "@tiptap/extension-code": "catalog:",
     "@tiptap/extension-code-block": "catalog:",
     "@tiptap/extension-code-block-lowlight": "catalog:",

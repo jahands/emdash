@@ -110,11 +110,14 @@ import {
 	type MappablePosition,
 	type Range,
 } from "@tiptap/core";
-import CharacterCount from "@tiptap/extension-character-count";
 import Focus from "@tiptap/extension-focus";
 import { isAllowedUri } from "@tiptap/extension-link";
 import Typography from "@tiptap/extension-typography";
-import type { Mark as ProseMirrorMark, Node as ProseMirrorNode } from "@tiptap/pm/model";
+import {
+	Fragment,
+	type Mark as ProseMirrorMark,
+	type Node as ProseMirrorNode,
+} from "@tiptap/pm/model";
 import {
 	AllSelection,
 	NodeSelection,
@@ -1978,26 +1981,60 @@ function countNonCjkWords(text: string): number {
 	return text.replace(CJK_CHARACTER_REGEX, " ").split(WHITESPACE_REGEX).filter(Boolean).length;
 }
 
-/**
- * Word count for the editor footer. CJK characters are counted individually
- * because they are not delimited by spaces; other scripts are counted by word.
- * Used as the `wordCounter` for the CharacterCount extension, whose default
- * (`text.split(' ')`) reports a spaceless CJK paragraph as a single word.
- */
-export function countWords(text: string): number {
-	return countNonCjkWords(text) + countCjkCharacters(text);
+function readingMinutes(nonCjkWords: number, cjkCharacters: number): number {
+	return Math.ceil(nonCjkWords / WORDS_PER_MINUTE + cjkCharacters / CJK_CHARACTERS_PER_MINUTE);
+}
+
+interface BlockTextCounts {
+	nonCjkWords: number;
+	cjkCharacters: number;
+	characters: number;
+}
+
+export interface DocumentMetrics {
+	words: number;
+	characters: number;
+	readingTime: number;
+}
+
+const blockTextCounts = new WeakMap<ProseMirrorNode, BlockTextCounts>();
+
+function countBlockText(block: ProseMirrorNode): BlockTextCounts {
+	let counts = blockTextCounts.get(block);
+	if (!counts) {
+		const content = Fragment.from(block);
+		// Leaf nodes such as images and hard breaks read as one space: a character, but no word.
+		const wordText = content.textBetween(0, content.size, " ", " ");
+		counts = {
+			nonCjkWords: countNonCjkWords(wordText),
+			cjkCharacters: countCjkCharacters(wordText),
+			characters: content.textBetween(0, content.size, undefined, " ").length,
+		};
+		blockTextCounts.set(block, counts);
+	}
+	return counts;
 }
 
 /**
- * Calculate reading time in minutes for the given text. Word-based scripts are
- * read at WORDS_PER_MINUTE and CJK characters at CJK_CHARACTERS_PER_MINUTE.
- * Returns 0 for an empty document.
+ * Word, character and reading-time counts for a document. Each top-level
+ * block is counted once and remembered by node; ProseMirror keeps the nodes
+ * an edit doesn't touch, so a keystroke recounts only the block it changed.
  */
-export function calculateReadingTime(text: string): number {
-	return Math.ceil(
-		countNonCjkWords(text) / WORDS_PER_MINUTE +
-			countCjkCharacters(text) / CJK_CHARACTERS_PER_MINUTE,
-	);
+export function documentMetrics(doc: ProseMirrorNode): DocumentMetrics {
+	let nonCjkWords = 0;
+	let cjkCharacters = 0;
+	let characters = 0;
+	doc.forEach((block) => {
+		const counts = countBlockText(block);
+		nonCjkWords += counts.nonCjkWords;
+		cjkCharacters += counts.cjkCharacters;
+		characters += counts.characters;
+	});
+	return {
+		words: nonCjkWords + cjkCharacters,
+		characters,
+		readingTime: readingMinutes(nonCjkWords, cjkCharacters),
+	};
 }
 
 /**
@@ -2010,22 +2047,13 @@ function EditorFooter({
 	editor: Editor;
 	variant?: PortableTextEditorProps["variant"];
 }) {
-	const { words, characters, text } = useEditorState({
+	const { words, characters, readingTime } = useEditorState({
 		editor,
-		selector: (ctx) => {
-			const storage: { words: () => number; characters: () => number } =
-				ctx.editor.storage.characterCount;
-			return {
-				words: storage.words(),
-				characters: storage.characters(),
-				text: ctx.editor.getText(),
-			};
-		},
+		selector: (ctx) => documentMetrics(ctx.editor.state.doc),
 	});
 
 	// Subscribes to locale changes so the plural messages below re-render.
 	useLinguiContext();
-	const readingTime = calculateReadingTime(text);
 
 	if (variant === "document") {
 		if (characters === 0) return null;
@@ -2722,7 +2750,6 @@ export function PortableTextEditor({
 					insertedLineRef.current = null;
 				},
 			}),
-			CharacterCount.configure({ wordCounter: countWords }),
 			Focus.configure({
 				className: "has-focus",
 				mode: "all",
