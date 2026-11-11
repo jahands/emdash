@@ -12,6 +12,9 @@
  * precompiled package and can be unit-tested directly.
  */
 
+import type { Kysely } from "kysely";
+
+import type { Database } from "../database/types.js";
 import { INTERNAL_MEDIA_PREFIX } from "./normalize.js";
 
 /** Output formats the wrapped endpoint can produce on Cloudflare. */
@@ -37,6 +40,12 @@ export const DEFAULT_TRANSFORM_QUALITY = 85;
  * work a single request asks for.
  */
 export const MAX_TRANSFORM_DIMENSION = 4000;
+
+/**
+ * Query parameter that pins a media URL to one version of the file: its
+ * `content_hash`. Replacing the file changes the hash, and so the URL.
+ */
+export const MEDIA_VERSION_PARAM = "_emdash_media";
 
 /** Weak prefix on an ETag, stripped for weak comparison per RFC 7232. */
 const WEAK_ETAG_PREFIX = /^W\//;
@@ -70,6 +79,66 @@ export const IMMUTABLE_IMAGE_CACHE = "public, max-age=31536000, immutable";
 
 /** Cache policy for media keys that Replace original may overwrite. */
 export const MUTABLE_MEDIA_CACHE_CONTROL = "public, max-age=0, must-revalidate";
+
+/** The parts of a media row that identify the stored file's version. */
+export interface StoredMediaVersion {
+	contentHash: string | null;
+	size: number | null;
+}
+
+/**
+ * Read the version of the media file stored under `key`. Resolves `undefined`
+ * when there is no row or the lookup fails, so callers can start it alongside
+ * the storage download without risking an unhandled rejection.
+ */
+export function lookupMediaVersion(
+	db: Kysely<Database>,
+	key: string,
+): Promise<StoredMediaVersion | undefined> {
+	return db
+		.selectFrom("media")
+		.select(["content_hash", "size"])
+		.where("storage_key", "=", key)
+		.executeTakeFirst()
+		.then((row) => (row ? { contentHash: row.content_hash, size: row.size } : undefined))
+		.catch(() => undefined);
+}
+
+/**
+ * Cache policy for a media representation. A URL pinned to a version is
+ * immutable only when that version is the stored file: the hash must match the
+ * row, and the row's size must match the bytes storage returned. The size check
+ * covers the moment during Replace original when storage holds the new bytes
+ * but the row still has the old hash. Anything else must revalidate.
+ */
+export function mediaCacheControl(
+	version: string | null,
+	stored: StoredMediaVersion | undefined,
+	size: number,
+): string {
+	if (
+		version &&
+		stored?.contentHash &&
+		stored.contentHash === version &&
+		(stored.size === null || stored.size === size)
+	) {
+		return IMMUTABLE_IMAGE_CACHE;
+	}
+	return MUTABLE_MEDIA_CACHE_CONTROL;
+}
+
+/**
+ * The version a media URL is pinned to (`?_emdash_media=`), or `null`. Accepts
+ * absolute and relative URLs.
+ */
+export function getMediaVersion(href: string | null | undefined): string | null {
+	if (!href) return null;
+	try {
+		return new URL(href, "http://localhost").searchParams.get(MEDIA_VERSION_PARAM) || null;
+	} catch {
+		return null;
+	}
+}
 
 /**
  * Format a Date as an HTTP-date (RFC 7231).
@@ -181,10 +250,11 @@ export function originalMediaHeaders(
 	contentType: string,
 	size?: number,
 	lastModified?: Date,
+	cacheControl: string = MUTABLE_MEDIA_CACHE_CONTROL,
 ): Record<string, string> {
 	return {
 		"Content-Type": contentType,
-		"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
+		"Cache-Control": cacheControl,
 		"X-Content-Type-Options": "nosniff",
 		"Content-Security-Policy":
 			"sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",

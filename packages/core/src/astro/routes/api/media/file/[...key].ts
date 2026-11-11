@@ -11,8 +11,10 @@ import { MediaRepository } from "#db/repositories/media.js";
 import { contentDisposition } from "#media/content-disposition.js";
 import {
 	IMMUTABLE_IMAGE_CACHE,
-	MUTABLE_MEDIA_CACHE_CONTROL,
+	MEDIA_VERSION_PARAM,
 	isNotModified,
+	lookupMediaVersion,
+	mediaCacheControl,
 	validatorHeaders,
 } from "#media/image-endpoint.js";
 
@@ -85,6 +87,8 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 
 	// An unread download retains its storage connection even for a bodyless response.
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
+	const version = new URL(request.url).searchParams.get(MEDIA_VERSION_PARAM);
+	const stored = version ? lookupMediaVersion(emdash.db, key) : undefined;
 	try {
 		// Range requests that include If-Range are served as whole-file responses
 		// because this route does not compare If-Range validators.
@@ -109,7 +113,7 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 		}
 
 		const cacheControl = result.contentType.startsWith("image/")
-			? MUTABLE_MEDIA_CACHE_CONTROL
+			? mediaCacheControl(version, await stored, result.size)
 			: IMMUTABLE_IMAGE_CACHE;
 
 		if (isNotModified(request, result.size, result.lastModified)) {

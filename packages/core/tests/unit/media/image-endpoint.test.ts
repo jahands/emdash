@@ -9,6 +9,10 @@ import {
 	originalMediaHeaders,
 	DEFAULT_TRANSFORM_QUALITY,
 	MAX_TRANSFORM_DIMENSION,
+	IMMUTABLE_IMAGE_CACHE,
+	MUTABLE_MEDIA_CACHE_CONTROL,
+	getMediaVersion,
+	mediaCacheControl,
 	formatHttpDate,
 	makeWeakEtag,
 	getTransformFingerprint,
@@ -351,5 +355,47 @@ describe("isNotModified", () => {
 			headers: { "If-None-Match": makeWeakEtag(1234, lastModified, suffix) },
 		});
 		expect(isNotModified(request, 1234, lastModified, suffix)).toBe(true);
+	});
+});
+
+describe("getMediaVersion", () => {
+	it("reads the version from absolute and relative media URLs", () => {
+		expect(
+			getMediaVersion("https://site.test/_emdash/api/media/file/a.jpg?_emdash_media=sha1%3Aab"),
+		).toBe("sha1:ab");
+		expect(getMediaVersion("/_emdash/api/media/file/a.jpg?_emdash_media=v1")).toBe("v1");
+	});
+
+	it("returns null for URLs without one", () => {
+		expect(getMediaVersion("/_emdash/api/media/file/a.jpg")).toBeNull();
+		expect(getMediaVersion("/_emdash/api/media/file/a.jpg?_emdash_media=")).toBeNull();
+		expect(getMediaVersion(null)).toBeNull();
+	});
+});
+
+describe("mediaCacheControl", () => {
+	const stored = { contentHash: "sha1:aa", size: 10 };
+
+	it("makes a URL pinned to the stored version immutable", () => {
+		expect(mediaCacheControl("sha1:aa", stored, 10)).toBe(IMMUTABLE_IMAGE_CACHE);
+		expect(mediaCacheControl("sha1:aa", { contentHash: "sha1:aa", size: null }, 10)).toBe(
+			IMMUTABLE_IMAGE_CACHE,
+		);
+	});
+
+	it("revalidates unversioned URLs", () => {
+		expect(mediaCacheControl(null, stored, 10)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+	});
+
+	it("revalidates a version that isn't the stored one", () => {
+		expect(mediaCacheControl("sha1:bb", stored, 10)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		expect(mediaCacheControl("sha1:aa", undefined, 10)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		expect(mediaCacheControl("sha1:aa", { contentHash: null, size: 10 }, 10)).toBe(
+			MUTABLE_MEDIA_CACHE_CONTROL,
+		);
+	});
+
+	it("revalidates when storage holds bytes of a different size than the row", () => {
+		expect(mediaCacheControl("sha1:aa", stored, 11)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
 	});
 });

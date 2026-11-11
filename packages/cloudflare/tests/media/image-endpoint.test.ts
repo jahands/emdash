@@ -132,6 +132,24 @@ describe("Cloudflare image endpoint", () => {
 		expect(await response.text()).toBe("transformed");
 	});
 
+	it("answers a rendition's revalidation with the 200's metadata", async () => {
+		installImages();
+		const first = await GET(context("w=120&f=webp").ctx as never);
+		const { ctx } = context("w=120&f=webp");
+		ctx.request = new Request(ctx.request.url, {
+			headers: { "If-None-Match": first.headers.get("ETag")! },
+		});
+
+		const revalidated = await GET(ctx as never);
+
+		expect(revalidated.status).toBe(304);
+		for (const name of ["Content-Type", "Cache-Control", "ETag"]) {
+			const value = revalidated.headers.get(name);
+			if (value !== null) expect(value).toBe(first.headers.get(name));
+		}
+		expect(revalidated.headers.get("Content-Type")).not.toBe("image/jpeg");
+	});
+
 	it("streams the original when Images is unavailable", async () => {
 		const { ctx } = context("w=120&q=70");
 

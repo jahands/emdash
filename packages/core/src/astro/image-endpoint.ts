@@ -15,9 +15,11 @@ import { GET as genericGET } from "astro/assets/endpoint/generic";
 import { getConfiguredImageService, imageConfig } from "astro:assets";
 
 import {
+	getMediaVersion,
 	getTransformFingerprint,
+	lookupMediaVersion,
 	matchInternalMediaKey,
-	MUTABLE_MEDIA_CACHE_CONTROL,
+	mediaCacheControl,
 	originalMediaHeaders,
 	validatorHeaders,
 	isNotModified,
@@ -41,31 +43,42 @@ function isNotFound(error: unknown): boolean {
 	);
 }
 
-function streamOriginal(
-	body: ReadableStream<Uint8Array>,
-	contentType: string,
-	size: number,
-	lastModified?: Date,
-): Response {
-	return new Response(body, {
+interface StoredSource {
+	body: ReadableStream<Uint8Array>;
+	contentType: string;
+	size: number;
+	lastModified?: Date;
+}
+
+function streamOriginal(source: StoredSource, cacheControl: string): Response {
+	return new Response(source.body, {
 		status: 200,
-		headers: originalMediaHeaders(contentType, size, lastModified),
+		headers: originalMediaHeaders(
+			source.contentType,
+			source.size,
+			source.lastModified,
+			cacheControl,
+		),
 	});
 }
 
+/**
+ * A 304 carries the validators and cache policy of the 200 it revalidates. A
+ * derivative's 304 omits Content-Type: the stored response's type (the output
+ * format) must survive revalidation, and only the transform knows it.
+ */
 function notModifiedResponse(
-	contentType: string,
-	size: number,
-	lastModified?: Date,
+	source: StoredSource,
+	cacheControl: string,
 	suffix?: string,
 ): Response {
 	return new Response(null, {
 		status: 304,
 		headers: {
-			"Content-Type": contentType,
-			"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
+			...(suffix === undefined ? { "Content-Type": source.contentType } : {}),
+			"Cache-Control": cacheControl,
 			"X-Content-Type-Options": "nosniff",
-			...validatorHeaders(size, lastModified, suffix),
+			...validatorHeaders(source.size, source.lastModified, suffix),
 		},
 	});
 }
@@ -73,56 +86,44 @@ function notModifiedResponse(
 export const GET: APIRoute = async (ctx) => {
 	const url = new URL(ctx.request.url);
 	const key = matchInternalMediaKey(url.searchParams.get("href"));
-	const storage = ctx.locals.emdash?.storage;
+	const emdash = ctx.locals.emdash;
+	const storage = emdash?.storage;
 
 	// Not EmDash media, or storage unavailable: let the stock endpoint handle it
 	// (bundled assets, allowed remote, `publicUrl` media).
-	if (!key || !storage) return genericGET(ctx);
+	if (!key || !emdash || !storage) return genericGET(ctx);
 
 	const service = await getConfiguredImageService();
 	if (!("transform" in service)) return genericGET(ctx);
 
 	// An unread download retains its storage connection even for a bodyless response.
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
+	const version = getMediaVersion(url.searchParams.get("href"));
+	const stored = version ? lookupMediaVersion(emdash.db, key) : undefined;
 	try {
 		const source = await storage.download(key);
 		unusedBody = source.body;
+		const cacheControl = mediaCacheControl(version, await stored, source.size);
+
+		const serveOriginal = (): Response => {
+			if (isNotModified(ctx.request, source.size, source.lastModified)) {
+				return notModifiedResponse(source, cacheControl);
+			}
+			const response = streamOriginal(source, cacheControl);
+			if (ctx.request.method === "HEAD") return new Response(null, response);
+			unusedBody = undefined;
+			return response;
+		};
 
 		// Only raster images are transformable; serve anything else unchanged.
-		if (!source.contentType.startsWith("image/")) {
-			if (isNotModified(ctx.request, source.size, source.lastModified)) {
-				return notModifiedResponse(source.contentType, source.size, source.lastModified);
-			}
-			const response = streamOriginal(
-				source.body,
-				source.contentType,
-				source.size,
-				source.lastModified,
-			);
-			if (ctx.request.method === "HEAD") return new Response(null, response);
-			unusedBody = undefined;
-			return response;
-		}
+		if (!source.contentType.startsWith("image/")) return serveOriginal();
 
 		const transform = await service.parseURL(url, imageConfig);
-		if (!transform) {
-			if (isNotModified(ctx.request, source.size, source.lastModified)) {
-				return notModifiedResponse(source.contentType, source.size, source.lastModified);
-			}
-			const response = streamOriginal(
-				source.body,
-				source.contentType,
-				source.size,
-				source.lastModified,
-			);
-			if (ctx.request.method === "HEAD") return new Response(null, response);
-			unusedBody = undefined;
-			return response;
-		}
+		if (!transform) return serveOriginal();
 
 		const fingerprint = getTransformFingerprint(url.searchParams);
 		if (isNotModified(ctx.request, source.size, source.lastModified, fingerprint)) {
-			return notModifiedResponse(source.contentType, source.size, source.lastModified, fingerprint);
+			return notModifiedResponse(source, cacheControl, fingerprint);
 		}
 
 		const inputBuffer = new Uint8Array(await new Response(source.body).arrayBuffer());
@@ -132,7 +133,7 @@ export const GET: APIRoute = async (ctx) => {
 			status: 200,
 			headers: {
 				"Content-Type": FORMAT_MIME[format] ?? source.contentType,
-				"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
+				"Cache-Control": cacheControl,
 				"X-Content-Type-Options": "nosniff",
 				...validatorHeaders(source.size, source.lastModified, fingerprint),
 			},
