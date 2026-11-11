@@ -321,6 +321,18 @@ To see what a deploy actually gets, read the generated config rather than `wrang
 
 Cloudflare bills these transforms as [Images transformations](https://developers.cloudflare.com/images/pricing/#images-transformed). Each unique combination of source image and parameters is billed once per calendar month, and repeat requests within that month are free. If a site has 500 source images and requests one thumbnail size and one hero size for every image, those two parameter sets count as 1,000 transformed images for that month. The Images Free plan covers 5,000 unique transformations per month. Past that limit, cached transformations are still served, but new ones return a `9422` error and the image request fails.
 
+### URL-based transformations
+
+With `imageService: "cloudflare"`, `@astrojs/cloudflare` transforms images through your zone's `/cdn-cgi/image/` URLs instead of the `IMAGES` binding. EmDash detects this setting at build time and installs an endpoint that redirects each media rendition, such as an admin thumbnail, to the matching `/cdn-cgi/image/` URL for the internal `/_emdash/api/media/file/…` route. Cloudflare then resizes the file at the edge and caches the result.
+
+```js title="astro.config.mjs"
+adapter: cloudflare({ imageService: "cloudflare" }),
+```
+
+[Enable transformations](https://developers.cloudflare.com/images/get-started/) for the zone under **Images > Transformations** before you deploy. Without them, public images and admin thumbnails do not load as resized renditions.
+
+Cloudflare fetches the source file from the media route without the visitor's cookies. If Cloudflare Access protects the whole hostname, that fetch fails and Cloudflare redirects the browser to the original file, which loads with the visitor's Access session. `astro dev` has no `/cdn-cgi/image/` service, so renditions are full-size originals during development.
+
 ## Cloudflare Access authentication
 
 Cloudflare Access can replace passkey authentication with the identity provider attached to an Access application. The audience value is a secret runtime setting; keep it out of `astro.config.mjs` by naming its environment variable:

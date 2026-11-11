@@ -168,6 +168,25 @@ describe("resolveImageEndpoint", () => {
 		).toEqual({ entrypoint: "@emdash-cms/cloudflare/image-endpoint" });
 	});
 
+	it("installs the URL-mode endpoint when the adapter transforms through /cdn-cgi/image", () => {
+		expect(
+			resolveImageEndpoint({
+				imagesDisabled: false,
+				currentEntrypoint: undefined,
+				isCloudflare: true,
+				imageServiceEntrypoint: "@astrojs/cloudflare/image-service",
+			}),
+		).toEqual({ entrypoint: "@emdash-cms/cloudflare/image-resizing-endpoint" });
+		expect(
+			resolveImageEndpoint({
+				imagesDisabled: false,
+				currentEntrypoint: "@astrojs/cloudflare/image-transform-endpoint",
+				isCloudflare: true,
+				imageServiceEntrypoint: "@astrojs/cloudflare/image-service-workerd",
+			}),
+		).toEqual({ entrypoint: "@emdash-cms/cloudflare/image-endpoint" });
+	});
+
 	it("skips silently when images are disabled", () => {
 		expect(
 			resolveImageEndpoint({

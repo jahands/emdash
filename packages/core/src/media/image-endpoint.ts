@@ -379,6 +379,44 @@ export function parseTransformParams(params: URLSearchParams): ParsedTransformPa
 	};
 }
 
+/** Path prefix of Cloudflare's URL-based image transformations. */
+export const CLOUDFLARE_IMAGE_RESIZING_PREFIX = "/cdn-cgi/image/";
+
+/**
+ * Build the Cloudflare URL-mode transformation URL (`/cdn-cgi/image/...`) for an
+ * EmDash media key. The source is always the site's own media file route,
+ * pinned to `version` when given, so the edge cache keys each rendition to one
+ * version of the file. `onerror=redirect` sends the browser to that source when
+ * Cloudflare can't fetch or transform it.
+ *
+ * Options mirror the Images binding path: width and height fit within the box
+ * (Cloudflare's default `scale-down`, which never upscales), and lossy formats
+ * get {@link DEFAULT_TRANSFORM_QUALITY}. PNG is left to keep the source format,
+ * as `format` has no PNG value.
+ *
+ * Returns `null` for a key that isn't safe to put in a media URL.
+ */
+export function buildImageResizingUrl(
+	key: string,
+	options: ImageTransformOptions,
+	version?: string | null,
+): string | null {
+	if (!isSafeTransformKey(key)) return null;
+	const bounded = options.width
+		? fitWithinTransformLimit(options.width, options.height)
+		: { width: undefined, height: options.height };
+	const parts: string[] = [];
+	if (bounded.width) parts.push(`width=${bounded.width}`);
+	if (bounded.height) parts.push(`height=${bounded.height}`);
+	if (options.format !== "png") parts.push(`format=${options.format}`);
+	const quality = resolveTransformQuality(options.format, options.quality);
+	if (quality !== undefined) parts.push(`quality=${quality}`);
+	parts.push("onerror=redirect");
+	const source = `${INTERNAL_MEDIA_PREFIX}${key}`;
+	const query = version ? `?${MEDIA_VERSION_PARAM}=${encodeURIComponent(version)}` : "";
+	return `${CLOUDFLARE_IMAGE_RESIZING_PREFIX}${parts.join(",")}${source}${query}`;
+}
+
 /**
  * Scale a requested size down, keeping its aspect ratio, so neither side
  * exceeds `max`. Sizes already within the limit are returned unchanged.

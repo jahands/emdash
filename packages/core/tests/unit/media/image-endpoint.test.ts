@@ -11,6 +11,7 @@ import {
 	MAX_TRANSFORM_DIMENSION,
 	IMMUTABLE_IMAGE_CACHE,
 	MUTABLE_MEDIA_CACHE_CONTROL,
+	buildImageResizingUrl,
 	getMediaVersion,
 	mediaCacheControl,
 	formatHttpDate,
@@ -355,6 +356,46 @@ describe("isNotModified", () => {
 			headers: { "If-None-Match": makeWeakEtag(1234, lastModified, suffix) },
 		});
 		expect(isNotModified(request, 1234, lastModified, suffix)).toBe(true);
+	});
+});
+
+describe("buildImageResizingUrl", () => {
+	it("points the transformation at the site's own media route", () => {
+		expect(buildImageResizingUrl("01ABC.jpg", { width: 400, format: "webp" })).toBe(
+			"/cdn-cgi/image/width=400,format=webp,quality=85,onerror=redirect/_emdash/api/media/file/01ABC.jpg",
+		);
+	});
+
+	it("pins the source to a version and keeps explicit options", () => {
+		expect(
+			buildImageResizingUrl(
+				"01ABC.jpg",
+				{ width: 640, height: 480, format: "avif", quality: 60 },
+				"sha1:ab/cd",
+			),
+		).toBe(
+			"/cdn-cgi/image/width=640,height=480,format=avif,quality=60,onerror=redirect" +
+				"/_emdash/api/media/file/01ABC.jpg?_emdash_media=sha1%3Aab%2Fcd",
+		);
+	});
+
+	it("keeps the source format and quality for PNG", () => {
+		expect(buildImageResizingUrl("a.png", { width: 80, format: "png" })).toBe(
+			"/cdn-cgi/image/width=80,onerror=redirect/_emdash/api/media/file/a.png",
+		);
+	});
+
+	it("never asks for more than the transform limit", () => {
+		expect(buildImageResizingUrl("a.jpg", { width: 6048, height: 8064, format: "webp" })).toBe(
+			"/cdn-cgi/image/width=3000,height=4000,format=webp,quality=85,onerror=redirect/_emdash/api/media/file/a.jpg",
+		);
+	});
+
+	it("refuses keys that aren't safe in a media URL", () => {
+		expect(buildImageResizingUrl("../x.jpg", { width: 80, format: "webp" })).toBeNull();
+		expect(
+			buildImageResizingUrl("https://evil.test/x.jpg", { width: 80, format: "webp" }),
+		).toBeNull();
 	});
 });
 

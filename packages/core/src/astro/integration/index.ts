@@ -265,6 +265,13 @@ const OVERRIDABLE_IMAGE_ENDPOINTS = new Set([
 const PASSTHROUGH_IMAGE_ENDPOINTS = new Set(["@astrojs/cloudflare/image-passthrough-endpoint"]);
 
 /**
+ * The image service `@astrojs/cloudflare` installs for `imageService: "cloudflare"`
+ * at build time: URL-based transformations through `/cdn-cgi/image/`, with no
+ * `IMAGES` binding.
+ */
+const CLOUDFLARE_URL_IMAGE_SERVICE = "@astrojs/cloudflare/image-service";
+
+/**
  * Decide which image endpoint to install (if any). EmDash wraps Astro's image
  * endpoint so EmDash media bytes load from storage; the wrapper delegates other
  * images back to the platform's stock endpoint.
@@ -278,14 +285,17 @@ export function resolveImageEndpoint(opts: {
 	imagesDisabled: boolean;
 	currentEntrypoint: string | undefined;
 	isCloudflare: boolean;
+	imageServiceEntrypoint?: string;
 }): { entrypoint?: string; warn?: string } {
 	if (opts.imagesDisabled) return {};
 	const current = opts.currentEntrypoint;
 	if (current === undefined || OVERRIDABLE_IMAGE_ENDPOINTS.has(current)) {
+		if (!opts.isCloudflare) return { entrypoint: "emdash/internal/image-endpoint" };
 		return {
-			entrypoint: opts.isCloudflare
-				? "@emdash-cms/cloudflare/image-endpoint"
-				: "emdash/internal/image-endpoint",
+			entrypoint:
+				opts.imageServiceEntrypoint === CLOUDFLARE_URL_IMAGE_SERVICE
+					? "@emdash-cms/cloudflare/image-resizing-endpoint"
+					: "@emdash-cms/cloudflare/image-endpoint",
 		};
 	}
 	// A deliberate passthrough setup: leave it alone, no warning.
@@ -749,6 +759,7 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					imagesDisabled: resolvedConfig.images === false,
 					currentEntrypoint: astroConfig.image?.endpoint?.entrypoint,
 					isCloudflare: astroConfig.adapter?.name === "@astrojs/cloudflare",
+					imageServiceEntrypoint: astroConfig.image?.service?.entrypoint,
 				});
 				if (imageEndpointWarning) logger.warn(imageEndpointWarning);
 
