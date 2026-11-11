@@ -112,11 +112,26 @@ describe("parseTransformParams", () => {
 		});
 	});
 
-	it("rejects out-of-range and non-integer dimensions", () => {
+	it("rejects zero, non-integer and unrepresentable dimensions", () => {
 		expect(parse("w=0").ok).toBe(false);
-		expect(parse(`w=${MAX_TRANSFORM_DIMENSION + 1}`).ok).toBe(false);
 		expect(parse("w=12.5").ok).toBe(false);
 		expect(parse("w=640&h=-1").ok).toBe(false);
+		expect(parse(`w=${"9".repeat(400)}`).ok).toBe(false);
+	});
+
+	it("scales an oversized width down to the limit instead of refusing it", () => {
+		expect(parse(`w=${MAX_TRANSFORM_DIMENSION + 800}`)).toEqual({
+			ok: true,
+			options: { width: MAX_TRANSFORM_DIMENSION, format: "webp", quality: undefined },
+		});
+	});
+
+	it("scales an oversized box down keeping its aspect ratio", () => {
+		const portrait = parse("w=3024&h=4032&f=webp");
+		expect(portrait.ok && portrait.options).toMatchObject({ width: 3000, height: 4000 });
+
+		const landscape = parse("w=4800&h=2700");
+		expect(landscape.ok && landscape.options).toMatchObject({ width: 4000, height: 2250 });
 	});
 
 	it.each([

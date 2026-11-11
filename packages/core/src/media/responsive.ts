@@ -9,6 +9,7 @@
  * resolves inside an Astro project, not in this precompiled package).
  */
 
+import { MAX_TRANSFORM_DIMENSION } from "./image-endpoint.js";
 import type { EmbedOptions } from "./types.js";
 
 /** Standard responsive breakpoints. Matches CDN-provider srcset generation. */
@@ -23,13 +24,17 @@ const ABSOLUTE_HTTP_URL = /^https?:\/\//i;
  * browser always has an exact-fit candidate. A known `originalWidth` below 2x
  * lowers that limit, so the source is never upscaled for a high-density
  * candidate. The limit itself is a candidate up to the largest breakpoint, so
- * images narrower than the first breakpoint still get one.
+ * images narrower than the first breakpoint still get one. No candidate exceeds
+ * {@link MAX_TRANSFORM_DIMENSION}, the largest rendition the endpoint makes.
  */
 export function responsiveWidths(maxWidth: number, originalWidth?: number): number[] {
-	const width = Math.round(maxWidth);
+	const width = Math.min(Math.round(maxWidth), MAX_TRANSFORM_DIMENSION);
 	if (!(width >= 1)) return [];
 	const original = Math.round(originalWidth ?? 0);
-	const cap = original >= 1 && original < width * 2 ? original : width * 2;
+	const cap = Math.min(
+		original >= 1 && original < width * 2 ? original : width * 2,
+		MAX_TRANSFORM_DIMENSION,
+	);
 	const widths = new Set(RESPONSIVE_BREAKPOINTS.filter((w) => w <= cap));
 	widths.add(width);
 	if (cap <= Math.max(...RESPONSIVE_BREAKPOINTS)) widths.add(cap);

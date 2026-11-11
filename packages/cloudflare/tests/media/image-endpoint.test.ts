@@ -120,6 +120,18 @@ describe("Cloudflare image endpoint", () => {
 		},
 	);
 
+	it("transforms an oversized candidate at the largest size instead of serving the original", async () => {
+		const { images, transform } = installImages();
+		const { ctx } = context("w=3024&h=4032&f=webp");
+
+		const response = await GET(ctx as never);
+
+		expect(images.input).toHaveBeenCalledOnce();
+		expect(transform).toHaveBeenCalledWith({ width: 3000, height: 4000 });
+		expect(response.headers.get("Content-Type")).toBe("image/webp");
+		expect(await response.text()).toBe("transformed");
+	});
+
 	it("streams the original when Images is unavailable", async () => {
 		const { ctx } = context("w=120&q=70");
 

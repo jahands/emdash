@@ -12,6 +12,11 @@ import {
 } from "../../../src/media/responsive.js";
 
 describe("responsiveWidths", () => {
+	it("never generates a candidate wider than the endpoint's largest rendition", () => {
+		expect(Math.max(...responsiveWidths(6000))).toBe(4000);
+		expect(Math.max(...responsiveWidths(6000, 8000))).toBe(4000);
+	});
+
 	it("includes breakpoints up to 2x the rendered width", () => {
 		expect(responsiveWidths(400)).toEqual([400, 640, 750, 800]);
 	});

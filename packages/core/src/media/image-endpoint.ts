@@ -31,7 +31,11 @@ export const DEFAULT_TRANSFORM_FORMAT: ImageTransformFormat = "webp";
  */
 export const DEFAULT_TRANSFORM_QUALITY = 85;
 
-/** Upper bound for a requested dimension; caps the work a single request asks for. */
+/**
+ * Largest output dimension a transform produces. A request for more is scaled
+ * down to fit, keeping its aspect ratio, rather than refused. Also caps the
+ * work a single request asks for.
+ */
 export const MAX_TRANSFORM_DIMENSION = 4000;
 
 /** Weak prefix on an ETag, stripped for weak comparison per RFC 7232. */
@@ -257,8 +261,9 @@ export function resolveTransformQuality(
 
 /**
  * Parse and validate `?w=&h=&f=&q=` query params. Width is required (it sizes
- * the rendition); dimensions are bounded so a request can't ask for an
- * unbounded or nonsensical transform. Format falls back to
+ * the rendition). Dimensions beyond {@link MAX_TRANSFORM_DIMENSION} are scaled
+ * down together, so an oversized responsive candidate still gets the largest
+ * rendition the endpoint makes instead of the original. Format falls back to
  * {@link DEFAULT_TRANSFORM_FORMAT} when not requested. `q` accepts Astro presets
  * or finite numbers rounded and clamped to 1-100. It is otherwise left
  * `undefined` so the caller can apply a per-format
@@ -272,6 +277,8 @@ export function parseTransformParams(params: URLSearchParams): ParsedTransformPa
 
 	const height = parseDimension(params.get("h"));
 	if (height === null) return { ok: false, message: "Invalid 'h' (height)" };
+
+	const bounded = fitWithinTransformLimit(width, height);
 
 	const formatRaw = params.get("f");
 	let format: ImageTransformFormat = DEFAULT_TRANSFORM_FORMAT;
@@ -296,19 +303,38 @@ export function parseTransformParams(params: URLSearchParams): ParsedTransformPa
 		}
 	}
 
-	return { ok: true, options: { width, height, format, quality } };
+	return {
+		ok: true,
+		options: { width: bounded.width, height: bounded.height, format, quality },
+	};
+}
+
+/**
+ * Scale a requested size down, keeping its aspect ratio, so neither side
+ * exceeds `max`. Sizes already within the limit are returned unchanged.
+ */
+export function fitWithinTransformLimit(
+	width: number,
+	height: number | undefined,
+	max: number = MAX_TRANSFORM_DIMENSION,
+): { width: number; height: number | undefined } {
+	const largest = Math.max(width, height ?? 0);
+	if (largest <= max) return { width, height };
+	const scale = max / largest;
+	const fit = (n: number) => Math.min(max, Math.max(1, Math.round(n * scale)));
+	return { width: fit(width), height: height === undefined ? undefined : fit(height) };
 }
 
 /**
  * Parse a dimension query value.
  * - `undefined`: param absent
- * - `null`: present but invalid (non-integer, out of range)
- * - `number`: valid, within [1, MAX_TRANSFORM_DIMENSION]
+ * - `null`: present but invalid (not a positive safe integer)
+ * - `number`: valid, possibly above {@link MAX_TRANSFORM_DIMENSION}
  */
 function parseDimension(raw: string | null): number | undefined | null {
 	if (raw === null) return undefined;
 	if (!DECIMAL_DIGITS.test(raw)) return null;
 	const n = Number(raw);
-	if (n < 1 || n > MAX_TRANSFORM_DIMENSION) return null;
+	if (n < 1 || !Number.isSafeInteger(n)) return null;
 	return n;
 }
