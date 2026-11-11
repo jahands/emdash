@@ -142,7 +142,7 @@ function BarLabelSlot({
 		<ReservedText
 			reserve={[first, second]}
 			className="justify-items-center @max-2xl/editor-bar:contents @max-2xl/editor-bar:before:hidden @max-2xl/editor-bar:after:hidden"
-			contentClassName="@max-2xl/editor-bar:contents"
+			contentClassName="justify-self-stretch text-center @max-2xl/editor-bar:contents @2xl/editor-bar:*:block"
 		>
 			{children}
 		</ReservedText>
