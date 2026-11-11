@@ -24,9 +24,9 @@ import {
 	invalidateObjectCache,
 	type ObjectCacheBackend,
 } from "../../src/object-cache/index.js";
-import { getEmDashCollection, getPublishedDates } from "../../src/query.js";
+import { getEmDashCollection, getPublishedMonths } from "../../src/query.js";
 import { runWithContext, type EmDashRequestContext } from "../../src/request-context.js";
-import { groupEntriesByPublishedAt } from "../../src/widgets/archives.js";
+import { groupPublishedMonths } from "../../src/widgets/archives.js";
 import { createPostFixture } from "../utils/fixtures.js";
 import {
 	describeEachDialect,
@@ -55,12 +55,25 @@ function memoryBackend(): ObjectCacheBackend {
 	};
 }
 
+/** Every published date grouped by UTC month, newest month first. */
+function groupDatesByUtcMonth(dates: string[]): Array<{ month: string; count: number }> {
+	const counts = new Map<string, number>();
+	for (const value of dates) {
+		const date = new Date(value);
+		const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+		counts.set(month, (counts.get(month) ?? 0) + 1);
+	}
+	return Array.from(counts, ([month, count]) => ({ month, count })).toSorted((a, b) =>
+		b.month.localeCompare(a.month),
+	);
+}
+
 afterAll(destroySharedPool);
 
-describeEachDialect("published dates", (dialect) => {
+describeEachDialect("published months", (dialect) => {
 	let ctx: DialectTestContext;
 	let db: Kysely<Database>;
-	let queries: Array<{ sql: string; fields?: string[] }>;
+	let queries: Array<{ sql: string; fields?: string[]; rows?: number }>;
 	let failNextRead: boolean;
 
 	beforeEach(async () => {
@@ -84,6 +97,7 @@ describeEachDialect("published dates", (dialect) => {
 				const query = reads.get(args.queryId);
 				if (query) {
 					query.fields = Object.keys(args.result.rows[0] ?? {}).toSorted();
+					query.rows = args.result.rows.length;
 					if (failNextRead && query.sql.includes("ec_post")) {
 						failNextRead = false;
 						throw new Error("Content read failed");
@@ -121,7 +135,7 @@ describeEachDialect("published dates", (dialect) => {
 
 	function read(options?: { locale?: string }, context: Partial<EmDashRequestContext> = {}) {
 		return runWithContext({ editMode: false, db, ...context }, () =>
-			getPublishedDates("post", options),
+			getPublishedMonths("post", options),
 		);
 	}
 
@@ -131,9 +145,9 @@ describeEachDialect("published dates", (dialect) => {
 	}
 
 	const contentReads = () => queries.filter((query) => query.sql.includes("ec_post"));
-	const timestamps = (dates: Date[]) => dates.map((date) => date.toISOString());
+	const monthKeys = (months: Array<{ month: string }>) => months.map(({ month }) => month);
 
-	it("projects only dates while preserving visible groups and their full counts", async () => {
+	it("counts published entries per month in one query that returns a row per month", async () => {
 		await seed("march-first", march);
 		await seed("april", april);
 		await seed("march-second", "2026-03-20T12:00:00.000Z");
@@ -152,27 +166,61 @@ describeEachDialect("published dates", (dialect) => {
 
 		const result = await read();
 		expect(result.error).toBeUndefined();
-		expect(timestamps(result.dates)).toEqual([
-			april,
-			"2026-03-20T12:00:00.000Z",
-			march,
-			"2025-12-15T12:00:00.000Z",
+		expect(result.months).toEqual([
+			{ month: "2026-04", count: 1 },
+			{ month: "2026-03", count: 2 },
+			{ month: "2025-12", count: 1 },
 		]);
 		expect(result.cacheHint).toEqual({ tags: ["post"] });
-		const entries = result.dates.map((publishedAt) => ({ data: { publishedAt } }));
-		expect(groupEntriesByPublishedAt(entries, { limit: 2 })).toEqual([
+		expect(groupPublishedMonths(result.months, { limit: 2 })).toEqual([
 			{ label: "April 2026", count: 1, url: "/archives/2026/04" },
 			{ label: "March 2026", count: 2, url: "/archives/2026/03" },
 		]);
-		expect(groupEntriesByPublishedAt(entries, { type: "yearly" })).toEqual([
+		expect(groupPublishedMonths(result.months, { type: "yearly" })).toEqual([
 			{ label: "2026", count: 3, url: "/archives/2026" },
 			{ label: "2025", count: 1, url: "/archives/2025" },
 		]);
 		expect(queries).toHaveLength(1);
-		expect(queries[0]?.fields).toEqual(["published_at"]);
+		expect(queries[0]?.fields).toEqual(["count", "month"]);
+		expect(queries[0]?.rows).toBe(3);
 	});
 
-	it("ignores invalid publication dates and omits validators through L2", async () => {
+	it("matches grouping every published date by UTC month, including month boundaries", async () => {
+		const dates = [
+			"2026-03-31T23:59:59.999Z",
+			"2026-04-01T00:00:00.000Z",
+			"2025-12-31T23:30:00.000Z",
+			"2026-01-01T00:30:00.000Z",
+			"2024-02-29T12:00:00.000Z",
+		];
+		for (let index = 0; index < 60; index++) {
+			const day = String((index % 28) + 1).padStart(2, "0");
+			const month = String((index % 12) + 1).padStart(2, "0");
+			dates.push(
+				`${2020 + (index % 5)}-${month}-${day}T${String(index % 24).padStart(2, "0")}:15:00.000Z`,
+			);
+		}
+		for (const [index, date] of dates.entries()) {
+			await seed(`post-${index}`, date);
+		}
+		await seed("draft", "2019-06-01T00:00:00.000Z", { status: "draft" });
+		await seed("deleted", "2019-07-01T00:00:00.000Z", { deletedAt: march });
+
+		const result = await read();
+		const expected = groupDatesByUtcMonth(dates);
+
+		expect(result.months).toEqual(expected);
+		expect(queries[0]?.rows).toBe(expected.length);
+		for (const type of ["monthly", "yearly"] as const) {
+			for (const limit of [1, 12, 100]) {
+				expect(groupPublishedMonths(result.months, { type, limit })).toEqual(
+					groupPublishedMonths(expected, { type, limit }),
+				);
+			}
+		}
+	});
+
+	it("ignores missing and malformed publication dates and omits validators through L2", async () => {
 		await seed("valid", march);
 		await seed("missing-date", null, { updatedAt: may });
 		await seed("empty-date", "");
@@ -184,48 +232,47 @@ describeEachDialect("published dates", (dialect) => {
 		const second = await read();
 		expect(first.error).toBeUndefined();
 		expect(second).toEqual(first);
-		expect(timestamps(second.dates)).toEqual([april, march]);
+		expect(second.months).toEqual([
+			{ month: "2026-04", count: 1 },
+			{ month: "2026-03", count: 1 },
+		]);
 		expect(second.cacheHint.lastModified).toBeUndefined();
 		expect(contentReads()).toHaveLength(1);
 	});
 
-	it("does not reuse a legacy publication dates cache record", async () => {
+	it("does not reuse a publication dates cache record", async () => {
 		await seed("published", march);
 		await enableCache();
 		await cachedQuery({
 			namespace: contentCacheNamespaces("post"),
-			key: `publishedDates:${JSON.stringify(["post", undefined])}`,
+			key: `publishedDates:v2:${JSON.stringify(["post", undefined])}`,
 			load: async () => ({
 				dates: [new Date("2020-01-01T00:00:00.000Z")],
-				cacheHint: {
-					tags: ["post"],
-					lastModified: new Date("2020-01-01T00:00:00.000Z"),
-				},
+				cacheHint: { tags: ["post"] },
 			}),
 		});
 
 		await waitForDeferredTasks();
 		const result = await read();
 
-		expect(timestamps(result.dates)).toEqual([march]);
-		expect(result.cacheHint.lastModified).toBeUndefined();
+		expect(result.months).toEqual([{ month: "2026-03", count: 1 }]);
 	});
 
-	it("resolves explicit, request and configured locales without mixing cached dates", async () => {
+	it("resolves explicit, request and configured locales without mixing cached months", async () => {
 		await seed("english", march, { locale: "en" });
 		await seed("french", april, { locale: "fr" });
 		setI18nConfig({ defaultLocale: "fr", locales: ["en", "fr"] });
 		await enableCache();
-		expect(timestamps((await read({ locale: "en" }, { locale: "fr" })).dates)).toEqual([march]);
-		expect(timestamps((await read(undefined, { locale: "en" })).dates)).toEqual([march]);
-		expect(timestamps((await read()).dates)).toEqual([april]);
+		expect(monthKeys((await read({ locale: "en" }, { locale: "fr" })).months)).toEqual(["2026-03"]);
+		expect(monthKeys((await read(undefined, { locale: "en" })).months)).toEqual(["2026-03"]);
+		expect(monthKeys((await read()).months)).toEqual(["2026-04"]);
 		await waitForDeferredTasks();
 		setI18nConfig(null);
-		expect(timestamps((await read()).dates)).toEqual([april, march]);
-		expect(timestamps((await read({ locale: "fr" })).dates)).toEqual([april]);
+		expect(monthKeys((await read()).months)).toEqual(["2026-04", "2026-03"]);
+		expect(monthKeys((await read({ locale: "fr" })).months)).toEqual(["2026-04"]);
 		await waitForDeferredTasks();
 		const before = contentReads().length;
-		expect(timestamps((await read({ locale: "fr" })).dates)).toEqual([april]);
+		expect(monthKeys((await read({ locale: "fr" })).months)).toEqual(["2026-04"]);
 		expect(contentReads()).toHaveLength(before);
 	});
 
@@ -239,8 +286,8 @@ describeEachDialect("published dates", (dialect) => {
 					orderBy: { published_at: "desc" },
 				}),
 			);
-			expect(timestamps((await read()).dates)).toEqual(
-				expected.entries.map((entry) => entry.data.publishedAt.toISOString()),
+			expect((await read()).months).toEqual(
+				groupDatesByUtcMonth(expected.entries.map((entry) => entry.data.publishedAt.toISOString())),
 			);
 		}
 	});
@@ -248,7 +295,7 @@ describeEachDialect("published dates", (dialect) => {
 	it("shares concurrent reads within one request without reusing them in the next request", async () => {
 		await seed("published", march);
 		await runWithContext({ editMode: false, db }, async () => {
-			const results = await Promise.all([getPublishedDates("post"), getPublishedDates("post")]);
+			const results = await Promise.all([getPublishedMonths("post"), getPublishedMonths("post")]);
 			expect(results[0]).toEqual(results[1]);
 			expect(contentReads()).toHaveLength(1);
 		});
@@ -259,35 +306,35 @@ describeEachDialect("published dates", (dialect) => {
 	it("rejects invalid collection identifiers and binds locale values", async () => {
 		await seed("published", march);
 		const invalid = await runWithContext({ editMode: false, db }, () =>
-			getPublishedDates("post; DROP TABLE ec_post"),
+			getPublishedMonths("post; DROP TABLE ec_post"),
 		);
 		expect(invalid.error).toBeInstanceOf(Error);
-		expect(invalid.dates).toEqual([]);
+		expect(invalid.months).toEqual([]);
 		expect(queries).toHaveLength(0);
-		expect((await read({ locale: "en' OR 1=1 --" })).dates).toEqual([]);
-		expect(timestamps((await read({ locale: "en" })).dates)).toEqual([march]);
+		expect((await read({ locale: "en' OR 1=1 --" })).months).toEqual([]);
+		expect(monthKeys((await read({ locale: "en" })).months)).toEqual(["2026-03"]);
 	});
 
-	it("reloads cached dates only after current collection invalidation", async () => {
+	it("reloads cached months only after current collection invalidation", async () => {
 		const id = await seed("published", march);
 		await enableCache();
 		await read();
 		await waitForDeferredTasks();
-		expect(timestamps((await read()).dates)).toEqual([march]);
+		expect(monthKeys((await read()).months)).toEqual(["2026-03"]);
 		expect(contentReads()).toHaveLength(1);
 		await sql`UPDATE ec_post SET published_at = ${april} WHERE id = ${id}`.execute(ctx.db);
 		invalidateCollectionCache("post");
 		await waitForDeferredTasks();
-		expect(timestamps((await read()).dates)).toEqual([april]);
+		expect(monthKeys((await read()).months)).toEqual(["2026-04"]);
 		await waitForDeferredTasks();
 		await sql`UPDATE ec_post SET published_at = ${may} WHERE id = ${id}`.execute(ctx.db);
 		invalidateObjectCache("content:post");
 		await waitForDeferredTasks();
-		expect(timestamps((await read()).dates)).toEqual([april]);
+		expect(monthKeys((await read()).months)).toEqual(["2026-04"]);
 		expect(contentReads()).toHaveLength(2);
 		invalidateObjectCache("content:v2:post");
 		await waitForDeferredTasks();
-		expect(timestamps((await read()).dates)).toEqual([may]);
+		expect(monthKeys((await read()).months)).toEqual(["2026-05"]);
 		expect(contentReads()).toHaveLength(3);
 	});
 
@@ -306,11 +353,11 @@ describeEachDialect("published dates", (dialect) => {
 					: mode === "preview"
 						? { preview: { collection: "post", id } }
 						: { dbIsIsolated: true };
-			expect(timestamps((await read(undefined, context)).dates)).toEqual([april]);
+			expect(monthKeys((await read(undefined, context)).months)).toEqual(["2026-04"]);
 			await waitForDeferredTasks();
-			expect(timestamps((await read(undefined, context)).dates)).toEqual([april]);
+			expect(monthKeys((await read(undefined, context)).months)).toEqual(["2026-04"]);
 			await waitForDeferredTasks();
-			expect(timestamps((await read()).dates)).toEqual([march]);
+			expect(monthKeys((await read()).months)).toEqual(["2026-03"]);
 			expect(contentReads()).toHaveLength(3);
 		},
 	);
@@ -320,24 +367,24 @@ describeEachDialect("published dates", (dialect) => {
 		await enableCache();
 		failNextRead = true;
 		await runWithContext({ editMode: false, db }, async () => {
-			const failed = await getPublishedDates("post");
+			const failed = await getPublishedMonths("post");
 			expect(failed.error).toBeInstanceOf(Error);
-			expect(failed.dates).toEqual([]);
+			expect(failed.months).toEqual([]);
 			await waitForDeferredTasks();
-			const retried = await getPublishedDates("post");
+			const retried = await getPublishedMonths("post");
 			expect(retried.error).toBeUndefined();
-			expect(timestamps(retried.dates)).toEqual([march]);
+			expect(monthKeys(retried.months)).toEqual(["2026-03"]);
 		});
 		await waitForDeferredTasks();
-		expect(timestamps((await read()).dates)).toEqual([march]);
+		expect(monthKeys((await read()).months)).toEqual(["2026-03"]);
 		expect(contentReads()).toHaveLength(2);
 	});
 
 	it("does not cache a missing table as an empty collection", async () => {
 		await enableCache();
-		const load = () => runWithContext({ editMode: false, db }, () => getPublishedDates("missing"));
+		const load = () => runWithContext({ editMode: false, db }, () => getPublishedMonths("missing"));
 		const missing = await load();
-		expect(missing.dates).toEqual([]);
+		expect(missing.months).toEqual([]);
 		expect(missing.error).toBeUndefined();
 		await waitForDeferredTasks();
 		await sql`CREATE TABLE ec_missing (
@@ -347,6 +394,6 @@ describeEachDialect("published dates", (dialect) => {
 		await sql`INSERT INTO ec_missing VALUES ('entry', ${march}, ${march}, 'published', NULL, 'en')`.execute(
 			ctx.db,
 		);
-		expect(timestamps((await load()).dates)).toEqual([march]);
+		expect(monthKeys((await load()).months)).toEqual(["2026-03"]);
 	});
 });

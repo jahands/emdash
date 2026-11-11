@@ -44,7 +44,7 @@ import {
 	FOLDED_BYLINES_EXIST,
 	FOLDED_BYLINE_FIELDS_VERSION,
 	FOLDED_TERMS,
-	loadPublishedDates,
+	loadPublishedMonths,
 	type WhereRange,
 	type WhereValue,
 } from "./loader.js";
@@ -309,47 +309,56 @@ export interface CacheHint {
 	lastModified?: Date;
 }
 
-interface PublishedDatesResult {
-	dates: Date[];
+/** Published entries in one UTC month. */
+interface PublishedMonth {
+	/** `YYYY-MM` */
+	month: string;
+	count: number;
+}
+
+interface PublishedMonthsResult {
+	months: PublishedMonth[];
 	cacheHint: CacheHint;
 	error?: Error;
 }
 
-/** @internal Publication dates for the Archives widget. */
-export async function getPublishedDates(
+const PUBLISHED_MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
+
+/** @internal Published entry counts per UTC month for the Archives widget, newest first. */
+export async function getPublishedMonths(
 	type: string,
 	options?: { locale?: string },
-): Promise<PublishedDatesResult> {
+): Promise<PublishedMonthsResult> {
 	const locale = effectiveLocaleKey(options) || undefined;
-	const key = `publishedDates:v2:${JSON.stringify([type, locale])}`;
+	const key = `publishedMonths:${JSON.stringify([type, locale])}`;
 	try {
 		return await requestCached(key, () =>
-			cachedQuery<PublishedDatesResult>({
+			cachedQuery<PublishedMonthsResult>({
 				namespace: contentCacheNamespaces(type),
 				key,
 				load: async () => {
-					const rows = await loadPublishedDates(type, locale);
-					const dates: Date[] = [];
+					const rows = await loadPublishedMonths(type, locale);
+					const months: PublishedMonth[] = [];
 					for (const row of rows) {
-						if (row.published_at) {
-							const date = new Date(row.published_at);
-							if (!Number.isNaN(date.getTime())) dates.push(date);
+						if (typeof row.month === "string" && PUBLISHED_MONTH_PATTERN.test(row.month)) {
+							months.push({ month: row.month, count: Number(row.count) });
 						}
 					}
-					return { dates, cacheHint: { tags: [type] } };
+					months.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
+					return { months, cacheHint: { tags: [type] } };
 				},
 			}),
 		);
 	} catch (error) {
 		return {
-			dates: [],
+			months: [],
 			cacheHint: {},
 			error:
 				isMissingTableError(error) || isMissingColumnError(error)
 					? undefined
 					: error instanceof Error
 						? error
-						: new Error("Failed to load publication dates"),
+						: new Error("Failed to load publication months"),
 		};
 	}
 }

@@ -6,63 +6,40 @@ export interface ArchiveGroup {
 	url: string;
 }
 
-function toPublishedDate(value: unknown): Date | null {
-	if (value instanceof Date) {
-		return Number.isNaN(value.getTime()) ? null : value;
-	}
-	if (typeof value === "string" || typeof value === "number") {
-		const date = new Date(value);
-		return Number.isNaN(date.getTime()) ? null : date;
-	}
-	return null;
-}
-
 /**
- * Group collection entries by published date for the Archives widget.
- *
- * Accepts `Date` objects, ISO strings, and numeric timestamps; `getEmDashCollection()`
- * returns `publishedAt` as a `Date`.
+ * Group published entry counts per UTC month (`YYYY-MM`, newest first) for
+ * the Archives widget.
  */
-export function groupEntriesByPublishedAt(
-	entries: Array<{ data: { publishedAt?: unknown } }>,
+export function groupPublishedMonths(
+	months: ReadonlyArray<{ month: string; count: number }>,
 	options: { type?: ArchiveGroupType; limit?: number } = {},
 ): ArchiveGroup[] {
 	const type = options.type ?? "monthly";
 	const limit = options.limit ?? 12;
-	const archives = new Map<string, { date: Date; count: number; url: string }>();
+	const archives = new Map<string, { year: string; month: string; count: number }>();
 
-	for (const entry of entries) {
-		const date = toPublishedDate(entry.data.publishedAt);
-		if (!date) continue;
-
-		let key: string;
-		let url: string;
-
-		if (type === "yearly") {
-			const year = date.getFullYear();
-			key = `${year}`;
-			url = `/archives/${year}`;
-		} else {
-			const year = date.getFullYear();
-			const month = date.getMonth() + 1;
-			key = `${year}-${month.toString().padStart(2, "0")}`;
-			url = `/archives/${year}/${month.toString().padStart(2, "0")}`;
-		}
-
-		const existing = archives.get(key);
+	for (const { month: key, count } of months) {
+		const year = key.slice(0, 4);
+		const month = key.slice(5, 7);
+		const groupKey = type === "yearly" ? year : key;
+		const existing = archives.get(groupKey);
 		if (existing) {
-			existing.count++;
+			existing.count += count;
 		} else {
-			archives.set(key, { date, count: 1, url });
+			archives.set(groupKey, { year, month, count });
 		}
 	}
 
-	return [...archives.values()].slice(0, limit).map(({ date, count, url }) => ({
-		label:
-			type === "yearly"
-				? `${date.getFullYear()}`
-				: date.toLocaleDateString("en-US", { year: "numeric", month: "long" }),
-		count,
-		url,
-	}));
+	return [...archives.values()].slice(0, limit).map(({ year, month, count }) =>
+		type === "yearly"
+			? { label: year, count, url: `/archives/${year}` }
+			: {
+					label: new Date(Date.UTC(Number(year), Number(month) - 1, 1)).toLocaleDateString(
+						"en-US",
+						{ year: "numeric", month: "long", timeZone: "UTC" },
+					),
+					count,
+					url: `/archives/${year}/${month}`,
+				},
+	);
 }

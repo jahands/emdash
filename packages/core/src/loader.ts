@@ -1741,16 +1741,21 @@ export async function getDb(): Promise<Kysely<Database>> {
 	return dbInstance;
 }
 
-/** @internal Date projection for published archive entries. */
-export async function loadPublishedDates(type: string, locale?: string) {
+/**
+ * @internal Published entry counts per `YYYY-MM` prefix of `published_at`,
+ * which stores canonical UTC timestamps, so each prefix is a UTC month.
+ */
+export async function loadPublishedMonths(type: string, locale?: string) {
 	const tableName = getTableName(type);
 	const db = await getDb();
-	const result = await sql<{ published_at: string | null }>`
-		SELECT published_at FROM ${sql.ref(tableName)}
+	const result = await sql<{ month: string | null; count: number | string | bigint }>`
+		SELECT substr(published_at, 1, 7) AS month, COUNT(*) AS count
+		FROM ${sql.ref(tableName)}
 		WHERE deleted_at IS NULL
 		AND ${buildStatusCondition(db, "published")}
+		AND published_at IS NOT NULL
 		${locale ? sql`AND ${localeMatches("locale", locale)}` : sql``}
-		ORDER BY published_at DESC, id DESC
+		GROUP BY substr(published_at, 1, 7)
 	`.execute(db);
 	return result.rows;
 }

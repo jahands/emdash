@@ -1,102 +1,53 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { groupEntriesByPublishedAt } from "../../../src/widgets/archives.js";
+import { groupPublishedMonths } from "../../../src/widgets/archives.js";
 
-function entry(publishedAt: unknown) {
-	return { data: { publishedAt } };
-}
+const months = [
+	{ month: "2026-07", count: 3 },
+	{ month: "2026-01", count: 2 },
+	{ month: "2025-12", count: 4 },
+];
 
-describe("groupEntriesByPublishedAt", () => {
+describe("groupPublishedMonths", () => {
 	afterEach(() => vi.restoreAllMocks());
 
-	it("formats each displayed month once while counting all entries in that month", () => {
-		const format = vi.spyOn(Date.prototype, "toLocaleDateString");
-		const entries = Array.from({ length: 100 }, () => entry(new Date(2026, 2, 15)));
-		entries.push(entry(new Date(2026, 1, 1)), entry(new Date(2026, 2, 20)));
-
-		expect(groupEntriesByPublishedAt(entries, { limit: 1 })).toEqual([
-			{ label: "March 2026", count: 101, url: "/archives/2026/03" },
+	it("labels and links each month in order", () => {
+		expect(groupPublishedMonths(months)).toEqual([
+			{ label: "July 2026", count: 3, url: "/archives/2026/07" },
+			{ label: "January 2026", count: 2, url: "/archives/2026/01" },
+			{ label: "December 2025", count: 4, url: "/archives/2025/12" },
 		]);
+	});
+
+	it("labels a month by UTC, whatever the server timezone", () => {
+		const format = vi.spyOn(Date.prototype, "toLocaleDateString");
+		expect(groupPublishedMonths([{ month: "2026-03", count: 1 }])[0]?.label).toBe("March 2026");
+		expect(format).toHaveBeenCalledWith("en-US", expect.objectContaining({ timeZone: "UTC" }));
+	});
+
+	it("sums months into years when type is yearly", () => {
+		expect(groupPublishedMonths(months, { type: "yearly" })).toEqual([
+			{ label: "2026", count: 5, url: "/archives/2026" },
+			{ label: "2025", count: 4, url: "/archives/2025" },
+		]);
+	});
+
+	it("keeps the newest groups up to the limit", () => {
+		expect(groupPublishedMonths(months, { limit: 2 }).map((group) => group.url)).toEqual([
+			"/archives/2026/07",
+			"/archives/2026/01",
+		]);
+		expect(groupPublishedMonths(months, { type: "yearly", limit: 1 })).toEqual([
+			{ label: "2026", count: 5, url: "/archives/2026" },
+		]);
+	});
+
+	it("formats only the displayed months", () => {
+		const format = vi.spyOn(Date.prototype, "toLocaleDateString");
+		groupPublishedMonths(months, { limit: 1 });
 		expect(format).toHaveBeenCalledTimes(1);
-	});
-
-	it("does not format month labels when no groups are displayed", () => {
-		const format = vi.spyOn(Date.prototype, "toLocaleDateString");
-		expect(groupEntriesByPublishedAt([entry(new Date(2026, 2, 15))], { limit: 0 })).toEqual([]);
+		format.mockClear();
+		expect(groupPublishedMonths(months, { limit: 0 })).toEqual([]);
 		expect(format).not.toHaveBeenCalled();
-	});
-
-	it("groups Date publishedAt values by month instead of skipping them", () => {
-		const groups = groupEntriesByPublishedAt(
-			[entry(new Date(2026, 2, 15)), entry(new Date(2026, 2, 20)), entry(new Date(2026, 1, 1))],
-			{ type: "monthly" },
-		);
-
-		expect(groups).toEqual([
-			{
-				label: "March 2026",
-				count: 2,
-				url: "/archives/2026/03",
-			},
-			{
-				label: "February 2026",
-				count: 1,
-				url: "/archives/2026/02",
-			},
-		]);
-	});
-
-	it("still accepts ISO date strings", () => {
-		const groups = groupEntriesByPublishedAt([entry("2026-07-04T12:00:00.000Z")], {
-			type: "monthly",
-		});
-
-		expect(groups).toHaveLength(1);
-		expect(groups[0]?.count).toBe(1);
-		expect(groups[0]?.url).toMatch(/^\/archives\/\d{4}\/\d{2}$/);
-	});
-
-	it("groups by year when type is yearly", () => {
-		const groups = groupEntriesByPublishedAt(
-			[entry(new Date(2026, 6, 1)), entry(new Date(2026, 0, 1)), entry(new Date(2025, 11, 1))],
-			{ type: "yearly" },
-		);
-
-		expect(groups).toEqual([
-			{ label: "2026", count: 2, url: "/archives/2026" },
-			{ label: "2025", count: 1, url: "/archives/2025" },
-		]);
-	});
-
-	it("skips missing and invalid publishedAt values", () => {
-		const groups = groupEntriesByPublishedAt(
-			[
-				entry(null),
-				entry(undefined),
-				entry(""),
-				entry("not-a-date"),
-				entry(new Date(Number.NaN)),
-				entry(new Date(2026, 4, 1)),
-			],
-			{ type: "monthly" },
-		);
-
-		expect(groups).toEqual([
-			{
-				label: "May 2026",
-				count: 1,
-				url: "/archives/2026/05",
-			},
-		]);
-	});
-
-	it("respects the limit", () => {
-		const groups = groupEntriesByPublishedAt(
-			[entry(new Date(2026, 0, 1)), entry(new Date(2026, 1, 1)), entry(new Date(2026, 2, 1))],
-			{ type: "monthly", limit: 2 },
-		);
-
-		expect(groups).toHaveLength(2);
-		expect(groups.map((group) => group.url)).toEqual(["/archives/2026/01", "/archives/2026/02"]);
 	});
 });
