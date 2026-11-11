@@ -4,6 +4,7 @@ import * as React from "react";
 import { cn } from "../../lib/utils.js";
 import { CaretNext } from "../ArrowIcons.js";
 import { EditorHeader } from "../EditorHeader.js";
+import { SaveButton } from "../SaveButton.js";
 import { BackToSettingsLink } from "./BackToSettingsLink.js";
 
 interface SettingsFrameProps {
@@ -32,6 +33,18 @@ export function SettingsFrame({ title, description, actions, children }: Setting
 				</div>
 			</EditorHeader>
 			<div className="mt-6">{children}</div>
+		</div>
+	);
+}
+
+/**
+ * Takes the space of a page's Save button while its settings load, so the
+ * header doesn't change height when the button appears.
+ */
+export function PendingSaveAction() {
+	return (
+		<div className="invisible" aria-hidden="true" inert>
+			<SaveButton isDirty={false} isSaving={false} announce={false} />
 		</div>
 	);
 }
