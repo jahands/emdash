@@ -26,9 +26,14 @@ const virtualStubs: Record<string, string> = {
 	// Nothing was built under test, so there is no build dimension to fold
 	// into cache validators. Tests that need one still `vi.mock(...)`.
 	"virtual:emdash/build": "export const buildTime = 0;",
+	// No plugin admin entries or auth provider UIs under test.
+	"virtual:emdash/admin-loader":
+		"export const loadPluginAdmins = async () => ({ pluginAdmins: {} });",
+	"virtual:emdash/auth-providers": "export const authProviders = {};",
 };
 
 export default defineConfig({
+	esbuild: { jsx: "automatic" },
 	plugins: [
 		{
 			// Vitest externalizes the built-ins in `builtinModules`, which on Node.js 22 leaves out

@@ -15,15 +15,17 @@ import AdminWrapper from "emdash/internal/routes/PluginRegistry";
 import { Font } from "astro:assets";
 // @ts-ignore - virtual module
 import { componentDataByCssVariable } from "virtual:astro:assets/fonts/internal";
+// @ts-ignore - virtual module
+import { adminMessageUrls } from "virtual:emdash/admin-messages";
 
 export const prerender = false;
 
-import { resolveLocale, loadMessages, getLocaleDir } from "@emdash-cms/admin/locales";
+import { resolveLocale, getLocaleDir, DEFAULT_LOCALE } from "@emdash-cms/admin/locales/config";
 import { getSiteSettingsWithDb } from "#settings/index.js";
 
 const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
-const messages = await loadMessages(resolvedLocale);
+const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls[DEFAULT_LOCALE];
 
 const adminConfig = Astro.locals.emdash?.config?.admin;
 const pageTitle = adminConfig?.siteName ? `${adminConfig.siteName} Admin` : "EmDash Admin";
@@ -85,6 +87,7 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 				document.documentElement.setAttribute("data-mode", mode);
 			})();
 		</script>
+		<link rel="modulepreload" href={messagesUrl} />
 		<link rel="stylesheet" href={adminStylesUrl} />
 		{componentDataByCssVariable.has("--font-emdash") ? <Font cssVariable="--font-emdash" /> : null}
 		{favicon ? (
@@ -145,7 +148,7 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 			<AdminWrapper
 				client:only="react"
 				locale={resolvedLocale}
-				messages={messages}
+				messagesUrl={messagesUrl}
 				adminBranding={{ logo: adminConfig?.logo, siteName: adminConfig?.siteName }}
 			/>
 		</div>

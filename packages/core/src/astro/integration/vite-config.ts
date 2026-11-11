@@ -15,7 +15,11 @@ import type { Plugin } from "vite";
 
 import { COMMIT, VERSION } from "../../version.js";
 import { shutdownRuntime } from "../runtime-holder.js";
-import { createAdminLocaleResolverPlugin, readAdminLocaleManifest } from "./admin-locales.js";
+import {
+	createAdminLocaleResolverPlugin,
+	generateAdminMessagesModule,
+	readAdminLocaleManifest,
+} from "./admin-locales.js";
 import type { EmDashConfig, PluginDescriptor } from "./runtime.js";
 import {
 	VIRTUAL_CONFIG_ID,
@@ -80,6 +84,8 @@ import {
 const VIRTUAL_ADMIN_LOADER_ID = "virtual:emdash/admin-loader";
 const RESOLVED_ADMIN_LOADER_ID = "\0" + VIRTUAL_ADMIN_LOADER_ID;
 const RESOLVED_ADMIN_ENTRY_ID = "\0virtual:emdash/admin-entry";
+const VIRTUAL_ADMIN_MESSAGES_ID = "virtual:emdash/admin-messages";
+const RESOLVED_ADMIN_MESSAGES_ID = "\0" + VIRTUAL_ADMIN_MESSAGES_ID;
 
 const LOCALE_MESSAGES_RE = /[/\\]([a-z]{2}(?:-[A-Z]{2})?)[/\\]messages\.mjs$/;
 
@@ -235,6 +241,7 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 		resolveId(id: string) {
 			if (id === VIRTUAL_ADMIN_LOADER_ID) return RESOLVED_ADMIN_LOADER_ID;
 			if (id === RESOLVED_ADMIN_ENTRY_ID) return id;
+			if (id === VIRTUAL_ADMIN_MESSAGES_ID) return RESOLVED_ADMIN_MESSAGES_ID;
 			if (id === VIRTUAL_CONFIG_ID) {
 				return RESOLVED_VIRTUAL_CONFIG_ID;
 			}
@@ -294,6 +301,14 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 			}
 		},
 		load(id: string) {
+			if (id === RESOLVED_ADMIN_MESSAGES_ID) {
+				const adminDistPath = resolveAdminDist();
+				return generateAdminMessagesModule(
+					adminDistPath,
+					readAdminLocaleManifest(adminDistPath),
+					resolvedConfig.admin?.locales,
+				);
+			}
 			if (id === RESOLVED_ADMIN_ENTRY_ID) {
 				return `export const load = () => import("${VIRTUAL_ADMIN_REGISTRY_ID}");`;
 			}

@@ -6,6 +6,8 @@ const stubs: Record<string, string> = {
 	"virtual:emdash/media-providers":
 		"export const mediaProviders = globalThis.__emdashTestMediaProviders ?? [];",
 	"virtual:emdash/block-components": "export const pluginBlockComponents = {};",
+	"virtual:emdash/admin-messages":
+		'export const adminMessageUrls = { en: "/_astro/messages.en.mjs", ar: "/_astro/messages.ar.mjs" };',
 };
 
 export default getViteConfig(

@@ -229,6 +229,11 @@ declare module "virtual:emdash/rooms" {
 	export const createRoomHost: CreateRoomHostFn | null;
 }
 
+declare module "virtual:emdash/admin-messages" {
+	/** URL of each available admin message catalog, keyed by locale code. */
+	export const adminMessageUrls: Record<string, string>;
+}
+
 declare module "virtual:emdash/admin-loader" {
 	export function loadPluginAdmins(): Promise<typeof import("virtual:emdash/admin-registry")>;
 }
