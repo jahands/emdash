@@ -2,6 +2,7 @@
 
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { Agent } from "node:https";
 import { join, relative, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -109,7 +110,10 @@ async function waitForHostname(hostname, nameServers, deadlineMs) {
 
 /**
  * Sample a logged-out page and an admin API request at the same moment, each
- * on its own new connection, then take warm samples for comparison.
+ * on its own new connection, then take warm samples for comparison. Warm
+ * samples share one keep-alive connection after a discarded first request, so
+ * they reach an isolate that has already served the route; separate
+ * connections can land on other machines in the colo and start cold.
  */
 async function sampleColdStarts(moment, { origin, ip, cookie }) {
 	const targets = [
@@ -123,9 +127,13 @@ async function sampleColdStarts(moment, { origin, ip, cookie }) {
 	const cold = await Promise.all(targets.map((t) => timedGet(t.url, { ip, headers: t.headers })));
 	const samples = [];
 	for (const [index, target] of targets.entries()) {
+		const agent = new Agent({ keepAlive: true, maxSockets: 1 });
+		await timedGet(target.url, { ip, headers: target.headers, agent });
 		const warm = [];
-		for (let i = 0; i < WARM_SAMPLES; i++)
-			warm.push(await timedGet(target.url, { ip, headers: target.headers }));
+		for (let i = 0; i < WARM_SAMPLES; i++) {
+			warm.push(await timedGet(target.url, { ip, headers: target.headers, agent }));
+		}
+		agent.destroy();
 		samples.push({
 			moment,
 			label: target.label,

@@ -24,11 +24,12 @@ export async function resolveAuthoritative(name, type, nameServers) {
 }
 
 /**
- * One GET on a fresh TLS connection to `ip`, with SNI and Host set to the URL's
- * hostname. Returns connection and first-byte timings measured from the start
- * of the request.
+ * One GET to `ip` with SNI and Host set to the URL's hostname, on a fresh TLS
+ * connection unless a keep-alive `agent` is given. Returns connection and
+ * first-byte timings measured from the start of the request; on a reused
+ * connection the connect and TLS timings are null.
  */
-export function timedGet(url, { ip, headers = {}, timeoutMs = 60_000 } = {}) {
+export function timedGet(url, { ip, headers = {}, agent = false, timeoutMs = 60_000 } = {}) {
 	const target = new URL(url);
 	return new Promise((resolve, reject) => {
 		const start = performance.now();
@@ -40,7 +41,7 @@ export function timedGet(url, { ip, headers = {}, timeoutMs = 60_000 } = {}) {
 				servername: target.hostname,
 				path: `${target.pathname}${target.search}`,
 				headers: { "User-Agent": "emdash-perf-deploy", ...headers },
-				agent: false,
+				agent,
 				lookup: ip
 					? (_hostname, options, callback) =>
 							options?.all ? callback(null, [{ address: ip, family: 4 }]) : callback(null, ip, 4)

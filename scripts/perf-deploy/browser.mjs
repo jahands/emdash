@@ -423,18 +423,28 @@ export async function seedContent(page, uploads, log) {
 	return { posts: edited, newest: edited[0] };
 }
 
-/** Runs in the page: every image currently intersecting the viewport. */
-function collectVisibleImages() {
+/**
+ * Runs in the page: every image currently intersecting the viewport. For an
+ * image picked from `srcset`, `naturalWidth` is divided by the candidate's
+ * density, so the pixel size comes from a plain `Image` of `currentSrc`, which
+ * the browser serves from its memory cache.
+ */
+async function collectVisibleImages() {
 	const out = [];
 	for (const [index, img] of [...document.images].entries()) {
 		const rect = img.getBoundingClientRect();
 		if (!(rect.bottom > 0 && rect.top < innerHeight && rect.width > 0 && rect.height > 0)) continue;
 		if (!img.dataset.perfId) img.dataset.perfId = String(index);
+		const url = img.currentSrc || img.src;
+		const probe = new Image();
+		probe.src = url;
+		await probe.decode().catch(() => {});
 		out.push({
 			id: img.dataset.perfId,
-			url: img.currentSrc || img.src,
-			naturalWidth: img.naturalWidth,
-			naturalHeight: img.naturalHeight,
+			url,
+			naturalWidth: probe.naturalWidth,
+			naturalHeight: probe.naturalHeight,
+			densityCorrectedWidth: img.naturalWidth,
 			renderedWidth: Math.round(rect.width * 10) / 10,
 			renderedHeight: Math.round(rect.height * 10) / 10,
 			objectFit: getComputedStyle(img).objectFit,
