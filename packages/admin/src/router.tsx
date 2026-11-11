@@ -140,6 +140,7 @@ import {
 	isListConflict,
 	isTerminalRequestError,
 	useCurrentUser,
+	fetchPlugins,
 	type AdminManifest,
 	type CreateCollectionInput,
 	type UpdateCollectionInput,
@@ -3303,10 +3304,7 @@ function RegistryBrowsePage() {
 
 	const { data: plugins } = useQuery({
 		queryKey: ["plugins"],
-		queryFn: async () => {
-			const { fetchPlugins } = await import("./lib/api/plugins.js");
-			return fetchPlugins();
-		},
+		queryFn: fetchPlugins,
 		refetchOnMount: "always",
 		refetchOnWindowFocus: "always",
 	});
