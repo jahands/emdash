@@ -225,6 +225,7 @@ import {
 	changedStoragelessDataKeys,
 	contentResponseForRow,
 	prefetchContentWriteContext,
+	primeCollectionWriteMeta,
 	storagelessDataKeyError,
 } from "./api/handlers/content.js";
 import {
@@ -4374,12 +4375,14 @@ export class EmDashRuntime {
 		// merge below: each of those needs the field list and the registry does not cache.
 		// A save carrying only a reference selection reaches the draft merge without any
 		// data, so it needs the collection loaded just the same.
+		const loadsCollection = Boolean(bodyWithoutRev.data || bodyWithoutRev.references);
 		const [collectionInfo] = await Promise.all([
-			bodyWithoutRev.data || bodyWithoutRev.references
+			loadsCollection
 				? this.schemaRegistry.getCollectionWithFields(collection).catch(() => null)
 				: null,
-			prefetchContentWriteContext(this.db, collection),
+			prefetchContentWriteContext(this.db, collection, { collectionLoaded: loadsCollection }),
 		]);
+		if (collectionInfo) primeCollectionWriteMeta(collection, collectionInfo);
 		const knownFieldSlugs = new Set((collectionInfo?.fields ?? []).map((f) => f.slug));
 		// Staging a draft and writing live columns are two writes, so a list conflict between them
 		// would leave the draft staged. A save based on a read of the lists makes only one of them.
@@ -5453,7 +5456,7 @@ export class EmDashRuntime {
 				options.existing,
 			),
 			this.getScheduledPolicyRejectionRevision(collection, id),
-			prefetchContentWriteContext(this.db, collection),
+			prefetchContentWriteContext(this.db, collection, { referenceConstraints: true }),
 		]);
 		if (!policy.allowed) {
 			if (policy.cancellation && options.origin?.source === "scheduler") {

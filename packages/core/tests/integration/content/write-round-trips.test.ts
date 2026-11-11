@@ -41,7 +41,7 @@ import {
 } from "../../utils/test-db.js";
 
 const AUTOSAVE_MAX_WAVES = 10;
-const PUBLISH_MAX_WAVES = 10;
+const PUBLISH_MAX_WAVES = 9;
 
 interface QuerySpan {
 	start: number;

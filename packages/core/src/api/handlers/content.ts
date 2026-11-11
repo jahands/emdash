@@ -52,9 +52,9 @@ import {
 } from "../../plugins/content-policy.js";
 import { publishRedirectChanges } from "../../redirects/artifacts.js";
 import { invalidateRedirectCache } from "../../redirects/cache.js";
-import { requestCached } from "../../request-cache.js";
+import { requestCached, setRequestCacheEntry } from "../../request-cache.js";
 import { getRequestContext } from "../../request-context.js";
-import { isStoragelessFieldRow } from "../../schema/types.js";
+import { isStoragelessFieldRow, type Collection } from "../../schema/types.js";
 import { FTSManager } from "../../search/fts-manager.js";
 import { invalidateTermCache } from "../../taxonomies/index.js";
 import { isMissingColumnError, isMissingTableError } from "../../utils/db-errors.js";
@@ -275,20 +275,38 @@ function getCollectionWriteMeta(
 }
 
 /**
- * Load the collection settings and datetime context a content write reads,
- * together, so they cost one round trip instead of two sequential ones later.
+ * Load what a content write reads about its collection together, so it costs
+ * one round trip instead of several sequential ones later.
  */
 export async function prefetchContentWriteContext(
 	db: Kysely<Database>,
 	collection: string,
+	options: {
+		/** The caller already loaded the collection row; see {@link primeCollectionWriteMeta}. */
+		collectionLoaded?: boolean;
+		referenceConstraints?: boolean;
+	} = {},
 ): Promise<void> {
 	// Outside a request scope nothing is cached, so loading early would only
 	// repeat the reads the write makes anyway.
 	if (!getRequestContext()) return;
 	await Promise.all([
-		getCollectionWriteMeta(db, collection),
+		options.collectionLoaded ? undefined : getCollectionWriteMeta(db, collection),
 		new ContentDatetimeNormalizer(db).writableFieldSlugs(collection),
+		options.referenceConstraints ? referenceFieldConstraints(db, collection) : undefined,
 	]).catch(() => {});
+}
+
+/** Serve the collection settings content writes read from a row already loaded. */
+export function primeCollectionWriteMeta(collection: string, info: Collection): void {
+	setRequestCacheEntry<CollectionWriteMeta>(`collectionWriteMeta:${collection}`, {
+		hasSeo: info.hasSeo,
+		supportsRevisions: info.supports.includes("revisions"),
+		supportsScheduling: !info.supports.includes("no-scheduling"),
+		routable: info.routable !== false,
+		titleField: info.titleField ?? null,
+		urlPattern: info.urlPattern ?? null,
+	});
 }
 
 async function collectionHasSeo(db: Kysely<Database>, collection: string): Promise<boolean> {
