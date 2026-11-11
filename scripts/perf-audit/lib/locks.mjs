@@ -19,8 +19,14 @@ import { dirname, join } from "node:path";
 
 import { sleep } from "./proc.mjs";
 
-/** Machine-wide state shared by every checkout's runs. */
-export const MACHINE_DIR = join(tmpdir(), "emdash-perf-audit");
+/**
+ * Machine-wide state shared by every checkout's runs. Not `os.tmpdir()`:
+ * sandboxes often give each session its own TMPDIR, which would split it.
+ */
+export const MACHINE_DIR = join(
+	process.platform === "win32" ? tmpdir() : "/tmp",
+	"emdash-perf-audit",
+);
 
 const processToken = randomBytes(6).toString("hex");
 const heldByThisProcess = new Set();
