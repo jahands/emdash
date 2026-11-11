@@ -256,7 +256,8 @@ export function assertHeaviestEntry(stored, { mediaCount, imageField, bodyField 
 export function planOwnerEdits(seed) {
 	const candidates = (seed.collections ?? [])
 		.map((collection) => {
-			const field = (type) => collection.fields.find((f) => f.type === type)?.slug ?? null;
+			const fieldOf = (type) => collection.fields.find((f) => f.type === type);
+			const field = (type) => fieldOf(type)?.slug ?? null;
 			const textField = (...slugs) =>
 				slugs.find((slug) => collection.fields.some((f) => f.slug === slug)) ?? null;
 			const taxonomy = (seed.taxonomies ?? []).find((t) =>
@@ -265,6 +266,7 @@ export function planOwnerEdits(seed) {
 			return {
 				collection: collection.slug,
 				imageField: field("image"),
+				imageRequired: fieldOf("image")?.required === true,
 				bodyField: field("portableText"),
 				titleField: textField("title", "name"),
 				excerptField: textField("excerpt", "summary", "description"),
@@ -366,6 +368,7 @@ export async function ownerEdits(api, media, plan) {
 	const longText = await api("POST", `/content/${collection}`, {
 		data: {
 			...(plan.titleField ? { [plan.titleField]: "A long essay without photos" } : {}),
+			...(plan.imageRequired ? { [imageField]: mediaValue(photos[0], "Cover photo") } : {}),
 			[bodyField]: longTextBody(),
 		},
 		slug: "long-essay-without-photos",

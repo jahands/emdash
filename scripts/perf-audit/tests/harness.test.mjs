@@ -120,6 +120,7 @@ void test("owner edits target the collection with images and rich text", () => {
 	assert.deepEqual(planOwnerEdits(seedOf("blog")), {
 		collection: "posts",
 		imageField: "featured_image",
+		imageRequired: false,
 		bodyField: "content",
 		titleField: "title",
 		excerptField: "excerpt",
@@ -128,6 +129,7 @@ void test("owner edits target the collection with images and rich text", () => {
 		seeded: 8,
 	});
 	assert.equal(planOwnerEdits(seedOf("portfolio")).collection, "projects");
+	assert.equal(planOwnerEdits(seedOf("portfolio")).imageRequired, true);
 	assert.equal(planOwnerEdits(seedOf("marketing")), null);
 });
 
