@@ -18,6 +18,7 @@ const EDITOR_SELECTOR = ".ProseMirror";
 const EDITED_BLOCK = `${EDITOR_SELECTOR} > p:first-of-type`;
 const SAVE_MESSAGES = ["Save draft", "Save", "Publish changes", "Update"];
 const UPLOAD_MESSAGES = ["Upload", "Upload Files"];
+const CLEAR_MESSAGES = ["Clear"];
 const SUBMIT = 'form button[type="submit"]';
 const DIALOG = '[role="dialog"]';
 const ANNOUNCEMENTS = '[role="alert"], [role="status"]';
@@ -433,6 +434,45 @@ const SCENARIOS = [
 		},
 	},
 	{
+		name: "select and deselect list rows",
+		viewports: ["desktop", "mobile"],
+		writes: false,
+		path: ({ collection }) => `${ADMIN}/content/${collection}`,
+		async run({ page, network, strings, shot }) {
+			const boxes = page.locator('tbody [role="checkbox"]');
+			await boxes.nth(1).waitFor({ state: "visible", timeout: 15_000 });
+			const steps = [
+				["select a row", () => boxes.nth(0).click()],
+				["select another", () => boxes.nth(1).click()],
+				["deselect it", () => boxes.nth(1).click()],
+				["deselect the last", () => boxes.nth(0).click()],
+				["select again", () => boxes.nth(0).click()],
+				["clear", () => clickByName(page, strings.clear)],
+			];
+			const results = [];
+			for (const [label, act] of steps) {
+				const r = await watch(page, network, async () => {
+					const done = await act();
+					return { found: done !== false };
+				});
+				results.push({ label, ...r });
+				if (label === "select another") await shot("selected");
+			}
+			const selected = await boxes.evaluateAll(
+				(els) => els.filter((el) => el.getAttribute("aria-checked") === "true").length,
+			);
+			return {
+				passed: results.every((r) => r.passed && r.found),
+				moved: results.flatMap((r) => r.moved.map((m) => ({ ...m, step: r.label }))),
+				cls: Math.max(...results.map((r) => r.cls)),
+				steps: results.map((r) => ({ label: r.label, found: r.found, moved: r.moved.length })),
+				summary: `${results
+					.map((r) => `${r.label}: ${!r.found ? "control not found" : r.passed ? "ok" : "moved"}`)
+					.join("; ")}; ${selected} still selected`,
+			};
+		},
+	},
+	{
 		name: "upload media",
 		viewports: ["desktop"],
 		writes: true,
@@ -566,6 +606,7 @@ export async function runScenarios({
 	const strings = {
 		save: namesMatcher(catalog, SAVE_MESSAGES),
 		upload: namesMatcher(catalog, UPLOAD_MESSAGES),
+		clear: namesMatcher(catalog, CLEAR_MESSAGES),
 	};
 	const results = [];
 	mkdirSync(screenshotDir, { recursive: true });
@@ -606,7 +647,7 @@ export async function runScenarios({
 			try {
 				await scenario.before?.(args);
 				if (scenario.path) {
-					await ctx.page.goto(`${site.origin}${scenario.path({ heaviest, longText })}`, {
+					await ctx.page.goto(`${site.origin}${scenario.path({ heaviest, longText, collection })}`, {
 						waitUntil: "load",
 					});
 					await waitForSettle(ctx.page, ctx.network);

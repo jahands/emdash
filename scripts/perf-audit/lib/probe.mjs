@@ -320,10 +320,19 @@ export function finishGeometry(key = "default") {
 	};
 
 	const moved = [...state.moved.values()];
+	// A descendant is only covered by an ancestor that moved the same way. An ancestor
+	// that grew while its children moved down would otherwise hide them as a resize.
 	const outermost = (list) =>
 		list.filter(
 			(m) =>
-				!list.some((o) => o !== m && o.el.contains(m.el) && (o.delta ?? 0) >= (m.delta ?? 0) - 1),
+				!list.some(
+					(o) =>
+						o !== m &&
+						o.el.contains(m.el) &&
+						Math.abs((o.dx ?? 0) - (m.dx ?? 0)) <= 1 &&
+						Math.abs((o.dy ?? 0) - (m.dy ?? 0)) <= 1 &&
+						(o.delta ?? 0) >= (m.delta ?? 0) - 1,
+				),
 		);
 
 	const removedList = Array.from(state.removed.entries(), ([el, info]) => ({ el, ...info }));
