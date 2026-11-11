@@ -33,6 +33,8 @@ declare module "virtual:emdash/config" {
 		sessionCookieName?: string;
 		/** `routePattern` of the image endpoint EmDash installed; absent when it installed none. */
 		imageEndpointRoute?: string;
+		/** Origin to absolutize same-origin media against for Astro's image service; set when the build doesn't know the site origin. */
+		internalMediaOrigin?: string;
 	}
 
 	const config: VirtualConfig;

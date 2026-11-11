@@ -23,6 +23,7 @@ import { unknownOptionWarning, validateConfigShape } from "../../config/options-
 import { normalizeMigrationConfig } from "../../database/migrations/policy.js";
 import { normalizeAstroI18n } from "../../i18n/normalize.js";
 import { INTERNAL_MEDIA_PREFIX } from "../../media/normalize.js";
+import { INTERNAL_MEDIA_IMAGE_ORIGIN } from "../../media/responsive.js";
 import { getCoreMigrationIdentity } from "../../migrations/identity.js";
 import {
 	createMigrationIntegrationMetadata,
@@ -154,9 +155,8 @@ export function resolveBuildTimeSiteUrl(configuredSiteUrl: string | undefined): 
  *     URL is never fetched). Only registered when `siteUrl` is known at build.
  *  3. In `astro dev` the dev-server origin isn't known at build time, so we
  *     register a host-agnostic pattern scoped to the media route. Dev-only.
- *
- * Returns an empty array when no source is statically known (production build,
- * local storage, no `siteUrl`), in which case media renders as a plain `<img>`.
+ *  4. `internalMediaOrigin` (see {@link resolveInternalMediaOrigin}), scoped
+ *     to the media route, for builds that don't know the site origin.
  *
  * @internal Exported for unit testing.
  */
@@ -164,6 +164,7 @@ export function buildImageRemotePatterns(
 	storage: { config?: unknown } | undefined,
 	siteUrl: string | undefined,
 	command: "dev" | "build" | "preview" | "sync",
+	internalMediaOrigin?: string,
 ): ImageRemotePattern[] {
 	const patterns: ImageRemotePattern[] = [];
 
@@ -196,24 +197,56 @@ export function buildImageRemotePatterns(
 		}
 	}
 
-	if (siteUrl) {
-		try {
-			const { hostname } = new URL(siteUrl);
-			// WHATWG URL accepts `*` in a hostname, which Astro's matcher treats
-			// as a wildcard that would allowlist other hosts.
-			if (!hostname.includes("*")) {
-				patterns.push({ hostname, pathname: `${INTERNAL_MEDIA_PREFIX}**` });
-			}
-		} catch {
-			// ignore an unparseable site URL
-		}
+	const siteHostname = siteMediaHostname(siteUrl);
+	if (siteHostname) {
+		patterns.push({ hostname: siteHostname, pathname: `${INTERNAL_MEDIA_PREFIX}**` });
 	}
 
 	if (command === "dev") {
 		patterns.push({ pathname: `${INTERNAL_MEDIA_PREFIX}**` });
 	}
 
+	if (internalMediaOrigin) {
+		const url = new URL(internalMediaOrigin);
+		patterns.push({
+			protocol: url.protocol === "https:" ? "https" : "http",
+			hostname: url.hostname,
+			pathname: `${INTERNAL_MEDIA_PREFIX}**`,
+		});
+	}
+
 	return patterns;
+}
+
+function siteMediaHostname(siteUrl: string | undefined): string | undefined {
+	if (!siteUrl) return undefined;
+	try {
+		const { hostname } = new URL(siteUrl);
+		// WHATWG URL accepts `*` in a hostname, which Astro's matcher treats
+		// as a wildcard that would allowlist other hosts.
+		return hostname.includes("*") ? undefined : hostname;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The origin same-origin media is absolutized against for Astro's image
+ * service when the build doesn't know the site origin, or `undefined` when the
+ * site origin (or, in dev, the host-agnostic pattern) already covers it.
+ *
+ * Only used with EmDash's own image endpoint, which serves the media route
+ * from storage by path. Another endpoint would try to fetch the URL.
+ *
+ * @internal Exported for unit testing.
+ */
+export function resolveInternalMediaOrigin(opts: {
+	siteUrl: string | undefined;
+	command: "dev" | "build" | "preview" | "sync";
+	ownImageEndpoint: boolean;
+}): string | undefined {
+	if (opts.command === "dev" || !opts.ownImageEndpoint) return undefined;
+	return siteMediaHostname(opts.siteUrl) ? undefined : INTERNAL_MEDIA_IMAGE_ORIGIN;
 }
 
 /**
@@ -743,15 +776,6 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 								},
 							];
 
-				// Authorize media sources so Astro's image service builds transform
-				// URLs for them (it won't optimize an un-allowed source). `updateConfig`
-				// merges arrays, so user-configured remotePatterns are preserved.
-				const imageRemotePatterns = buildImageRemotePatterns(
-					resolvedConfig.storage,
-					resolveBuildTimeSiteUrl(resolvedConfig.siteUrl),
-					command,
-				);
-
 				// Wrap Astro's image endpoint so EmDash media bytes load straight from
 				// storage (Access-safe) instead of over HTTP. Skip when the user opts
 				// out or has a custom endpoint we can't delegate back to.
@@ -762,6 +786,23 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					imageServiceEntrypoint: astroConfig.image?.service?.entrypoint,
 				});
 				if (imageEndpointWarning) logger.warn(imageEndpointWarning);
+
+				// Authorize media sources so Astro's image service builds transform
+				// URLs for them (it won't optimize an un-allowed source). `updateConfig`
+				// merges arrays, so user-configured remotePatterns are preserved.
+				const buildTimeSiteUrl = resolveBuildTimeSiteUrl(resolvedConfig.siteUrl);
+				const internalMediaOrigin = resolveInternalMediaOrigin({
+					siteUrl: buildTimeSiteUrl,
+					command,
+					ownImageEndpoint: Boolean(imageEndpoint),
+				});
+				if (internalMediaOrigin) serializableConfig.internalMediaOrigin = internalMediaOrigin;
+				const imageRemotePatterns = buildImageRemotePatterns(
+					resolvedConfig.storage,
+					buildTimeSiteUrl,
+					command,
+					internalMediaOrigin,
+				);
 
 				const imageConfig: Record<string, unknown> = {};
 				if (imageRemotePatterns.length) imageConfig.remotePatterns = imageRemotePatterns;

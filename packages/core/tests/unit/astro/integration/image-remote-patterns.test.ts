@@ -10,12 +10,19 @@ import {
 	type ImageRemotePattern,
 	resolveBuildTimeSiteUrl,
 	resolveImageEndpoint,
+	resolveInternalMediaOrigin,
 } from "../../../../src/astro/integration/index.js";
 import { RESOLVED_VIRTUAL_CONFIG_ID } from "../../../../src/astro/integration/virtual-modules.js";
+import { INTERNAL_MEDIA_IMAGE_ORIGIN } from "../../../../src/media/responsive.js";
 
 const s3 = (publicUrl?: string) => ({ entrypoint: "x", config: { publicUrl } });
 const localStorage = { entrypoint: "x", config: { directory: "./uploads" } };
 const MEDIA_PATH = "/_emdash/api/media/file/**";
+const INTERNAL_PATTERN = {
+	protocol: "http",
+	hostname: new URL(INTERNAL_MEDIA_IMAGE_ORIGIN).hostname,
+	pathname: MEDIA_PATH,
+};
 
 describe("buildImageRemotePatterns", () => {
 	it("authorizes the storage public URL host", () => {
@@ -70,6 +77,43 @@ describe("buildImageRemotePatterns", () => {
 			{ hostname: "example.com", pathname: MEDIA_PATH },
 			{ pathname: MEDIA_PATH },
 		]);
+	});
+});
+
+describe("internal media origin", () => {
+	it("is used for builds that don't know the site origin and serve media through EmDash's endpoint", () => {
+		expect(
+			resolveInternalMediaOrigin({ siteUrl: undefined, command: "build", ownImageEndpoint: true }),
+		).toBe(INTERNAL_MEDIA_IMAGE_ORIGIN);
+		expect(
+			resolveInternalMediaOrigin({
+				siteUrl: "https://*.example.com",
+				command: "build",
+				ownImageEndpoint: true,
+			}),
+		).toBe(INTERNAL_MEDIA_IMAGE_ORIGIN);
+	});
+
+	it("is not used when the site origin is known, in dev, or with another endpoint", () => {
+		expect(
+			resolveInternalMediaOrigin({
+				siteUrl: "https://example.com",
+				command: "build",
+				ownImageEndpoint: true,
+			}),
+		).toBeUndefined();
+		expect(
+			resolveInternalMediaOrigin({ siteUrl: undefined, command: "dev", ownImageEndpoint: true }),
+		).toBeUndefined();
+		expect(
+			resolveInternalMediaOrigin({ siteUrl: undefined, command: "build", ownImageEndpoint: false }),
+		).toBeUndefined();
+	});
+
+	it("is authorized only on the media route", () => {
+		expect(
+			buildImageRemotePatterns(localStorage, undefined, "build", INTERNAL_MEDIA_IMAGE_ORIGIN),
+		).toEqual([INTERNAL_PATTERN]);
 	});
 });
 
@@ -282,6 +326,7 @@ async function runtimeConfigFor(
 	const source = String(virtualModules.load(RESOLVED_VIRTUAL_CONFIG_ID));
 	return JSON.parse(source.replace(/^export default /, "").replace(/;$/, "")) as {
 		imageEndpointRoute?: string;
+		internalMediaOrigin?: string;
 	};
 }
 
@@ -314,11 +359,11 @@ describe("image remotePatterns from env", () => {
 	});
 
 	it.each(["not-a-url", "file:///etc/passwd", "https://*.example.com", "https://**.com"])(
-		"allowlists nothing for a malformed EMDASH_SITE_URL (%s)",
+		"allowlists only the internal media origin for a malformed EMDASH_SITE_URL (%s)",
 		async (value) => {
 			process.env.EMDASH_SITE_URL = value;
 			const image = await imageConfigFor({});
-			expect(image.remotePatterns).toBeUndefined();
+			expect(image.remotePatterns).toEqual([INTERNAL_PATTERN]);
 		},
 	);
 });
@@ -336,6 +381,46 @@ describe("image endpoint route in the runtime config", () => {
 		expect(
 			(await runtimeConfigFor({}, { endpoint: { entrypoint: "./src/my-endpoint.ts" } }))
 				.imageEndpointRoute,
+		).toBeUndefined();
+	});
+});
+
+describe("internal media origin in the build output", () => {
+	const origEmdashSiteUrl = process.env.EMDASH_SITE_URL;
+	const origSiteUrl = process.env.SITE_URL;
+
+	beforeEach(() => {
+		delete process.env.EMDASH_SITE_URL;
+		delete process.env.SITE_URL;
+		_resetEnvCache();
+	});
+
+	afterEach(() => {
+		if (origEmdashSiteUrl === undefined) delete process.env.EMDASH_SITE_URL;
+		else process.env.EMDASH_SITE_URL = origEmdashSiteUrl;
+		if (origSiteUrl === undefined) delete process.env.SITE_URL;
+		else process.env.SITE_URL = origSiteUrl;
+		_resetEnvCache();
+	});
+
+	it("authorizes and records it when no site URL is configured", async () => {
+		expect((await imageConfigFor({})).remotePatterns).toEqual([INTERNAL_PATTERN]);
+		expect((await runtimeConfigFor({})).internalMediaOrigin).toBe(INTERNAL_MEDIA_IMAGE_ORIGIN);
+	});
+
+	it("is left out when a site URL is configured", async () => {
+		const config = { siteUrl: "https://example.com" };
+		expect((await imageConfigFor(config)).remotePatterns).toEqual([
+			{ hostname: "example.com", pathname: MEDIA_PATH },
+		]);
+		expect((await runtimeConfigFor(config)).internalMediaOrigin).toBeUndefined();
+	});
+
+	it("is left out when EmDash does not install its image endpoint", async () => {
+		expect((await runtimeConfigFor({ images: false })).internalMediaOrigin).toBeUndefined();
+		expect(
+			(await runtimeConfigFor({}, { endpoint: { entrypoint: "./src/my-endpoint.ts" } }))
+				.internalMediaOrigin,
 		).toBeUndefined();
 	});
 });
