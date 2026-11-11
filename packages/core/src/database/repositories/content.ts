@@ -1061,22 +1061,11 @@ export class ContentRepository {
 				);
 			} else {
 				const { orderValue, id: cursorId } = decodeCursor(options.cursor);
-
-				if (safeOrderDirection === "DESC") {
-					query = query.where((eb) =>
-						eb.or([
-							eb(dbField as any, "<", orderValue),
-							eb.and([eb(dbField as any, "=", orderValue), eb("id", "<", cursorId)]),
-						]),
-					);
-				} else {
-					query = query.where((eb) =>
-						eb.or([
-							eb(dbField as any, ">", orderValue),
-							eb.and([eb(dbField as any, "=", orderValue), eb("id", ">", cursorId)]),
-						]),
-					);
-				}
+				const cmp = safeOrderDirection === "ASC" ? sql.raw(">") : sql.raw("<");
+				// The row value, unlike the equivalent OR, is an index bound on Postgres.
+				query = query.where(
+					sql<boolean>`(${sql.ref(dbField)}, ${sql.ref("id")}) ${cmp} (${orderValue}, ${cursorId})`,
+				);
 			}
 		}
 

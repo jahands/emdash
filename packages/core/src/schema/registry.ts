@@ -2034,6 +2034,29 @@ export class SchemaRegistry {
 			${createIndex} ${sql.ref(`idx_${tableName}_loc_crt`)}
 			ON ${sql.ref(tableName)} (deleted_at, locale, created_at DESC, id DESC)
 		`.execute(conn);
+
+		// Postgres can't order by the `deleted_at`-led composites above, because
+		// `IS NULL` isn't an equality to its planner; SQLite can. Keep these names
+		// and definitions identical to migration 098.
+		if (isPostgres(conn)) {
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_crt`)}
+				ON ${sql.ref(tableName)} (created_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_upd`)}
+				ON ${sql.ref(tableName)} (updated_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_pub`)}
+				ON ${sql.ref(tableName)} (status, published_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+		}
 	}
 
 	private getFieldIndexName(fieldId: string): string {
