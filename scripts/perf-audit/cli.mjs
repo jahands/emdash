@@ -5,6 +5,7 @@
  */
 
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
@@ -17,7 +18,9 @@ import {
 	confirmRegressions,
 	evaluateBudgets,
 } from "./lib/evaluate.mjs";
+import { acquire, registerRun } from "./lib/locks.mjs";
 import { generateMedia, generateScenarioUpload } from "./lib/media-gen.mjs";
+import { PortRegistry } from "./lib/ports.mjs";
 import { startPostgres } from "./lib/postgres.mjs";
 import {
 	allProfileIds,
@@ -63,23 +66,33 @@ function listProfiles() {
 	console.log("\n* default profile set");
 }
 
-function workspaceDirs(label, resultsDir) {
-	const base = label === "primary" ? auditDir : join(auditDir, "compare");
+/**
+ * Everything a run writes outside its results folder lives under its slot,
+ * which one run holds at a time.
+ */
+function workspaceDirs({ slotDir, label, resultsDir, ports }) {
+	const base = label === "primary" ? slotDir : join(slotDir, "compare");
 	return {
 		sites: join(base, "sites"),
 		state: join(base, "state"),
+		postgres: join(base, "postgres"),
 		logs: join(resultsDir, "logs", label),
 		scratch: join(base, "scratch"),
+		dbTag: createHash("sha256").update(slotDir).digest("hex").slice(0, 6),
+		ports,
 	};
 }
 
+function startPostgresFor(profiles, dirs) {
+	if (!profiles.some((p) => p.usesPostgres)) return null;
+	return startPostgres({ stateDir: dirs.postgres, log: process.stdout, ports: dirs.ports });
+}
+
 /** Re-measure candidate regressions on one workspace's prepared sites. */
-async function remeasureWorkspace({ label, workspace, plan, options, browser, resultsDir }) {
-	const dirs = workspaceDirs(label, resultsDir);
+async function remeasureWorkspace({ label, workspace, plan, options, browser, resultsDir, slot }) {
+	const dirs = workspaceDirs({ ...slot, label, resultsDir });
 	const profiles = Array.from(plan.keys(), resolveProfile);
-	const pg = profiles.some((p) => p.usesPostgres)
-		? await startPostgres({ stateDir: join(auditDir, "postgres"), log: process.stdout })
-		: null;
+	const pg = await startPostgresFor(profiles, dirs);
 	const out = {};
 	try {
 		for (const profile of profiles) {
@@ -106,12 +119,10 @@ async function runWorkspace({
 	resultsDir,
 	results,
 	onProfile,
+	slot,
 }) {
-	const dirs = workspaceDirs(label, resultsDir);
-	const needsPg = profiles.some((p) => p.usesPostgres);
-	const pg = needsPg
-		? await startPostgres({ stateDir: join(auditDir, "postgres"), log: process.stdout })
-		: null;
+	const dirs = workspaceDirs({ ...slot, label, resultsDir });
+	const pg = await startPostgresFor(profiles, dirs);
 	const errors = [];
 	try {
 		for (const profile of profiles) {
@@ -161,8 +172,19 @@ async function main() {
 	const profiles = selectProfiles(options);
 
 	const name = options.run ?? new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
+	const slotName = options.sites ?? options.run ?? "default";
+	const slotDir = join(auditDir, "work", slotName);
 	const resultsDir = join(auditDir, "results", name);
+	const releaseSlot = await acquire(join(slotDir, "lock.json"), {
+		what: `the "${slotName}" run slot (${slotDir}); pass a different --run or --sites to run in parallel`,
+	});
+	const releaseResults = await acquire(join(auditDir, "results", `${name}.lock.json`), {
+		what: `the "${name}" results folder (${resultsDir})`,
+	});
 	mkdirSync(resultsDir, { recursive: true });
+	const ports = new PortRegistry({ owner: `${harnessRoot} ${slotName}` });
+	const registration = registerRun({ slot: slotDir, results: resultsDir });
+	const slot = { slotDir, ports };
 	const mediaFiles = await generateMedia(join(auditDir, "media"));
 	const scenarioUpload = await generateScenarioUpload(join(auditDir, "media"));
 
@@ -184,9 +206,19 @@ async function main() {
 		workspace: { path: workspace, revision: revision(workspace) },
 		compare: compare ? { path: compare, revision: revision(compare) } : null,
 		browser: browser.version(),
+		slot: slotDir,
+		otherRuns: [],
 		profiles: [],
 		errors: [],
 	};
+	const noteOtherRuns = () => {
+		for (const other of registration.others()) {
+			if (!run.otherRuns.some((o) => o.pid === other.pid)) {
+				run.otherRuns.push({ pid: other.pid, slot: other.slot, since: other.since });
+			}
+		}
+	};
+	noteOtherRuns();
 	const resultsPath = join(resultsDir, "results.json");
 	const writePartial = () =>
 		writeFileSync(resultsPath, JSON.stringify({ ...run, partial: true }, null, "\t"));
@@ -201,7 +233,11 @@ async function main() {
 			scenarioUpload,
 			resultsDir,
 			results: run.profiles,
-			onProfile: writePartial,
+			onProfile: () => {
+				noteOtherRuns();
+				writePartial();
+			},
+			slot,
 		});
 		run.errors.push(...primary.errors);
 		if (compare) {
@@ -215,7 +251,11 @@ async function main() {
 				scenarioUpload,
 				resultsDir,
 				results: (run.compareProfiles = []),
-				onProfile: writePartial,
+				onProfile: () => {
+					noteOtherRuns();
+					writePartial();
+				},
+				slot,
 			});
 			run.errors.push(...other.errors.map((e) => ({ ...e, profile: `${e.profile} (compare)` })));
 			run.comparison = compareResults(run.compareProfiles, run.profiles, options.thresholds);
@@ -223,7 +263,7 @@ async function main() {
 			if (candidates.length > 0 && options.confirmSamples > 0) {
 				console.log(`\nConfirming ${candidates.length} candidate regression(s)`);
 				const plan = confirmationPlan(candidates);
-				const shared = { plan, options, browser, resultsDir };
+				const shared = { plan, options, browser, resultsDir, slot };
 				const extraBefore = await remeasureWorkspace({
 					...shared,
 					label: "compare",
@@ -243,7 +283,12 @@ async function main() {
 			}
 		}
 	} finally {
+		noteOtherRuns();
 		await browser.close();
+		ports.releaseAll();
+		registration.release();
+		releaseResults();
+		releaseSlot();
 	}
 
 	run.budgetFailures = evaluateBudgets(run.profiles, options.budgets);

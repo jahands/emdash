@@ -7,8 +7,9 @@ import { parseJsonc, transformAstroConfig, transformWranglerConfig } from "../li
 import {
 	allProfileIds,
 	defaultProfileIds,
-	resolveProfile,
+	resolveProfile as resolveBare,
 	selectProfiles,
+	withPorts,
 } from "../lib/profiles.mjs";
 
 const templates = join(import.meta.dirname, "../../../templates");
@@ -16,6 +17,7 @@ const read = (template, file) => readFileSync(join(templates, template, file), "
 const pgUrl = "postgres://postgres:pw@127.0.0.1:14601/perf";
 const UNKNOWN_PROFILE = /Unknown profile/;
 const EXPECTED_ONE = /expected exactly one "emdash\(\{"/;
+const resolveProfile = (id) => withPorts(resolveBare(id), { port: 15123, proxyPort: 15124 });
 const has = (text, part) => assert.ok(text.includes(part), `missing ${part}`);
 
 void test("the default set is the blog on every platform plus URL-mode images", () => {
@@ -30,15 +32,13 @@ void test("the default set is the blog on every platform plus URL-mode images", 
 	assert.throws(() => resolveProfile("blog-node-mysql"), UNKNOWN_PROFILE);
 });
 
-void test("profiles keep distinct ports and origins", () => {
-	const ports = allProfileIds().flatMap((id) => {
-		const p = resolveProfile(id);
-		return [p.port, p.proxyPort];
-	});
-	assert.equal(new Set(ports).size, ports.length);
-	const p = resolveProfile("portfolio-workerd-d1");
-	assert.equal(p.sourceTemplate, "portfolio-cloudflare");
-	assert.equal(p.origin, `http://localhost:${p.port}`);
+void test("a profile is served from the ports a run leased for it", () => {
+	const bare = resolveBare("portfolio-workerd-d1");
+	assert.equal(bare.sourceTemplate, "portfolio-cloudflare");
+	assert.equal(bare.origin, undefined);
+	const p = withPorts(bare, { port: 15010 });
+	assert.equal(p.origin, "http://localhost:15010");
+	assert.equal(p.proxyPort, null);
 });
 
 for (const template of ["blog", "portfolio", "marketing", "starter"]) {

@@ -61,6 +61,11 @@ export function renderSummary(run) {
 	lines.push(
 		`- Viewports: ${run.options.viewports.join(", ")}; DB latency for Postgres: ${run.options.dbLatency} ms`,
 	);
+	if (run.otherRuns?.length > 0) {
+		lines.push(
+			`- **${run.otherRuns.length} other perf-audit run(s) shared this machine.** Their results are separate, but timings and cold starts shared the CPU.`,
+		);
+	}
 	if (run.distorting.length > 0) {
 		lines.push(`- **Timings distorted by debugging options:** ${run.distorting.join(", ")}`);
 	}

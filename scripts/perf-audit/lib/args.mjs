@@ -48,8 +48,20 @@ Debugging
   --skip-scenarios           Skip interaction scenarios
   --skip-cold-start          Skip cold start measurements
   --reuse                    Reuse prepared sites when the workspace commit matches
-  --run <name>               Results folder name (default: a timestamp)
+  --run <name>               Results folder name (default: a timestamp). Runs with
+                             different names can run at the same time.
+  --sites <name>             Prepared sites to use (default: the --run name, or "default"),
+                             so several result folders can share one prepared site
 `;
+
+const SAFE_NAME = /^[\w.-]+$/;
+
+function safeName(flag, value) {
+	if (!SAFE_NAME.test(value) || value.startsWith(".")) {
+		throw new Error(`${flag} takes letters, digits, ".", "-" and "_"`);
+	}
+	return value;
+}
 
 function number(flag, value) {
 	const n = Number(value);
@@ -84,6 +96,7 @@ export function parseArgs(argv) {
 		skipColdStart: false,
 		reuse: false,
 		run: null,
+		sites: null,
 	};
 	const args = [...argv];
 	const take = (flag) => {
@@ -202,7 +215,10 @@ export function parseArgs(argv) {
 				options.reuse = true;
 				break;
 			case "--run":
-				options.run = take(flag);
+				options.run = safeName(flag, take(flag));
+				break;
+			case "--sites":
+				options.sites = safeName(flag, take(flag));
 				break;
 			default:
 				throw new Error(`Unknown option ${flag}\n\n${USAGE}`);

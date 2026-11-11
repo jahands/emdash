@@ -4,7 +4,7 @@
  * same bytes, so runs and workspaces upload identical files.
  */
 
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { loadSharp } from "./deps.mjs";
@@ -115,6 +115,13 @@ async function screenshot(spec) {
 		.toBuffer();
 }
 
+/** Concurrent runs share the cache, so a file appears whole or not at all. */
+function writeAtomically(path, bytes) {
+	const temp = `${path}.${process.pid}.tmp`;
+	writeFileSync(temp, bytes);
+	renameSync(temp, path);
+}
+
 /** Generate (or reuse from `cacheDir`) every media file. Returns file info. */
 export async function generateMedia(cacheDir) {
 	mkdirSync(cacheDir, { recursive: true });
@@ -122,7 +129,7 @@ export async function generateMedia(cacheDir) {
 	for (const spec of MEDIA_SPECS) {
 		const path = join(cacheDir, spec.name);
 		if (!existsSync(path)) {
-			writeFileSync(path, spec.kind === "photo" ? await photo(spec) : await screenshot(spec));
+			writeAtomically(path, spec.kind === "photo" ? await photo(spec) : await screenshot(spec));
 		}
 		files.push({
 			...spec,
@@ -139,6 +146,6 @@ export async function generateScenarioUpload(cacheDir) {
 	mkdirSync(cacheDir, { recursive: true });
 	const spec = { name: "scenario-upload.jpg", kind: "photo", width: 2400, height: 1600, seed: 99 };
 	const path = join(cacheDir, spec.name);
-	if (!existsSync(path)) writeFileSync(path, await photo(spec));
+	if (!existsSync(path)) writeAtomically(path, await photo(spec));
 	return path;
 }

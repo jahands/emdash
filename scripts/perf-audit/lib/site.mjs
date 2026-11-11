@@ -10,6 +10,7 @@ import { DatabaseSync } from "node:sqlite";
 
 import { loadPg } from "./deps.mjs";
 import { startLatencyProxy } from "./latency-proxy.mjs";
+import { acquire, MACHINE_DIR } from "./locks.mjs";
 import { connectionUrl, dropDatabase, recreateDatabase } from "./postgres.mjs";
 import { assertPortFree, run, spawnGroup, waitForPort } from "./proc.mjs";
 
@@ -21,14 +22,27 @@ const PLACEHOLDER = /\?/g;
 const STREAM_END_PREFIX = "[emdash-stream-end] ";
 
 export class Site {
-	constructor({ profile, siteDir, stateDir, logDir, pg, dbLatencyMs, label = "primary" }) {
+	constructor({
+		profile,
+		siteDir,
+		stateDir,
+		logDir,
+		pg,
+		dbLatencyMs,
+		label = "primary",
+		dbTag = "",
+		ports = null,
+	}) {
 		this.profile = profile;
 		this.siteDir = siteDir;
 		this.stateDir = stateDir;
 		this.logDir = logDir;
 		this.pg = pg;
 		this.dbLatencyMs = dbLatencyMs;
-		this.dbName = `perf_${label === "compare" ? "c_" : ""}${profile.id.replaceAll("-", "_")}`;
+		// The tag keeps runs from different slots and checkouts apart on a
+		// shared EMDASH_TEST_PG server.
+		this.dbName = `perf_${dbTag ? `${dbTag}_` : ""}${label === "compare" ? "c_" : ""}${profile.id.replaceAll("-", "_")}`;
+		this.ports = ports;
 		this.queryEvents = [];
 		this.serverErrors = [];
 		this.streamEnd = [];
@@ -36,6 +50,7 @@ export class Site {
 		this.proxy = null;
 		this.starts = 0;
 		this.crashes = 0;
+		this.lastStartWaitMs = 0;
 		mkdirSync(stateDir, { recursive: true });
 		mkdirSync(logDir, { recursive: true });
 		this.log = createWriteStream(join(logDir, `${profile.id}.log`), { flags: "a" });
@@ -129,6 +144,7 @@ export class Site {
 		await assertPortFree(this.profile.port);
 		const env = { EMDASH_QUERY_LOG: "1", ASTRO_TELEMETRY_DISABLED: "1" };
 		const onLine = (line) => this.onLine(line);
+		this.lastStartWaitMs = 0;
 		if (this.profile.runtime === "node") {
 			this.server = spawnGroup(process.execPath, ["./dist/server/entry.mjs"], {
 				cwd: this.siteDir,
@@ -136,7 +152,20 @@ export class Site {
 				onLine,
 				logStream: this.log,
 			});
-		} else {
+			this.starts++;
+			await waitForPort(this.profile.port, { child: this.server.child });
+			return;
+		}
+		// The Cloudflare Vite plugin takes the first free inspector port from
+		// 9229 while it starts, so two starts at once can pick the same one.
+		// Starts are short, so runs take turns machine-wide.
+		const waitStarted = performance.now();
+		const release = await acquire(join(MACHINE_DIR, "workerd-start.json"), {
+			what: "another run's workerd start (it picks an inspector port)",
+			noticeMs: 15_000,
+		});
+		this.lastStartWaitMs = performance.now() - waitStarted;
+		try {
 			this.server = spawnGroup(
 				process.execPath,
 				[
@@ -154,9 +183,11 @@ export class Site {
 					logStream: this.log,
 				},
 			);
+			this.starts++;
+			await waitForPort(this.profile.port, { child: this.server.child });
+		} finally {
+			release();
 		}
-		this.starts++;
-		await waitForPort(this.profile.port, { child: this.server.child });
 	}
 
 	/** Restart the server if it exited on its own. Returns true when it had crashed. */
@@ -180,6 +211,7 @@ export class Site {
 		await this.stop();
 		await this.proxy?.close();
 		this.proxy = null;
+		this.ports?.release([this.profile.port, this.profile.proxyPort].filter(Boolean));
 		this.log.end();
 	}
 

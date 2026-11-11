@@ -37,7 +37,7 @@ A profile is a template plus a platform. Run `pnpm perf:audit --list` to see the
 
 The default set is the blog on the first five platforms. `--profiles all` adds the portfolio, marketing and starter templates and the Hyperdrive URL-mode variant.
 
-Each site is copied from `templates/<name>` (Node) or `templates/<name>-cloudflare` (workerd) into `.perf-audit/sites/<profile>/`. Only platform settings change: `siteUrl`, the database, the image service, and the matching wrangler bindings. Pages and seed are untouched. The site's `node_modules` links to the template's own dependencies in the workspace, plus `sharp` for Node, which npm would hoist for a real site.
+Each site is copied from `templates/<name>` (Node) or `templates/<name>-cloudflare` (workerd) into `.perf-audit/work/<slot>/sites/<profile>/`. Only platform settings change: `siteUrl`, the database, the image service, and the matching wrangler bindings. Pages and seed are untouched. The site's `node_modules` links to the template's own dependencies in the workspace, plus `sharp` for Node, which npm would hoist for a real site.
 
 ## What the content looks like
 
@@ -98,9 +98,34 @@ pnpm perf:audit --max-cls 0.05 --max-server-gz 6000 --max-initial-js-gz 2500 --m
 
 Layout races and cold starts vary between runs of the same code, so each first-pass regression is measured twice more in both workspaces and judged on the median of three. Differences that don't hold up are listed separately in the summary. Set the number of extra samples with `--confirm-samples` (0 turns confirmation off).
 
-Both workspaces need `pnpm install` and `pnpm build`. The compare workspace's sites live in `.perf-audit/compare/`.
+Both workspaces need `pnpm install` and `pnpm build`. The compare workspace's sites live in `.perf-audit/work/<slot>/compare/`.
 
-`--reuse` skips building and seeding when the workspace commit matches the prepared site. Uncommitted package changes are not detected, so rebuild without `--reuse` after editing packages.
+`--reuse` skips building and seeding when the workspace commit matches the prepared site and its ports are still free. Uncommitted package changes are not detected, so rebuild without `--reuse` after editing packages.
+
+## Running in parallel
+
+Runs with different `--run` names can run at the same time, from one checkout or several. Each run gets:
+
+- its own slot, `.perf-audit/work/<slot>/`, holding the sites, state snapshots, the PostgreSQL cluster and scratch files. The slot is the `--sites` name, else the `--run` name, else `default`.
+- ports leased machine-wide for each site, its Postgres latency proxy and its PostgreSQL cluster. A prepared site keeps its ports because its origin is built in; if another run took them, the site is prepared again.
+- its own results folder and a fresh Chromium profile.
+
+A run that needs a slot or results folder another run holds waits, and prints what it is waiting for and who holds it. Workerd starts take turns machine-wide for a few seconds each, because the Cloudflare Vite plugin picks its inspector port while it starts.
+
+```bash
+pnpm perf:audit --run media-pg --profile blog-node-postgres --only media &
+pnpm perf:audit --run media-d1 --profile blog-workerd-d1 --only media &
+wait
+
+# Several result folders over one prepared site
+pnpm perf:audit --sites base --run held --reuse --hold /_emdash/api/
+```
+
+There is no need to wrap runs in an outer lock such as `flock`. Concurrent runs share the CPU, though, so their timings and cold starts are noisier, and the summary says how many other runs were active. Run alone when timings matter, for example for `--compare` or a timing budget. If you do serialize runs with a lock, say so before waiting on it, so nobody mistakes a queued run for a hung one:
+
+```bash
+flock -n "$LOCK" pnpm perf:audit ... || { echo "waiting for $LOCK"; flock "$LOCK" pnpm perf:audit ...; }
+```
 
 ## Debugging
 
@@ -136,4 +161,4 @@ FONTCONFIG_FILE=/path/to/arabic-fonts.conf pnpm perf:audit --locale ar
 node --test scripts/perf-audit/tests/*.test.mjs
 ```
 
-The tests cover profile materialization against the real templates, CLS session windows, blocking time, oversized-image detection, waves, the resize emulation, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
+The tests cover profile materialization against the real templates, port leasing and slot locks, CLS session windows, blocking time, oversized-image detection, waves, the resize emulation, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.

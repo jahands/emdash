@@ -25,8 +25,6 @@ const DEFAULT_PLATFORMS = [
 	"workerd-postgres",
 ];
 
-export const BASE_PORT = 14600;
-
 export function profileId(template, platform) {
 	return `${template}-${platform}`;
 }
@@ -42,9 +40,8 @@ export function defaultProfileIds() {
 }
 
 /**
- * Resolve a profile id into its template, platform and fixed ports. Ports
- * are derived from the id's position in the full list so a profile keeps the
- * same origin across runs: the origin is baked into `siteUrl` at build time.
+ * Resolve a profile id into its template and platform. Ports come later,
+ * from `withPorts`, when a run leases them.
  */
 export function resolveProfile(id) {
 	const template = TEMPLATES.find((t) => id.startsWith(`${t}-`));
@@ -53,19 +50,23 @@ export function resolveProfile(id) {
 	if (!template || !platform || !spec) {
 		throw new Error(`Unknown profile "${id}". Run with --list to see the available profiles.`);
 	}
-	const index = allProfileIds().indexOf(id);
-	const port = BASE_PORT + index * 4;
 	return {
 		id,
 		template,
 		platform,
 		...spec,
 		sourceTemplate: spec.runtime === "workerd" ? `${template}-cloudflare` : template,
-		port,
-		proxyPort: port + 1,
-		origin: `http://localhost:${port}`,
 		usesPostgres: spec.database === "postgres" || spec.database === "hyperdrive",
 	};
+}
+
+/**
+ * The profile served on `port`, with its Postgres latency proxy on
+ * `proxyPort`. The origin is baked into `siteUrl` at build time, so a
+ * prepared site keeps its ports.
+ */
+export function withPorts(profile, { port, proxyPort = null }) {
+	return { ...profile, port, proxyPort, origin: `http://localhost:${port}` };
 }
 
 export function selectProfiles({ profiles, profileSet }) {

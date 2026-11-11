@@ -10,7 +10,7 @@ async function timeFirstRequest(site, path, cookies) {
 	const restartStarted = performance.now();
 	await site.stop();
 	await site.start();
-	const bootMs = performance.now() - restartStarted;
+	const bootMs = performance.now() - restartStarted - site.lastStartWaitMs;
 	const started = performance.now();
 	let response;
 	for (let attempt = 0; attempt < 20; attempt++) {

@@ -78,7 +78,7 @@ export async function runProfile(ctx) {
 		runtime: profile.runtime,
 		database: profile.database,
 		images: profile.images,
-		origin: profile.origin,
+		origin: site.origin,
 		dbLatencyMs: profile.usesPostgres ? options.dbLatency : null,
 		postgres: profile.usesPostgres ? site.pg.source : null,
 		versions: runtimeInfo(site, workspace),

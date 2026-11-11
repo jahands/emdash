@@ -1,6 +1,7 @@
 /**
  * PostgreSQL for the postgres profiles: the server named by EMDASH_TEST_PG,
- * or a disposable local cluster created with initdb.
+ * or a disposable local cluster created with initdb. Each run slot has its
+ * own cluster directory, started on a port leased for this run.
  */
 
 import { existsSync, mkdirSync } from "node:fs";
@@ -9,7 +10,6 @@ import { join } from "node:path";
 import { loadPg } from "./deps.mjs";
 import { run, waitForPort } from "./proc.mjs";
 
-const CLUSTER_PORT = 14590;
 const SAFE_NAME = /^[a-z][a-z0-9_]*$/;
 
 function quoteIdent(name) {
@@ -17,7 +17,7 @@ function quoteIdent(name) {
 	return `"${name}"`;
 }
 
-export async function startPostgres({ stateDir, log }) {
+export async function startPostgres({ stateDir, log, ports }) {
 	if (process.env.EMDASH_TEST_PG) {
 		const url = new URL(process.env.EMDASH_TEST_PG);
 		return {
@@ -36,6 +36,16 @@ export async function startPostgres({ stateDir, log }) {
 			logStream: log,
 		});
 	}
+	// A cluster left running by an interrupted run of this slot would hold
+	// the data directory; only this slot uses it, so stop it.
+	if (run("pg_ctl", ["-D", dataDir, "status"], { allowFailure: true }).status === 0) {
+		run("pg_ctl", ["-D", dataDir, "-m", "fast", "-w", "stop"], {
+			logStream: log,
+			allowFailure: true,
+		});
+	}
+	const [port] = await ports.allocate(1, "postgres");
+	console.log(`  starting PostgreSQL from ${dataDir} on port ${port}`);
 	run(
 		"pg_ctl",
 		[
@@ -44,17 +54,17 @@ export async function startPostgres({ stateDir, log }) {
 			"-l",
 			join(stateDir, "postgres.log"),
 			"-o",
-			`-p ${CLUSTER_PORT} -c unix_socket_directories='' -c listen_addresses=127.0.0.1 -c fsync=off -c max_connections=200`,
+			`-p ${port} -c unix_socket_directories='' -c listen_addresses=127.0.0.1 -c fsync=off -c max_connections=200`,
 			"-w",
 			"start",
 		],
 		{ logStream: log, allowFailure: true },
 	);
-	await waitForPort(CLUSTER_PORT, { timeoutMs: 30_000 });
+	await waitForPort(port, { timeoutMs: 30_000 });
 	return {
 		source: "initdb",
 		host: "127.0.0.1",
-		port: CLUSTER_PORT,
+		port,
 		user: "postgres",
 		// The cluster trusts local connections; Hyperdrive's local mode still
 		// insists on a password in the connection string.
@@ -64,6 +74,7 @@ export async function startPostgres({ stateDir, log }) {
 				logStream: log,
 				allowFailure: true,
 			});
+			ports.release([port]);
 		},
 	};
 }

@@ -8,11 +8,12 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { materializeSite, resolvePackageDir } from "./materialize.mjs";
+import { withPorts } from "./profiles.mjs";
 import { seedSite, signIn } from "./seed.mjs";
 import { Site } from "./site.mjs";
 
 export const SEEDED = "seeded";
-const PREPARED_VERSION = 1;
+const PREPARED_VERSION = 2;
 
 function workspaceRevision(workspace) {
 	try {
@@ -51,29 +52,63 @@ export async function prepareProfile(args) {
 	}
 }
 
+/**
+ * Lease the ports the site is served on. A prepared site has its origin
+ * baked in, so reusing it needs its old ports back.
+ */
+async function leaseSitePorts(ports, profile, previous, log) {
+	if (previous) {
+		const purpose = `${profile.id} server`;
+		const wanted = [previous.port, previous.proxyPort].filter(Boolean);
+		const claimed = [];
+		for (const port of wanted) if (await ports.claim(port, purpose)) claimed.push(port);
+		if (claimed.length === wanted.length) return { leased: previous, kept: true };
+		ports.release(claimed);
+		log(
+			`  port ${wanted.filter((p) => !claimed.includes(p)).join(", ")} of the prepared site is taken; preparing it again on new ports`,
+		);
+	}
+	const [port, proxyPort = null] = await ports.allocate(
+		profile.usesPostgres ? 2 : 1,
+		`${profile.id} server`,
+	);
+	return { leased: { port, proxyPort }, kept: false };
+}
+
 async function prepareProfileInner(
-	{ browser, profile, workspace, dirs, pg, options, mediaFiles, log, label },
+	{ browser, profile: baseProfile, workspace, dirs, pg, options, mediaFiles, log, label },
 	holder,
 ) {
-	const siteDir = join(dirs.sites, profile.id);
-	const site = new Site({
-		profile,
-		siteDir,
-		stateDir: join(dirs.state, profile.id),
-		logDir: dirs.logs,
-		pg,
-		dbLatencyMs: options.dbLatency,
-		label,
-	});
-	holder.site = site;
+	const siteDir = join(dirs.sites, baseProfile.id);
+	const stateDir = join(dirs.state, baseProfile.id);
 	const revision = workspaceRevision(workspace);
-	const markerPath = join(site.stateDir, "prepared.json");
+	const markerPath = join(stateDir, "prepared.json");
 	const marker = existsSync(markerPath) ? JSON.parse(readFileSync(markerPath, "utf8")) : null;
-	const reusable =
+	const matches =
 		options.reuse &&
 		marker?.version === PREPARED_VERSION &&
 		marker.workspace === workspace &&
 		marker.revision.head === revision.head;
+	const { leased, kept } = await leaseSitePorts(
+		dirs.ports,
+		baseProfile,
+		matches ? marker.ports : null,
+		log,
+	);
+	const profile = withPorts(baseProfile, leased);
+	const site = new Site({
+		profile,
+		siteDir,
+		stateDir,
+		logDir: dirs.logs,
+		pg,
+		dbLatencyMs: options.dbLatency,
+		label,
+		dbTag: dirs.dbTag,
+		ports: dirs.ports,
+	});
+	holder.site = site;
+	const reusable = matches && kept;
 
 	if (reusable) {
 		const note = revision.dirty ? "; the workspace has uncommitted changes" : "";
@@ -108,6 +143,7 @@ async function prepareProfileInner(
 	const prepared = {
 		version: PREPARED_VERSION,
 		workspace,
+		ports: leased,
 		revision,
 		changedFiles: changed,
 		build,
