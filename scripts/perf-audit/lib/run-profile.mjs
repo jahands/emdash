@@ -138,7 +138,7 @@ export async function runProfile(ctx) {
 						site,
 						target,
 						viewport,
-						cookies: target.kind === "admin" ? cookies : null,
+						cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
 						options,
 						phase,
 						paths: { screenshot: `${shotBase}.png`, hold: `${shotBase}-hold.png` },
@@ -149,7 +149,7 @@ export async function runProfile(ctx) {
 					ledger.record(name, { observedSql: sql });
 					await ensureClean(`${name} (server pass)`);
 					page.serverPass = await serverPass(site, page, {
-						cookies: target.kind === "admin" ? cookies : null,
+						cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
 						cache: passCache,
 					});
 					ledger.record(`${name} (server pass)`, {
@@ -257,7 +257,7 @@ export async function remeasureProfile(ctx, { pages, coldStart, samples }) {
 					site,
 					target,
 					viewport,
-					cookies: target.kind === "admin" ? cookies : null,
+					cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
 					options: { ...options, screenshots: false, hold: null },
 					phase,
 					paths: {},

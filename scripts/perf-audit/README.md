@@ -55,6 +55,8 @@ The state is then snapshotted: the database, uploads and sessions, or `.wrangler
 
 ## What is measured
 
+The screens are the admin dashboard, each collection's list, the long entry's editor, a new entry, the collection's content type, media, every settings page, menus, the taxonomy, users, calendar, comments, bylines and the byline schema, content types and relations, redirects, widgets, sections, plugins, the WordPress importer, and the signed-out login page; then the public home, the long entry and an archive. The plugin and theme marketplaces are left out because they load from external registries.
+
 For each screen:
 
 - CLS with Chrome's session windows, plus the elements that moved, by how much, and when

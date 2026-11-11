@@ -150,12 +150,20 @@ void test("targets cover the admin and public screens", () => {
 		"/_emdash/admin/menus/primary",
 		"/_emdash/admin/taxonomies/category",
 		"/_emdash/admin/users",
+		"/_emdash/admin/login",
+		"/_emdash/admin/content/posts/new",
+		"/_emdash/admin/content-types/posts",
+		"/_emdash/admin/comments",
+		"/_emdash/admin/redirects",
+		"/_emdash/admin/import/wordpress",
 		"/",
 		"/posts/guide",
 		"/category/development",
 	]) {
 		assert.ok(paths.has(expected), expected);
 	}
+	assert.equal(targets.find((t) => t.path === "/_emdash/admin/login").signedOut, true);
+	assert.ok(!paths.has("/_emdash/admin/plugins/marketplace"));
 	assert.deepEqual(
 		filterTargets(targets, ["media"]).map((t) => t.path),
 		["/_emdash/admin/media", "/_emdash/admin/settings/media-usage"],

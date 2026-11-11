@@ -16,6 +16,25 @@ export const SETTINGS_SUBPAGES = [
 	"seo",
 ];
 
+/**
+ * Admin screens that need no seeded record. The plugin and theme
+ * marketplaces are left out: they load from external registries.
+ */
+export const OTHER_ADMIN_SCREENS = [
+	["calendar", "/calendar"],
+	["comments", "/comments"],
+	["bylines", "/bylines"],
+	["byline schema", "/byline-schema"],
+	["content types", "/content-types"],
+	["new content type", "/content-types/new"],
+	["content type relations", "/content-types/relations"],
+	["redirects", "/redirects"],
+	["widgets", "/widgets"],
+	["sections", "/sections"],
+	["plugins", "/plugins-manager"],
+	["WordPress import", "/import/wordpress"],
+];
+
 const admin = (name, path) => ({ name, path: `/_emdash/admin${path}`, kind: "admin" });
 const pub = (name, path) => ({ name, path, kind: "public" });
 
@@ -39,12 +58,20 @@ export function buildTargets({
 	menu,
 	firstPageSlug,
 }) {
-	const targets = [admin("admin dashboard", "/")];
+	const targets = [
+		{ ...admin("admin login (signed out)", "/login"), signedOut: true },
+		admin("admin dashboard", "/"),
+	];
 	for (const slug of collections) targets.push(admin(`admin list ${slug}`, `/content/${slug}`));
+	const mainCollection = heaviest?.collection ?? collections[0];
 	if (heaviest) {
 		targets.push(
 			admin("admin editor (most images)", `/content/${heaviest.collection}/${heaviest.id}`),
 		);
+	}
+	if (mainCollection) {
+		targets.push(admin(`admin new ${mainCollection}`, `/content/${mainCollection}/new`));
+		targets.push(admin(`admin content type ${mainCollection}`, `/content-types/${mainCollection}`));
 	}
 	targets.push(admin("admin media library", "/media"));
 	targets.push(admin("admin settings", "/settings"));
@@ -54,6 +81,7 @@ export function buildTargets({
 	if (menu) targets.push(admin(`admin menu ${menu}`, `/menus/${menu}`));
 	if (taxonomy) targets.push(admin(`admin taxonomy ${taxonomy}`, `/taxonomies/${taxonomy}`));
 	targets.push(admin("admin users", "/users"));
+	for (const [name, path] of OTHER_ADMIN_SCREENS) targets.push(admin(`admin ${name}`, path));
 
 	const routes = PUBLIC_ROUTES[template];
 	targets.push(pub("public home", "/"));
