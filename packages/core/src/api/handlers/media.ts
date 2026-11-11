@@ -135,6 +135,33 @@ export async function handleMediaGet(
 }
 
 /**
+ * Get media items by id, in the order requested. Unknown ids are left out.
+ */
+export async function handleMediaGetMany(
+	db: Kysely<Database>,
+	ids: readonly string[],
+): Promise<ApiResult<{ items: MediaItem[] }>> {
+	try {
+		const repo = new MediaRepository(db);
+		const byId = new Map((await repo.findByIds(ids)).map((item) => [item.id, item]));
+		const items: MediaItem[] = [];
+		for (const id of new Set(ids)) {
+			const item = byId.get(id);
+			if (item) items.push(item);
+		}
+		return { success: true, data: { items } };
+	} catch {
+		return {
+			success: false,
+			error: {
+				code: "MEDIA_GET_ERROR",
+				message: "Failed to get media",
+			},
+		};
+	}
+}
+
+/**
  * Create media item (after file upload)
  */
 export async function handleMediaCreate(
