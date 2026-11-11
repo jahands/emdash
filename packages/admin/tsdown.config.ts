@@ -36,24 +36,34 @@ function staticModuleGraph(entries: string[], getModuleInfo: ModuleInfoGetter) {
 
 function adminShellPlugin(): Plugin {
 	let shellModules = new Set<string>();
+	let sharedModules = new Set<string>();
 	return {
 		name: "emdash-admin-shell-chunks",
 		buildEnd(error) {
 			shellModules = new Set();
+			sharedModules = new Set();
 			if (error) return;
 			const getModuleInfo: ModuleInfoGetter = (id) => this.getModuleInfo(id);
-			shellModules = staticModuleGraph([APP_ENTRY], getModuleInfo);
-			for (const id of staticModuleGraph(INDEPENDENT_ENTRIES, getModuleInfo))
-				shellModules.delete(id);
-			for (const id of shellModules) {
-				if (getModuleInfo(id)?.isEntry) shellModules.delete(id);
+			const appModules = staticModuleGraph([APP_ENTRY], getModuleInfo);
+			const serverSafeModules = staticModuleGraph(INDEPENDENT_ENTRIES, getModuleInfo);
+			for (const id of appModules) {
+				if (serverSafeModules.has(id)) sharedModules.add(id);
+				else if (!getModuleInfo(id)?.isEntry) shellModules.add(id);
 			}
 		},
 		outputOptions(options) {
 			// Small shared chunks otherwise form a request waterfall on HTTP/1.1 servers.
+			// A group also captures its modules' dependencies, so the modules the
+			// server-safe entries share with the app need their own higher-priority
+			// group; otherwise they land in the shell and those entries load the whole app.
 			return {
 				...options,
-				manualChunks: (id) => (shellModules.has(id) ? "admin-shell" : undefined),
+				codeSplitting: {
+					groups: [
+						{ name: "admin-common", test: (id) => sharedModules.has(id), priority: 2 },
+						{ name: "admin-shell", test: (id) => shellModules.has(id), priority: 1 },
+					],
+				},
 			};
 		},
 	};
