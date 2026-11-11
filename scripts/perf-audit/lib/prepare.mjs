@@ -7,13 +7,14 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
+import { checkAsShipped } from "./as-shipped.mjs";
 import { materializeSite, resolvePackageDir } from "./materialize.mjs";
 import { withPorts } from "./profiles.mjs";
 import { seedSite, signIn } from "./seed.mjs";
 import { Site } from "./site.mjs";
 
 export const SEEDED = "seeded";
-const PREPARED_VERSION = 2;
+const PREPARED_VERSION = 3;
 
 function workspaceRevision(workspace) {
 	try {
@@ -28,18 +29,25 @@ function workspaceRevision(workspace) {
 	}
 }
 
+/**
+ * Packages linked into the site beyond the template's own dependencies.
+ * `forTemplate` lists the ones the template's own runtime needs, which the
+ * as-shipped check reports; `pg` only serves the database the profile swaps in.
+ */
 function extraPackages(workspace, profile) {
 	const templateModules = resolve(workspace, "templates", profile.sourceTemplate, "node_modules");
-	const extras = {};
+	const links = {};
+	const forTemplate = [];
 	if (profile.runtime === "node") {
 		// npm hoists astro's sharp dependency into a site's node_modules; the
 		// pnpm-linked template does not, and the Node image endpoint needs it.
-		extras.sharp = resolvePackageDir(join(templateModules, "astro"), "sharp");
+		links.sharp = resolvePackageDir(join(templateModules, "astro"), "sharp");
+		forTemplate.push("sharp");
 	}
 	if (profile.database === "postgres") {
-		extras.pg = resolvePackageDir(resolve(workspace, "packages/core"), "pg");
+		links.pg = resolvePackageDir(resolve(workspace, "packages/core"), "pg");
 	}
-	return extras;
+	return { links, forTemplate };
 }
 
 export async function prepareProfile(args) {
@@ -118,12 +126,13 @@ async function prepareProfileInner(
 		return { site, cookies: marker.cookies, prepared: marker, reused: true };
 	}
 
+	const extras = extraPackages(workspace, profile);
 	const { changed, templateDir } = materializeSite({
 		workspace,
 		profile,
 		siteDir,
 		postgresUrl: profile.usesPostgres ? site.postgresUrl : undefined,
-		extraPackages: extraPackages(workspace, profile),
+		extraPackages: extras.links,
 	});
 	log(`  materialized from ${templateDir} (changed: ${changed.join(", ")})`);
 	await site.startProxy();
@@ -131,6 +140,13 @@ async function prepareProfileInner(
 	site.proxy?.setLatency(0);
 	const build = site.build();
 	log(`  built in ${(build.buildMs / 1000).toFixed(1)}s`);
+	const asShipped = checkAsShipped({
+		template: profile.sourceTemplate,
+		templateDir,
+		serverDir: join(siteDir, "dist/server"),
+		packages: extras.forTemplate,
+	});
+	for (const check of asShipped) if (check.finding) log(`  product finding: ${check.finding}`);
 	await site.resetState();
 	await site.start();
 	const seed = await seedSite({ browser, site, mediaFiles, log });
@@ -147,6 +163,7 @@ async function prepareProfileInner(
 		revision,
 		changedFiles: changed,
 		build,
+		asShipped,
 		seed,
 		cookies,
 	};

@@ -89,6 +89,7 @@ export async function runProfile(ctx) {
 			buildMs: prepared.build.buildMs,
 			seed: prepared.seed,
 		},
+		asShipped: prepared.asShipped ?? [],
 		pages: [],
 		scenarios: [],
 		errors: [],

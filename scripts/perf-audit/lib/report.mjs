@@ -91,6 +91,17 @@ export function renderSummary(run) {
 	}
 	lines.push("");
 
+	const findings = run.profiles.flatMap((p) =>
+		(p.asShipped ?? []).filter((c) => c.finding).map((c) => [p.profile, c.package, c.finding]),
+	);
+	if (findings.length > 0) {
+		lines.push("## Product findings", "");
+		lines.push(
+			"Packages a template needs at runtime but does not provide. The harness links them so measurements still run, which would otherwise hide the problem.\n",
+		);
+		lines.push(table(["Profile", "Package", "Finding"], findings));
+	}
+
 	if (run.budgetFailures.length > 0) {
 		lines.push("## Budget failures", "");
 		lines.push(

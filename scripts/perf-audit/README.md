@@ -37,7 +37,7 @@ A profile is a template plus a platform. Run `pnpm perf:audit --list` to see the
 
 The default set is the blog on the first five platforms. `--profiles all` adds the portfolio, marketing and starter templates and the Hyperdrive URL-mode variant.
 
-Each site is copied from `templates/<name>` (Node) or `templates/<name>-cloudflare` (workerd) into `.perf-audit/work/<slot>/sites/<profile>/`. Only platform settings change: `siteUrl`, the database, the image service, and the matching wrangler bindings. Pages and seed are untouched. The site's `node_modules` links to the template's own dependencies in the workspace, plus `sharp` for Node, which npm would hoist for a real site.
+Each site is copied from `templates/<name>` (Node) or `templates/<name>-cloudflare` (workerd) into `.perf-audit/work/<slot>/sites/<profile>/`. Only platform settings change: `siteUrl`, the database, the image service, and the matching wrangler bindings. Pages and seed are untouched. The site's `node_modules` links to the template's own dependencies in the workspace, plus `sharp` for Node, which npm would hoist for a real site. Because that link could hide a packaging bug, each build is also checked as shipped: when the built server imports a linked package that the template does not declare and install itself, the summary lists it under **Product findings**.
 
 ## What the content looks like
 
@@ -173,4 +173,4 @@ FONTCONFIG_FILE=/path/to/arabic-fonts.conf pnpm perf:audit --locale ar
 node --test scripts/perf-audit/tests/*.test.mjs
 ```
 
-The tests cover profile materialization against the real templates, port leasing and slot locks, the seeded image counts, CLS session windows, blocking time, oversized-image detection on decoded pixels, image states, waves, the resize emulation against Cloudflare's documented examples, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
+The tests cover profile materialization against the real templates, port leasing and slot locks, the seeded image counts, the as-shipped dependency check, CLS session windows, blocking time, oversized-image detection on decoded pixels, image states, waves, the resize emulation against Cloudflare's documented examples, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
