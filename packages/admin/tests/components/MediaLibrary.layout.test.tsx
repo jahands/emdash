@@ -154,6 +154,7 @@ describe("Media Library pagination layout", () => {
 			</Toasty>,
 		);
 		const main = screen.getByRole("main").element();
+		await expect.element(screen.getByRole("combobox", { name: "Page size" })).toBeVisible();
 		const footer = screen.getByRole("combobox", { name: "Page size" }).element().closest("footer")!;
 		const sidebarFooter = screen.getByTestId("sidebar-footer").element();
 		for (const [width, height] of [
@@ -200,6 +201,9 @@ describe("Media Library pagination layout", () => {
 				</Toasty>,
 			);
 			const main = screen.getByRole("main").element() as HTMLElement;
+			await expect
+				.element(screen.getByRole("navigation", { name: "Media pagination" }))
+				.toBeVisible();
 			const pagination = screen.getByRole("navigation", { name: "Media pagination" }).element();
 			const pageSize = screen.getByRole("combobox", { name: "Page size" }).element();
 			const footer = pageSize.closest("footer")!;

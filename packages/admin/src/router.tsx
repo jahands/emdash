@@ -2726,6 +2726,7 @@ function MediaPage() {
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
 		enabled: folderListEnabled,
+		placeholderData: keepPreviousData,
 	});
 	const folders = React.useMemo(
 		() => folderListQuery.data?.pages.flatMap((folderPage) => folderPage.items) ?? [],
