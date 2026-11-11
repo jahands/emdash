@@ -124,11 +124,11 @@ function ReservedText({
 }
 
 /**
- * The wide editor bar's publish label, as wide as the longest label it can
- * show, so the actions before it keep their place when saving turns
- * Unpublish into Publish changes.
+ * A wide editor bar label, as wide as the longest label its control can
+ * show, so the actions before it keep their place when saving changes it,
+ * as from Unpublish to Publish changes.
  */
-function PublishLabelSlot({
+function BarLabelSlot({
 	label,
 	labels,
 	children,
@@ -508,9 +508,20 @@ export function PreviewButton({
 			disabled={isLoadingPreview || blocked}
 			icon={isLoadingPreview ? <Loader size="sm" /> : <Eye />}
 		>
-			<span className={compact ? compactBarLabelClassName : undefined}>
-				{hasPendingChanges ? t`Preview draft` : t`Preview`}
-			</span>
+			{compact ? (
+				<BarLabelSlot
+					label={hasPendingChanges ? t`Preview draft` : t`Preview`}
+					labels={[t`Preview`, t`Preview draft`]}
+				>
+					<span className={compactBarLabelClassName}>
+						{hasPendingChanges ? t`Preview draft` : t`Preview`}
+					</span>
+				</BarLabelSlot>
+			) : hasPendingChanges ? (
+				t`Preview draft`
+			) : (
+				t`Preview`
+			)}
 		</Button>
 	);
 }
@@ -624,11 +635,11 @@ export function PublishActions({
 				}
 			>
 				{compact ? (
-					<PublishLabelSlot label={t`Unpublish ${itemLabel}`} labels={slotLabels}>
+					<BarLabelSlot label={t`Unpublish ${itemLabel}`} labels={slotLabels}>
 						<span className={cn(compactBarLabelClassName, "max-sm:not-sr-only max-sm:truncate")}>
 							{t`Unpublish ${itemLabel}`}
 						</span>
-					</PublishLabelSlot>
+					</BarLabelSlot>
 				) : (
 					t`Unpublish ${itemLabel}`
 				)}
@@ -669,9 +680,9 @@ export function PublishActions({
 			>
 				{compact ? (
 					<>
-						<PublishLabelSlot label={publishLabel} labels={slotLabels}>
+						<BarLabelSlot label={publishLabel} labels={slotLabels}>
 							<span className="@max-2xl/editor-bar:hidden">{publishLabel}</span>
-						</PublishLabelSlot>
+						</BarLabelSlot>
 						<span className="hidden min-w-0 truncate @max-2xl/editor-bar:inline">{t`Publish`}</span>
 						<CaretDown aria-hidden="true" className="absolute end-2 size-4 sm:hidden" />
 					</>

@@ -26,7 +26,7 @@ const MANIFEST: AdminManifest = {
 		posts: {
 			label: "Posts",
 			labelSingular: "Post",
-			supports: ["drafts"],
+			supports: ["drafts", "preview"],
 			hasSeo: false,
 			fields: {
 				title: { kind: "string", label: "Title" },

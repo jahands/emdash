@@ -41,6 +41,7 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 		icon,
 		loading,
 		variant,
+		inert,
 		"aria-label": ariaLabel,
 		...props
 	},
@@ -94,7 +95,7 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 			return;
 		}
 
-		if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+		if (inert || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
 			displayedStateRef.current = activeState;
 			setDisplayedState(activeState);
 			setSwapPhase("idle");
@@ -116,12 +117,13 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 			window.clearTimeout(timeout);
 			window.cancelAnimationFrame(animationFrame);
 		};
-	}, [activeState]);
+	}, [activeState, inert]);
 
 	return (
 		<Button
 			{...props}
 			ref={ref}
+			inert={inert}
 			className={cn("min-w-[100px] justify-center", className)}
 			disabled={sync ? disabled : disabled || !isDirty || isBusy}
 			variant={variant ?? ((isDirty || isBusy) && !sync ? "primary" : "secondary")}
@@ -148,7 +150,7 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 				<span
 					ref={textRef}
 					data-save-button-visible-state={displayedState}
-					style={{ gridArea: "1 / 1" }}
+					style={{ gridArea: "1 / 1", justifySelf: "stretch" }}
 					className={cn(
 						"t-text-swap",
 						swapPhase === "exit" && "is-exit",
