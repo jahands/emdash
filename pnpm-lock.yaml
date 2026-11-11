@@ -312,6 +312,9 @@ catalogs:
     semver:
       specifier: ^7.6.3
       version: 7.7.4
+    sharp:
+      specifier: ^0.35.4
+      version: 0.35.4
     tsdown:
       specifier: 0.20.3
       version: 0.20.3
@@ -3241,6 +3244,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3266,6 +3272,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3337,6 +3346,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3408,6 +3420,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3473,6 +3488,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'

@@ -52,6 +52,14 @@ export default defineConfig({
 });
 ```
 
+Astro resizes images on Node.js with [sharp](https://sharp.pixelplumbing.com/). Add it to the site's dependencies:
+
+```bash
+npm install sharp
+```
+
+Without it, `/_image` returns `500` and pages show broken images. npm installs sharp as an optional dependency of Astro, but pnpm does not make that copy available to the site.
+
 ## Reverse proxies and HTTPS
 
 When the Node process sits behind a reverse proxy that terminates TLS, internal requests arrive over HTTP while visitors reach the site over HTTPS. Set the public origin with `EMDASH_SITE_URL` or `SITE_URL` so EmDash builds correct absolute URLs:
