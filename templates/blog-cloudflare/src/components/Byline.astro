@@ -1,5 +1,6 @@
 ---
 import type { ContentBylineCredit } from "emdash";
+import { Image } from "emdash/ui";
 
 interface Props {
 	bylines: ContentBylineCredit[];
@@ -21,12 +22,15 @@ const {
 
 const WHITESPACE = /\s+/;
 
+/** CSS pixel size of each `--avatar-size-*` token, so avatars load at their rendered size. */
+const AVATAR_PX = { xs: 20, sm: 24, md: 32, lg: 40 } as const;
+const avatarPx = AVATAR_PX[size];
+
 const people = bylines.map(({ byline, roleLabel }) => ({
 	name: byline.displayName,
 	role: roleLabel,
-	src: byline.avatarStorageKey
-		? (Astro.locals.emdash?.getPublicMediaUrl?.(byline.avatarStorageKey) ??
-			`/_emdash/api/media/file/${byline.avatarStorageKey.split("/").map(encodeURIComponent).join("/")}`)
+	avatar: byline.avatarStorageKey
+		? { id: byline.avatarMediaId ?? "", meta: { storageKey: byline.avatarStorageKey } }
 		: null,
 	initials: byline.displayName
 		.split(WHITESPACE)
@@ -44,13 +48,14 @@ const hidden = people.slice(max).map((person) => person.name);
 		<ul class:list={["byline-list", `byline--${size}`, className]}>
 			{people.map((person) => (
 				<li class="byline-list__item">
-					{person.src ? (
-						<img
-							src={person.src}
+					{person.avatar ? (
+						<Image
+							image={person.avatar}
 							alt=""
+							width={avatarPx}
+							height={avatarPx}
+							placeholder={false}
 							class="byline__avatar"
-							loading="lazy"
-							decoding="async"
 						/>
 					) : (
 						<span
@@ -78,13 +83,14 @@ const hidden = people.slice(max).map((person) => person.name);
 				{people
 					.slice(0, 3)
 					.map((person) =>
-						person.src ? (
-							<img
-								src={person.src}
+						person.avatar ? (
+							<Image
+								image={person.avatar}
 								alt=""
+								width={avatarPx}
+								height={avatarPx}
+								placeholder={false}
 								class="byline__avatar"
-								loading="lazy"
-								decoding="async"
 							/>
 						) : (
 							<span class="byline__avatar byline__avatar--initials">

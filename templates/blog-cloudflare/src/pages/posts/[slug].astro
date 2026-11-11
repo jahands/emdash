@@ -234,7 +234,10 @@ const hasHeadings = (post.data.content ?? []).some(
 
 				<div class="post-main">
 					<div class="prose" data-post-content>
-						<PortableText value={post.data.content} />
+						<PortableText
+							value={post.data.content}
+							imageSizes="(min-width: 800px) 680px, 92vw"
+						/>
 					</div>
 
 					<section class="post-comments" aria-labelledby="comments-title">
