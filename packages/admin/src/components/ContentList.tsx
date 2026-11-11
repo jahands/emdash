@@ -72,6 +72,7 @@ import {
 import {
 	DataTable,
 	DataTableBulkBar,
+	DataTableBulkNotice,
 	DataTableMessage,
 	RowActionsMenu,
 	RowMeta,
@@ -180,8 +181,8 @@ export interface ContentListProps {
 	 * Filter controls. The whole bar is opt-in: it only renders when
 	 * `onStatusFilterChange` is provided, keeping the component
 	 * backward-compatible for callers that haven't wired filters yet. Each
-	 * control renders independently based on the presence of its callback
-	 * (and, for the author filter, a non-empty `authors` list).
+	 * control renders independently based on the presence of its callback.
+	 * The author filter is disabled until `authors` lists someone.
 	 */
 	statusFilter?: ContentStatusFilter;
 	onStatusFilterChange?: (status: ContentStatusFilter) => void;
@@ -506,16 +507,43 @@ export function ContentList({
 		...(i18n ? [{ field: "locale", label: t`Locale` }] : []),
 		{ field: dateSortField, label: t`Date` },
 	];
+	const showToolbar = !!(serverSearch || items.length > 0 || onStatusFilterChange);
+	const toolbar = (
+		<TableToolbar>
+			{(serverSearch || items.length > 0) && (
+				<TableToolbarSearch
+					placeholder={t`Search ${inlineLabel(collectionLabel, lingui.locale)}...`}
+					aria-label={t`Search ${inlineLabel(collectionLabel, lingui.locale)}`}
+					value={searchQuery}
+					onChange={handleSearchChange}
+				/>
+			)}
+			{onStatusFilterChange && (
+				<FilterBar
+					statusFilter={statusFilter}
+					onStatusFilterChange={onStatusFilterChange}
+					authors={authors}
+					authorFilter={authorFilter}
+					onAuthorFilterChange={onAuthorFilterChange}
+					dateFilter={dateFilter}
+					onDateFilterChange={onDateFilterChange}
+					bylineFilter={bylineFilter}
+					onBylineFilterChange={onBylineFilterChange}
+					locale={activeLocale ?? undefined}
+				/>
+			)}
+		</TableToolbar>
+	);
+
 	const tabPagination = activeTab === "all" ? pagination : trashPagination;
 	const showPaginationFooter = !!tabPagination && tabPagination.totalCount > 0;
 
 	return (
 		<div
-			className={
-				showPaginationFooter
-					? "flex min-h-full flex-col gap-4 [&_tbody_*]:scroll-mb-48"
-					: "space-y-4"
-			}
+			className={cn(
+				"flex min-h-full flex-col gap-4",
+				showPaginationFooter && "[&_tbody_*]:scroll-mb-48",
+			)}
 		>
 			{/* Header */}
 			<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
@@ -566,39 +594,20 @@ export function ContentList({
 			{/* Content based on active tab */}
 			{activeTab === "all" ? (
 				<>
-					{(serverSearch || items.length > 0 || onStatusFilterChange) && (
-						<TableToolbar>
-							{(serverSearch || items.length > 0) && (
-								<TableToolbarSearch
-									placeholder={t`Search ${inlineLabel(collectionLabel, lingui.locale)}...`}
-									aria-label={t`Search ${inlineLabel(collectionLabel, lingui.locale)}`}
-									value={searchQuery}
-									onChange={handleSearchChange}
-								/>
-							)}
-							{onStatusFilterChange && (
-								<FilterBar
-									statusFilter={statusFilter}
-									onStatusFilterChange={onStatusFilterChange}
-									authors={authors}
-									authorFilter={authorFilter}
-									onAuthorFilterChange={onAuthorFilterChange}
-									dateFilter={dateFilter}
-									onDateFilterChange={onDateFilterChange}
-									bylineFilter={bylineFilter}
-									onBylineFilterChange={onBylineFilterChange}
-									locale={activeLocale ?? undefined}
-								/>
-							)}
-						</TableToolbar>
-					)}
-
-					{/* Bulk action toolbar — appears once one or more rows are selected */}
-					{bulkEnabled && selectedCount > 0 && (
+					{showToolbar && !bulkEnabled && toolbar}
+					{showToolbar && bulkEnabled && (
 						<DataTableBulkBar
 							selectedCount={selectedCount}
 							busy={bulkBusy}
 							onClear={clearSelection}
+							toolbar={toolbar}
+							notice={
+								bulkTagEnabled && (
+									<DataTableBulkNotice shown={selectedCount > 50}>
+										{t`Select up to 50 posts at a time.`}
+									</DataTableBulkNotice>
+								)
+							}
 						>
 							{onBulkPublish && (
 								<Button
@@ -649,11 +658,6 @@ export function ContentList({
 										? t`Add ${inlineLabel(soleBulkTagTaxonomy.labelSingular || soleBulkTagTaxonomy.label, lingui.locale)}`
 										: t`Add term`}
 								</Button>
-							)}
-							{bulkTagEnabled && selectedCount > 50 && (
-								<span role="status" className="text-sm text-kumo-danger">
-									{t`Select up to 50 posts at a time.`}
-								</span>
 							)}
 							{onBulkDelete && (
 								<LayerDialog.Root
@@ -747,11 +751,13 @@ export function ContentList({
 										{column.label}
 									</th>
 								))}
+								{/* Fixed widths keep the columns where they are when rows replace the loading row. */}
 								<SortableTh
 									field="status"
 									sort={sort}
 									onSortChange={onSortChange}
 									label={t`Status`}
+									className="w-44"
 									{...tertiaryColumn}
 								/>
 								{i18n && (
@@ -760,6 +766,7 @@ export function ContentList({
 										sort={sort}
 										onSortChange={onSortChange}
 										label={t`Locale`}
+										className="w-24"
 										{...tertiaryColumn}
 									/>
 								)}
@@ -768,6 +775,7 @@ export function ContentList({
 									sort={sort}
 									onSortChange={onSortChange}
 									label={t`Date`}
+									className="w-36"
 									{...tertiaryColumn}
 								/>
 								{extensionColumns.map((column) => (
@@ -780,17 +788,20 @@ export function ContentList({
 									/>
 								))}
 								<th scope="col" className="w-0" aria-label={t`Actions`}>
-									{onSortChange && (
-										// The negative margin keeps the header row as tall as a line of header text.
-										<div className="-my-0.75 @2xl:hidden">
-											<SortMenu
-												fields={sortFields}
-												sort={sort}
-												onSortChange={onSortChange}
-												defaultField={dateSortField}
-											/>
-										</div>
-									)}
+									{/* As wide as a row's actions button, so the column keeps its width while rows load. */}
+									<div className="min-w-6.5">
+										{onSortChange && (
+											// The negative margin keeps the header row as tall as a line of header text.
+											<div className="-my-0.75 @2xl:hidden">
+												<SortMenu
+													fields={sortFields}
+													sort={sort}
+													onSortChange={onSortChange}
+													defaultField={dateSortField}
+												/>
+											</div>
+										)}
+									</div>
 								</th>
 							</tr>
 						</thead>
@@ -1008,7 +1019,6 @@ function FilterBar({
 }: FilterBarProps) {
 	const { t } = useLingui();
 
-	const showAuthorFilter = !!onAuthorFilterChange && !!authors && authors.length > 0;
 	const showDateFilter = !!onDateFilterChange;
 
 	const statusItems: Record<ContentStatusFilter, string> = {
@@ -1066,19 +1076,20 @@ function FilterBar({
 				))}
 			</Select>
 
-			{showAuthorFilter && (
+			{onAuthorFilterChange && (
 				<Select
 					size="sm"
 					aria-label={t`Filter by author`}
 					value={authorFilter}
-					onValueChange={(v) => onAuthorFilterChange?.(v ?? "")}
+					disabled={!authors?.length}
+					onValueChange={(v) => onAuthorFilterChange(v ?? "")}
 					items={{
 						"": t`All authors`,
-						...Object.fromEntries(authors.map((a) => [a.id, a.name || a.email])),
+						...Object.fromEntries((authors ?? []).map((a) => [a.id, a.name || a.email])),
 					}}
 				>
 					<Select.Option value="">{t`All authors`}</Select.Option>
-					{authors.map((a) => (
+					{authors?.map((a) => (
 						<Select.Option key={a.id} value={a.id}>
 							{a.name || a.email}
 						</Select.Option>

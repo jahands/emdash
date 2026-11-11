@@ -1,7 +1,7 @@
 import { Sidebar } from "@cloudflare/kumo";
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 
 import "../../dist/styles.css";
 import { ContentList } from "../../src/components/ContentList.js";
@@ -481,4 +481,251 @@ describe("Content list sort menu", () => {
 				.element(),
 		).not.toBeVisible();
 	});
+});
+
+describe("Content list row selection layout", () => {
+	const manyPosts: ContentItem[] = Array.from({ length: 60 }, (_, index) => ({
+		...posts[0]!,
+		id: `many-${index}`,
+		slug: `many-${index}`,
+		data: { title: `Entry ${index}` },
+	}));
+
+	function SelectableList({ items = posts.slice(0, 5) }: { items?: ContentItem[] }) {
+		return (
+			<ContentList
+				collection="posts"
+				collectionLabel="Posts"
+				items={items}
+				pagination={{ ...pagination(items.length), perPage: 100 }}
+				onSearchChange={vi.fn()}
+				onStatusFilterChange={vi.fn()}
+				onAuthorFilterChange={vi.fn()}
+				authors={[{ id: "user-1", name: "Ada", email: "ada@example.com", avatarUrl: null }]}
+				onDateFilterChange={vi.fn()}
+				onBulkPublish={vi.fn(async () => [])}
+				onBulkUnpublish={vi.fn(async () => [])}
+				onBulkDelete={vi.fn(async () => [])}
+				bulkTagTaxonomies={[{ name: "tags", label: "Tags", labelSingular: "Tag" }]}
+			/>
+		);
+	}
+
+	/** The rectangles of the table and of every row's cells. */
+	function tableGeometry(table: Element) {
+		return [table, ...table.querySelectorAll("tbody td")].map((el) => {
+			const { x, y, width, height } = el.getBoundingClientRect();
+			return { x, y, width, height };
+		});
+	}
+
+	function expectSameGeometry(actual: DOMRectInit[], expected: DOMRectInit[]) {
+		expect(actual).toHaveLength(expected.length);
+		actual.forEach((rect, index) => {
+			for (const key of ["x", "y", "width", "height"] as const) {
+				expect(
+					Math.abs(rect[key]! - expected[index]![key]!),
+					`${key} of box ${index}`,
+				).toBeLessThan(1);
+			}
+		});
+	}
+
+	it.each([
+		{ width: 1280, direction: "ltr" },
+		{ width: 390, direction: "ltr" },
+		{ width: 390, direction: "rtl" },
+	])(
+		"keeps the rows in place while selecting and clearing at $width px in $direction",
+		async ({ width, direction }) => {
+			await page.viewport(width, 800);
+			const screen = await render(
+				<div dir={direction} style={{ padding: 16 }}>
+					<SelectableList />
+				</div>,
+			);
+			const table = screen.getByRole("table").element();
+			const before = tableGeometry(table);
+			const moveToTrash = screen.getByRole("button", { name: "Move to trash" });
+
+			expect(moveToTrash.query()).toBeNull();
+
+			await screen.getByRole("checkbox", { name: "Select Post 0" }).click();
+			await expect.element(moveToTrash).toBeVisible();
+			await expect.element(screen.getByText("1 selected")).toBeVisible();
+			expectSameGeometry(tableGeometry(table), before);
+
+			await screen.getByRole("checkbox", { name: "Select Post 1" }).click();
+			await expect.element(screen.getByText("2 selected")).toBeVisible();
+			expectSameGeometry(tableGeometry(table), before);
+
+			await screen.getByRole("button", { name: "Clear", exact: true }).click();
+			await expect.poll(() => moveToTrash.query()).toBeNull();
+			expectSameGeometry(tableGeometry(table), before);
+
+			await screen.getByRole("checkbox", { name: "Select Post 2" }).click();
+			await screen.getByRole("checkbox", { name: "Select Post 2" }).click();
+			await expect.poll(() => moveToTrash.query()).toBeNull();
+			expectSameGeometry(tableGeometry(table), before);
+		},
+	);
+
+	it("keeps the rows in place when the selection passes the tagging limit", async () => {
+		await page.viewport(390, 800);
+		const screen = await render(<SelectableList items={manyPosts} />);
+		const table = screen.getByRole("table").element();
+		const before = tableGeometry(table);
+
+		await screen.getByRole("checkbox", { name: "Select all on this page" }).click();
+
+		await expect
+			.element(screen.getByRole("status").getByText("Select up to 50 posts at a time."))
+			.toBeVisible();
+		expectSameGeometry(tableGeometry(table), before);
+	});
+
+	it("hides the search and filters from keyboard and screen readers while rows are selected", async () => {
+		const screen = await render(<SelectableList />);
+		const search = screen.getByRole("searchbox", { name: "Search posts" });
+
+		await screen.getByRole("checkbox", { name: "Select Post 0" }).click();
+
+		expect(search.query()).toBeNull();
+		expect(
+			screen
+				.getByRole("searchbox", { name: "Search posts", includeHidden: true })
+				.element()
+				.closest("[inert]"),
+		).not.toBeNull();
+	});
+
+	it("moves focus to the search box when Clear is pressed from the keyboard", async () => {
+		const screen = await render(<SelectableList />);
+
+		await screen.getByRole("checkbox", { name: "Select Post 0" }).click();
+		const clear = screen
+			.getByRole("button", { name: "Clear", exact: true })
+			.element() as HTMLElement;
+		clear.focus();
+		await userEvent.keyboard("{Enter}");
+
+		await expect.element(screen.getByRole("searchbox", { name: "Search posts" })).toHaveFocus();
+	});
+});
+
+describe("Content list filters while authors load", () => {
+	it.each(["ltr", "rtl"] as const)(
+		"keeps the filters in place when the authors arrive in %s",
+		async (direction) => {
+			await page.viewport(390, 800);
+			const props = {
+				collection: "posts",
+				collectionLabel: "Posts",
+				items: posts.slice(0, 3),
+				onSearchChange: vi.fn(),
+				onStatusFilterChange: vi.fn(),
+				onAuthorFilterChange: vi.fn(),
+				onDateFilterChange: vi.fn(),
+			};
+			const screen = await render(
+				<div dir={direction}>
+					<ContentList {...props} />
+				</div>,
+			);
+			const controls = () =>
+				[
+					screen.getByRole("combobox", { name: "Filter by status" }),
+					screen.getByRole("combobox", { name: "Date field to filter on" }),
+				].map((control) => {
+					const { x, y } = control.element().getBoundingClientRect();
+					return { x, y };
+				});
+			const before = controls();
+			const authorFilter = screen.getByRole("combobox", { name: "Filter by author" });
+			await expect.element(authorFilter).toBeDisabled();
+
+			await screen.rerender(
+				<div dir={direction}>
+					<ContentList
+						{...props}
+						authors={[{ id: "user-1", name: "Ada", email: "ada@example.com", avatarUrl: null }]}
+					/>
+				</div>,
+			);
+
+			await expect.element(authorFilter).toBeEnabled();
+			expect(controls()).toEqual(before);
+		},
+	);
+});
+
+describe("Content list while its first page loads", () => {
+	it.each([
+		{ width: 1280, direction: "ltr" },
+		{ width: 390, direction: "rtl" },
+	])(
+		"records no layout shift when the rows arrive at $width px in $direction",
+		async ({ width, direction }) => {
+			await page.viewport(width, 800);
+			const loading = { ...pagination(0), isPending: true };
+			const props = {
+				collection: "posts",
+				collectionLabel: "Posts",
+				onSearchChange: vi.fn(),
+				onStatusFilterChange: vi.fn(),
+				onBulkDelete: vi.fn(async () => []),
+			};
+			const shell = (list: React.ReactNode) => (
+				<div dir={direction} style={{ display: "flex", height: "100vh", overflow: "hidden" }}>
+					{width > 768 && <aside style={{ width: 260, flexShrink: 0 }} />}
+					<div style={{ display: "flex", flex: 1, flexDirection: "column", overflow: "hidden" }}>
+						<header style={{ height: 52, flexShrink: 0 }} />
+						<main style={{ flex: 1, overflowY: "auto", padding: 24 }}>{list}</main>
+					</div>
+				</div>
+			);
+			const screen = await render(
+				shell(<ContentList {...props} items={[]} isLoading pagination={loading} />),
+			);
+			await expect.element(screen.getByText("Loading...")).toBeVisible();
+			await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 50)));
+
+			const shifts: PerformanceEntry[] = [];
+			const observer = new PerformanceObserver((list) => shifts.push(...list.getEntries()));
+			observer.observe({ type: "layout-shift" });
+			try {
+				await screen.rerender(
+					shell(
+						<ContentList
+							{...props}
+							items={posts.slice(0, 20)}
+							pagination={{ ...pagination(61), perPage: 20 }}
+						/>,
+					),
+				);
+				await expect
+					.element(screen.getByRole("link", { name: "Post 0", exact: true }))
+					.toBeVisible();
+				await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100)));
+				shifts.push(...observer.takeRecords());
+			} finally {
+				observer.disconnect();
+			}
+
+			interface ShiftSource {
+				node?: Node | null;
+				previousRect: DOMRectReadOnly;
+				currentRect: DOMRectReadOnly;
+			}
+			const box = (rect: DOMRectReadOnly) =>
+				[rect.x, rect.y, rect.width, rect.height].map(Math.round).join(",");
+			const moved = shifts.flatMap((entry) =>
+				((entry as PerformanceEntry & { sources?: ShiftSource[] }).sources ?? []).map(
+					(source) =>
+						`${source.node instanceof Element ? source.node.outerHTML.slice(0, 60) : "?"} ${box(source.previousRect)} -> ${box(source.currentRect)}`,
+				),
+			);
+			expect(moved).toEqual([]);
+		},
+	);
 });

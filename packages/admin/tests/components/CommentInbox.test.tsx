@@ -241,7 +241,7 @@ describe("CommentInbox", () => {
 		await screen.getByRole("checkbox", { name: "Select comment by Author Dash" }).click();
 		const count = screen.getByText("1 selected");
 		await expect.element(count).toBeVisible();
-		const barElement = count.element().parentElement!;
+		const barElement = count.element().closest("div")!;
 
 		await screen.rerender(<CommentInbox {...noopProps} isStatusPending={true} />);
 
@@ -261,7 +261,7 @@ describe("CommentInbox", () => {
 		const count = screen.getByText("1 selected");
 		await expect.element(count).toBeVisible();
 		await page
-			.elementLocator(count.element().parentElement!)
+			.elementLocator(count.element().closest("div")!)
 			.getByRole("button", { name: "Approve", exact: true })
 			.click();
 

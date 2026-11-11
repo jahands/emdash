@@ -335,37 +335,112 @@ export function DataTableMessage({
 	);
 }
 
+const stackClassName = "grid [&>*]:[grid-area:1/1]";
+
 /**
  * The bar shown above a table while rows are selected: the number selected, the bulk
- * actions passed as children, and Clear. The actions wrap when the bar is narrow.
- * While `busy`, the count says the selected rows are being worked on and Clear is disabled.
+ * actions passed as children, and Clear, followed by `notice`. The actions wrap when the
+ * bar is narrow. While `busy`, the count says the selected rows are being worked on and
+ * Clear is disabled.
+ *
+ * Pass the table's `toolbar` to show the bar in its place while rows are selected. The
+ * toolbar and the bar are both laid out in the same place, which is as tall as the taller
+ * of the two, so selecting rows never moves the table. Keep any `notice` laid out while
+ * it is empty for the same reason. Without a `toolbar`, the bar is added above the table
+ * once a row is selected.
  */
 export function DataTableBulkBar({
 	selectedCount,
 	busy = false,
 	onClear,
+	toolbar,
+	notice,
 	children,
 }: {
 	selectedCount: number;
 	busy?: boolean;
 	onClear: () => void;
+	toolbar?: React.ReactNode;
+	notice?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	const { t } = useLingui();
-	return (
-		<div className="flex flex-wrap items-center gap-3 rounded-xl bg-kumo-elevated px-4 py-2 ring ring-kumo-line">
-			<span className="text-sm font-medium">
-				{busy
-					? t`Working on ${selectedCount} items…`
-					: plural(selectedCount, { one: "# selected", other: "# selected" })}
+	const selecting = selectedCount > 0;
+	const barRef = React.useRef<HTMLDivElement>(null);
+	const toolbarRef = React.useRef<HTMLDivElement>(null);
+	const focusInBar = React.useRef(false);
+
+	// The bar turns inert as the selection empties, which drops focus on Clear or on the
+	// action that just ran onto the page body.
+	React.useLayoutEffect(() => {
+		const bar = barRef.current;
+		if (selecting || !bar || !focusInBar.current) return;
+		focusInBar.current = false;
+		const active = bar.ownerDocument.activeElement;
+		if (active && active !== bar.ownerDocument.body && !bar.contains(active)) return;
+		const controls = toolbarRef.current?.querySelectorAll<HTMLElement>(CONTROL_SELECTOR) ?? [];
+		[...controls]
+			.find((control) => control.tabIndex >= 0 && !control.matches(":disabled"))
+			?.focus();
+	}, [selecting]);
+
+	if (toolbar === undefined && !selecting) return null;
+
+	const bar = (
+		<div
+			ref={barRef}
+			inert={!selecting || undefined}
+			onFocus={() => {
+				focusInBar.current = true;
+			}}
+			onBlur={(event) => {
+				if (event.relatedTarget) focusInBar.current = false;
+			}}
+			className={cn(
+				"flex flex-wrap content-center items-center gap-x-3 gap-y-1.5 rounded-xl bg-kumo-elevated px-3 py-0.75 ring ring-kumo-line",
+				!selecting && "invisible",
+			)}
+		>
+			<span className={cn(stackClassName, "text-sm font-medium")}>
+				<span className={cn(busy && "invisible")}>
+					{plural(selectedCount, { one: "# selected", other: "# selected" })}
+				</span>
+				<span className={cn(!busy && "invisible")}>{t`Working on ${selectedCount} items…`}</span>
 			</span>
 			<div className="flex flex-wrap items-center gap-2">
 				{children}
 				<Button size="sm" variant="ghost" icon={<X />} disabled={busy} onClick={onClear}>
 					{t`Clear`}
 				</Button>
+				{notice}
 			</div>
 		</div>
+	);
+
+	if (toolbar === undefined) return bar;
+
+	return (
+		<div className={stackClassName}>
+			<div ref={toolbarRef} inert={selecting || undefined} className={cn(selecting && "invisible")}>
+				{toolbar}
+			</div>
+			{bar}
+		</div>
+	);
+}
+
+/**
+ * A message for `DataTableBulkBar`'s `notice` that keeps its space while hidden, and
+ * announces itself when shown.
+ */
+export function DataTableBulkNotice({ shown, children }: { shown: boolean; children: string }) {
+	return (
+		<span className={cn(stackClassName, "text-sm text-kumo-danger")}>
+			<span aria-hidden="true" className="invisible">
+				{children}
+			</span>
+			<span role="status">{shown ? children : null}</span>
+		</span>
 	);
 }
 
