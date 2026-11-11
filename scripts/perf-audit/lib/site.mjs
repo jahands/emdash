@@ -15,6 +15,8 @@ import { assertPortFree, run, spawnGroup, waitForPort } from "./proc.mjs";
 
 const QUERY_LOG_PREFIX = "[emdash-query-log] ";
 const SELECT_SQL = /^\s*select/i;
+const SERVER_ERROR =
+	/middleware error|Unhandled|uncaught|RangeError|TypeError|does not exist|ECONNRESET|\[ERROR\]/i;
 const PLACEHOLDER = /\?/g;
 const STREAM_END_PREFIX = "[emdash-stream-end] ";
 
@@ -28,10 +30,12 @@ export class Site {
 		this.dbLatencyMs = dbLatencyMs;
 		this.dbName = `perf_${label === "compare" ? "c_" : ""}${profile.id.replaceAll("-", "_")}`;
 		this.queryEvents = [];
+		this.serverErrors = [];
 		this.streamEnd = [];
 		this.server = null;
 		this.proxy = null;
 		this.starts = 0;
+		this.crashes = 0;
 		mkdirSync(stateDir, { recursive: true });
 		mkdirSync(logDir, { recursive: true });
 		this.log = createWriteStream(join(logDir, `${profile.id}.log`), { flags: "a" });
@@ -94,6 +98,9 @@ export class Site {
 	}
 
 	onLine(line) {
+		if (SERVER_ERROR.test(line) && !line.includes(QUERY_LOG_PREFIX)) {
+			this.serverErrors.push(line.trim().slice(0, 300));
+		}
 		const q = line.indexOf(QUERY_LOG_PREFIX);
 		if (q !== -1) {
 			try {
@@ -150,6 +157,16 @@ export class Site {
 		}
 		this.starts++;
 		await waitForPort(this.profile.port, { child: this.server.child });
+	}
+
+	/** Restart the server if it exited on its own. Returns true when it had crashed. */
+	async ensureRunning() {
+		const child = this.server?.child;
+		if (!child || (child.exitCode === null && child.signalCode === null)) return false;
+		this.server = null;
+		this.crashes++;
+		await this.start();
+		return true;
 	}
 
 	async stop() {

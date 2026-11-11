@@ -4,6 +4,17 @@ import { createInterface } from "node:readline";
 
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const runningGroups = new Set();
+process.on("exit", () => {
+	for (const pid of runningGroups) {
+		try {
+			process.kill(-pid, "SIGKILL");
+		} catch {
+			// already gone
+		}
+	}
+});
+
 /**
  * Resolve once a TCP connect to host:port succeeds. A TCP probe instead of
  * an HTTP one keeps a fresh workerd isolate cold until the first measured
@@ -78,7 +89,13 @@ export function spawnGroup(cmd, args, { cwd, env, onLine, logStream }) {
 			onLine?.(line);
 		});
 	}
-	const exited = new Promise((res) => child.once("exit", res));
+	if (child.pid !== undefined) runningGroups.add(child.pid);
+	const exited = new Promise((res) =>
+		child.once("exit", (code) => {
+			runningGroups.delete(child.pid);
+			res(code);
+		}),
+	);
 	async function stop() {
 		if (child.exitCode !== null || child.signalCode !== null || child.pid === undefined) return;
 		const group = -child.pid;

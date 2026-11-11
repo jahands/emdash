@@ -333,6 +333,22 @@ export function renderSummary(run) {
 	);
 	lines.push(table(["Profile", "After (wrote state)", "Before", "Took"], restoreRows.slice(0, 40)));
 
+	const serverErrorRows = profiles
+		.filter((p) => p.serverErrors?.lines > 0 || p.serverCrashes > 0)
+		.map((p) => [
+			p.profile,
+			p.serverErrors?.lines ?? 0,
+			p.serverCrashes ?? 0,
+			(p.serverErrors?.examples ?? []).slice(0, 3).join(" / "),
+		]);
+	if (serverErrorRows.length > 0) {
+		lines.push("## Server errors", "");
+		lines.push(
+			"Error lines in the server output during the run. Check them before trusting the numbers above.\n",
+		);
+		lines.push(table(["Profile", "Error lines", "Crashes", "Examples"], serverErrorRows));
+	}
+
 	const errors = profiles.flatMap((p) =>
 		(p.errors ?? []).map((e) => [p.profile, e.measurement, e.error.split("\n")[0]]),
 	);

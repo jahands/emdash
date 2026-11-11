@@ -378,12 +378,14 @@ const SCENARIOS = [
 				network,
 				async () => {
 					await clickByName(page, UPLOAD_BUTTON);
-					const done = page.waitForResponse(
-						(res) => res.request().method() === "POST" && res.url().includes("/_emdash/api/media"),
-						{ timeout: 60_000 },
-					);
-					await page.locator('input[type="file"][multiple]').setInputFiles(mediaFile);
-					const response = await done;
+					const [response] = await Promise.all([
+						page.waitForResponse(
+							(res) =>
+								res.request().method() === "POST" && res.url().includes("/_emdash/api/media"),
+							{ timeout: 60_000 },
+						),
+						page.locator('input[type="file"][multiple]').setInputFiles(mediaFile),
+					]);
 					await sleep(1000);
 					await page.keyboard.press("Escape");
 					return { uploadStatus: response.status() };
@@ -500,7 +502,12 @@ export async function runScenarios({
 				results.push({ name, passed: null, summary: "no image-heavy entry in this template" });
 				continue;
 			}
-			await ensureClean(name);
+			try {
+				await ensureClean(name);
+			} catch (error) {
+				results.push({ name, viewport, passed: null, error: String(error).split("\n")[0] });
+				continue;
+			}
 			const phase = `scenario:${name.replace(NON_SLUG, "-")}`;
 			const ctx = await openAdmin(browser, { site, cookies, options, viewport, phase });
 			const args = { ...ctx, site, cookies, heaviest, collection, mediaFile, viewport };

@@ -67,6 +67,8 @@ async function runWorkspace({
 	mediaFiles,
 	scenarioUpload,
 	resultsDir,
+	results,
+	onProfile,
 }) {
 	const base = label === "primary" ? auditDir : join(auditDir, "compare");
 	const dirs = {
@@ -79,7 +81,6 @@ async function runWorkspace({
 	const pg = needsPg
 		? await startPostgres({ stateDir: join(auditDir, "postgres"), log: process.stdout })
 		: null;
-	const results = [];
 	const errors = [];
 	try {
 		for (const profile of profiles) {
@@ -100,6 +101,7 @@ async function runWorkspace({
 						label,
 					}),
 				);
+				onProfile?.();
 			} catch (error) {
 				console.error(`  ${profile.id} failed: ${error?.stack ?? error}`);
 				errors.push({ profile: profile.id, error: String(error?.stack ?? error) });
@@ -108,7 +110,7 @@ async function runWorkspace({
 	} finally {
 		await pg?.stop();
 	}
-	return { results, errors };
+	return { errors };
 }
 
 async function main() {
@@ -154,6 +156,9 @@ async function main() {
 		profiles: [],
 		errors: [],
 	};
+	const resultsPath = join(resultsDir, "results.json");
+	const writePartial = () =>
+		writeFileSync(resultsPath, JSON.stringify({ ...run, partial: true }, null, "\t"));
 	try {
 		const primary = await runWorkspace({
 			label: "primary",
@@ -164,8 +169,9 @@ async function main() {
 			mediaFiles,
 			scenarioUpload,
 			resultsDir,
+			results: run.profiles,
+			onProfile: writePartial,
 		});
-		run.profiles = primary.results;
 		run.errors.push(...primary.errors);
 		if (compare) {
 			const other = await runWorkspace({
@@ -177,10 +183,11 @@ async function main() {
 				mediaFiles,
 				scenarioUpload,
 				resultsDir,
+				results: (run.compareProfiles = []),
+				onProfile: writePartial,
 			});
-			run.compareProfiles = other.results;
 			run.errors.push(...other.errors.map((e) => ({ ...e, profile: `${e.profile} (compare)` })));
-			run.comparison = compareResults(other.results, primary.results, options.thresholds);
+			run.comparison = compareResults(run.compareProfiles, run.profiles, options.thresholds);
 		}
 	} finally {
 		await browser.close();
@@ -188,7 +195,7 @@ async function main() {
 
 	run.budgetFailures = evaluateBudgets(run.profiles, options.budgets);
 	run.finishedAt = new Date().toISOString();
-	writeFileSync(join(resultsDir, "results.json"), JSON.stringify(run, null, "\t"));
+	writeFileSync(resultsPath, JSON.stringify(run, null, "\t"));
 	const summary = renderSummary(run);
 	writeFileSync(join(resultsDir, "summary.md"), summary);
 	console.log(`\nResults: ${join(resultsDir, "summary.md")}`);

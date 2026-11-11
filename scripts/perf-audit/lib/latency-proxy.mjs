@@ -63,22 +63,33 @@ export function extractSql(chunk) {
 	return null;
 }
 
+/**
+ * Write chunks to `socket` after a delay, strictly in arrival order. One
+ * timer drains a FIFO queue; separate timers per chunk could fire out of
+ * order when they come due in the same millisecond.
+ */
 function delayedWriter(socket, getDelay) {
-	let last = 0;
+	const queue = [];
+	let timer = null;
+	const drain = () => {
+		timer = null;
+		while (queue.length > 0 && queue[0].due <= performance.now()) {
+			const { chunk } = queue.shift();
+			if (!socket.destroyed) socket.write(chunk);
+		}
+		if (queue.length > 0) schedule();
+	};
+	const schedule = () => {
+		if (timer === null) timer = setTimeout(drain, Math.max(0, queue[0].due - performance.now()));
+	};
 	return (chunk) => {
 		const delayMs = getDelay();
-		if (delayMs <= 0 && last <= performance.now()) {
+		if (delayMs <= 0 && queue.length === 0) {
 			socket.write(chunk);
 			return;
 		}
-		const due = Math.max(performance.now() + delayMs, last);
-		last = due;
-		setTimeout(
-			() => {
-				if (!socket.destroyed) socket.write(chunk);
-			},
-			Math.max(0, due - performance.now()),
-		);
+		queue.push({ chunk, due: performance.now() + delayMs });
+		schedule();
 	};
 }
 

@@ -99,6 +99,10 @@ export async function runProfile(ctx) {
 	);
 
 	const ensureClean = async (name) => {
+		if (await site.ensureRunning()) {
+			result.errors.push({ measurement: name, error: "The server had exited; restarted it." });
+			ledger.record(`server exit before ${name}`, { declaredWrites: true });
+		}
 		if (!ledger.needsRestore()) return;
 		const started = performance.now();
 		await site.stop();
@@ -123,10 +127,10 @@ export async function runProfile(ctx) {
 		for (const viewport of options.viewports) {
 			for (const target of targets) {
 				const name = `${viewport} ${target.name}`;
-				await ensureClean(name);
 				const phase = `page:${viewport}:${slug(target.name)}`;
 				const shotBase = join(resultsDir, "screenshots", profile.id, viewport, slug(target.name));
 				try {
+					await ensureClean(name);
 					const page = await measurePage({
 						browser,
 						site,
@@ -181,16 +185,25 @@ export async function runProfile(ctx) {
 		}
 
 		if (!options.skipColdStart) {
-			await ensureClean("cold start");
-			result.coldStart = await measureColdStarts(site, cookies);
-			log(
-				`  cold start: public ${result.coldStart.publicPage.ttfbMs} ms, admin API ${result.coldStart.adminApi.ttfbMs} ms`,
-			);
+			try {
+				await ensureClean("cold start");
+				result.coldStart = await measureColdStarts(site, cookies);
+				log(
+					`  cold start: public ${result.coldStart.publicPage.ttfbMs} ms, admin API ${result.coldStart.adminApi.ttfbMs} ms`,
+				);
+			} catch (error) {
+				result.errors.push({ measurement: "cold start", error: String(error).slice(0, 800) });
+			}
 		}
 		result.queryLog = site.queryEvents.length > 0 ? "available" : "unavailable";
 	} finally {
 		result.restores = ledger.toJSON();
 		result.serverStarts = site.starts;
+		result.serverCrashes = site.crashes;
+		result.serverErrors = {
+			lines: site.serverErrors.length,
+			examples: [...new Set(site.serverErrors)].slice(0, 8),
+		};
 		result.seconds = Math.round((Date.now() - startedAt) / 1000);
 		await site.close();
 	}

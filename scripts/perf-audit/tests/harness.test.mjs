@@ -77,6 +77,37 @@ void test("the latency proxy delays round trips and records them", async () => {
 	upstream.close();
 });
 
+void test("the latency proxy keeps bytes in order under load", async () => {
+	const received = [];
+	const upstream = createServer((socket) => socket.on("data", (chunk) => received.push(chunk)));
+	await new Promise((r) => upstream.listen(0, "127.0.0.1", r));
+	const proxy = startLatencyProxy({
+		listenPort: 0,
+		targetHost: "127.0.0.1",
+		targetPort: upstream.address().port,
+		latencyMs: 6,
+	});
+	await proxy.listening;
+	const client = createConnection({ host: "127.0.0.1", port: proxy.address().port });
+	await new Promise((r) => client.once("connect", r));
+	const sent = [];
+	for (let i = 0; i < 400; i++) {
+		const chunk = Buffer.from(`${i},`);
+		sent.push(chunk);
+		client.write(chunk);
+		if (i % 7 === 0) await new Promise((r) => setTimeout(r, Math.random() * 2));
+	}
+	const expected = Buffer.concat(sent).toString();
+	const deadline = Date.now() + 5000;
+	while (Buffer.concat(received).length < expected.length && Date.now() < deadline) {
+		await new Promise((r) => setTimeout(r, 20));
+	}
+	assert.equal(Buffer.concat(received).toString(), expected);
+	client.destroy();
+	await proxy.close();
+	upstream.close();
+});
+
 void test("sign-in tokens hash the raw bytes like @emdash-cms/auth", async () => {
 	const { hashToken } = await import(
 		join(import.meta.dirname, "../../../packages/auth/dist/index.mjs")
