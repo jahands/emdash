@@ -108,6 +108,8 @@ export function recordNetwork(cdp) {
 			status: null,
 			bytes: 0,
 			initiatorUrl: initiatorUrl(e.initiator),
+			initiatorType: e.initiator?.type ?? null,
+			initiatorRequestId: e.initiator?.requestId ?? null,
 			failed: false,
 			serverTiming: null,
 			fromCache: false,
@@ -151,6 +153,7 @@ export function recordNetwork(cdp) {
 
 export function normalizeRequests(state) {
 	const base = state.navStart ?? state.requests[0]?.startTs ?? 0;
+	const urlById = new Map(state.requests.map((r) => [r.id, r.url]));
 	return state.requests.map((r) => ({
 		url: r.url,
 		method: r.method,
@@ -160,6 +163,8 @@ export function normalizeRequests(state) {
 		status: r.status,
 		bytes: r.bytes,
 		initiatorUrl: r.initiatorUrl,
+		initiatorType: r.initiatorType,
+		initiatorRequestUrl: r.initiatorRequestId ? (urlById.get(r.initiatorRequestId) ?? null) : null,
 		failed: r.failed,
 		errorText: r.errorText,
 		dbCount: r.serverTiming?.["db.count"] ?? null,
@@ -300,6 +305,7 @@ export async function measurePage({
 			transferBytes: summary.totalBytes,
 			bytesByType: summary.bytesByType,
 			criticalChain: summary.criticalChain,
+			inferredLinks: summary.inferredLinks,
 			maxDepth: summary.maxDepth,
 			waterfall: summary.waterfall,
 			images,

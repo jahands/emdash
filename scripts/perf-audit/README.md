@@ -62,7 +62,7 @@ For each screen:
 - CLS with Chrome's session windows, plus the elements that moved, by how much, and when
 - LCP, FCP and total blocking time, in Chromium's new headless mode so paint timing is real
 - API requests, their bytes, the time to the last API response, and API waves (calls that waited for an earlier response)
-- the request waterfall, with the request each one waited on
+- the request waterfall, with the request each one waited on and how that is known: the initiator Chromium recorded, or, for an API call issued right after another API response, a guess from timing, labelled `inferred-timing`. Chromium does not record which response a script awaited, so hold the request (`--hold`) to prove a dependency.
 - transfer bytes by resource type
 - every image on the page, as painted in the viewport, loaded but outside it, failed, or not loaded (lazy). Painted images are flagged when they have more than twice the pixels the screen needs (rendered size × device pixel ratio) and cost over 50 KiB. Pixels are the selected file's own dimensions: the harness fetches each image's `currentSrc` again and reads its header, because `naturalWidth` is divided by the `srcset` density (a 2560 px file picked for an 1136 px slot reports 1136). For `object-fit: cover` only the uncropped side counts.
 

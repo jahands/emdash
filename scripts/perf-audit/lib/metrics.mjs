@@ -161,9 +161,14 @@ export function isApiRequest(url) {
 
 /**
  * Summarize recorded requests. Times are milliseconds from navigation
- * start. `waitedOn` links each request to the one it depended on: its
- * parser or script initiator, or for an API call the API response that
- * finished just before it was issued by the same script.
+ * start. `waitedOn` links each request to the one it depended on, and
+ * `waitedOnSource` says how that link is known:
+ *
+ * - `initiator-request`: Chromium named the request that triggered it.
+ * - `initiator`: Chromium named the document or script that issued it.
+ * - `inferred-timing`: an API call issued within 60 ms of another API
+ *   response finishing. Chromium does not record which response a script
+ *   awaited, so this is a guess; hold the request to prove it.
  */
 export function summarizeRequests(requests) {
 	const byUrl = new Map();
@@ -172,14 +177,25 @@ export function summarizeRequests(requests) {
 	const sortedApi = api.toSorted((a, b) => a.start - b.start);
 
 	const withDeps = requests.map((r) => {
-		let waitedOn = r.initiatorUrl && byUrl.get(r.initiatorUrl) !== r ? r.initiatorUrl : null;
-		if (isApiRequest(r.url)) {
+		let waitedOn = null;
+		let waitedOnSource = null;
+		if (r.initiatorRequestUrl && byUrl.get(r.initiatorRequestUrl) !== r) {
+			waitedOn = r.initiatorRequestUrl;
+			waitedOnSource = "initiator-request";
+		} else if (r.initiatorUrl && byUrl.get(r.initiatorUrl) !== r) {
+			waitedOn = r.initiatorUrl;
+			waitedOnSource = "initiator";
+		}
+		if (isApiRequest(r.url) && waitedOnSource !== "initiator-request") {
 			const gate = sortedApi.findLast(
 				(q) => q !== r && q.end !== null && q.end <= r.start && r.start - q.end < 60,
 			);
-			if (gate) waitedOn = gate.url;
+			if (gate) {
+				waitedOn = gate.url;
+				waitedOnSource = "inferred-timing";
+			}
 		}
-		return { ...r, waitedOn };
+		return { ...r, waitedOn, waitedOnSource };
 	});
 
 	const depth = new Map();
@@ -208,9 +224,9 @@ export function summarizeRequests(requests) {
 	const lastApi = api.filter((r) => r.end !== null).toSorted((a, b) => b.end - a.end)[0];
 	const chain = [];
 	for (let r = lastApi && withDeps.find((q) => q.url === lastApi.url); r;) {
-		chain.unshift(r.url);
+		chain.unshift({ url: r.url, via: r.waitedOnSource });
 		const next = r.waitedOn ? withDeps.find((q) => q.url === r.waitedOn) : null;
-		if (!next || chain.includes(next.url)) break;
+		if (!next || chain.some((c) => c.url === next.url)) break;
 		r = next;
 	}
 
@@ -226,6 +242,7 @@ export function summarizeRequests(requests) {
 			failed: api.filter((r) => r.failed || (r.status ?? 0) >= 400).length,
 		},
 		criticalChain: chain,
+		inferredLinks: withDeps.filter((r) => r.waitedOnSource === "inferred-timing").length,
 		maxDepth: Math.max(0, ...depth.values()),
 		waterfall: withDeps
 			.toSorted((a, b) => a.start - b.start)
@@ -237,7 +254,9 @@ export function summarizeRequests(requests) {
 				start: Math.round(r.start),
 				end: r.end === null ? null : Math.round(r.end),
 				bytes: r.bytes,
+				initiator: r.initiatorType ? { type: r.initiatorType, url: r.initiatorUrl ?? null } : null,
 				waitedOn: r.waitedOn,
+				waitedOnSource: r.waitedOnSource,
 				depth: depth.get(r),
 				dbCount: r.dbCount ?? null,
 			})),

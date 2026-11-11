@@ -172,9 +172,39 @@ void test("request summary links API calls to the response they waited for", () 
 	assert.equal(summary.api.waves, 2);
 	assert.equal(summary.api.lastResponseMs, 400);
 	assert.equal(summary.api.failed, 1);
-	assert.deepEqual(summary.criticalChain, [doc, js, me, list]);
+	assert.deepEqual(summary.criticalChain, [
+		{ url: doc, via: null },
+		{ url: js, via: "initiator" },
+		{ url: me, via: "initiator" },
+		{ url: list, via: "inferred-timing" },
+	]);
+	assert.equal(summary.inferredLinks, 1);
 	assert.equal(summary.maxDepth, 4);
 	assert.equal(summary.bytesByType.Fetch, 1200);
+});
+
+void test("a request Chromium names as the initiator beats a timing guess", () => {
+	const js = "http://x/_astro/app.js";
+	const first = "http://x/_emdash/api/a";
+	const preflight = "http://x/_emdash/api/b";
+	const summary = summarizeRequests([
+		{ url: js, type: "Script", start: 0, end: 100, initiatorUrl: null },
+		{ url: first, type: "Fetch", start: 110, end: 150, initiatorUrl: js, initiatorType: "script" },
+		{
+			url: preflight,
+			type: "Fetch",
+			start: 160,
+			end: 200,
+			initiatorUrl: js,
+			initiatorType: "script",
+			initiatorRequestUrl: js,
+		},
+	]);
+	const row = summary.waterfall.find((r) => r.url === preflight);
+	assert.equal(row.waitedOn, js);
+	assert.equal(row.waitedOnSource, "initiator-request");
+	assert.deepEqual(row.initiator, { type: "script", url: js });
+	assert.equal(summary.waterfall.find((r) => r.url === first).waitedOnSource, "initiator");
 });
 
 void test("Server-Timing values parse by name", () => {
