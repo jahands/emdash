@@ -215,56 +215,104 @@ export function responseHeaders(sourceHeaders, contentType) {
 	return headers;
 }
 
-/** Serve `/cdn-cgi/image/*` for a browser context. */
+/**
+ * Emulate one `/cdn-cgi/image/` request: fetch the source with the request's
+ * conditional headers and resize it. Returns `route.fulfill` options, or null
+ * for a path that is not a transformation URL.
+ */
+async function emulateResize(resizeUrl, requestHeaders, origin, stats, outputKey) {
+	const parsed = parseResizeUrl(resizeUrl.pathname + resizeUrl.search, origin);
+	if (!parsed) return null;
+	const conditional = {};
+	if (requestHeaders["if-none-match"])
+		conditional["if-none-match"] = requestHeaders["if-none-match"];
+	if (requestHeaders["if-modified-since"])
+		conditional["if-modified-since"] = requestHeaders["if-modified-since"];
+	try {
+		const source = await fetch(parsed.source, { headers: conditional });
+		if (source.status === 304) {
+			stats.revalidated++;
+			return { status: 304, headers: responseHeaders(source.headers, "") };
+		}
+		if (!source.ok) throw new Error(`source ${source.status}`);
+		const input = Buffer.from(await source.arrayBuffer());
+		const out = await resizeImage(
+			input,
+			parsed.options,
+			requestHeaders.accept ?? "",
+			source.headers.get("content-type") ?? "",
+		);
+		stats.served++;
+		stats.outputs[outputKey] = { width: out.width, height: out.height };
+		for (const option of out.ignored) {
+			if (!stats.ignoredOptions.includes(option)) stats.ignoredOptions.push(option);
+		}
+		return {
+			status: 200,
+			body: out.body,
+			headers: responseHeaders(source.headers, out.contentType),
+		};
+	} catch (error) {
+		stats.failed++;
+		if (parsed.options.onerror === "redirect") {
+			return {
+				status: 302,
+				headers: { location: parsed.source, "x-perf-audit-emulated": "cdn-cgi-image" },
+			};
+		}
+		return { status: 502, body: String(error) };
+	}
+}
+
+/**
+ * Serve `/cdn-cgi/image/*` for a browser context.
+ *
+ * Playwright routes never see the target of a redirect, so a same-origin
+ * `/_image` response that redirects into `/cdn-cgi/image/` would reach
+ * `wrangler dev` instead of the emulator. Those redirects are resolved here and
+ * the `/_image` request is answered with the emulated rendition; the redirect's
+ * round trip is not measured.
+ */
 export async function installResizeEmulation(context, origin, stats) {
 	stats.served ??= 0;
 	stats.failed ??= 0;
 	stats.revalidated ??= 0;
+	stats.redirected ??= 0;
 	stats.outputs ??= {};
 	stats.ignoredOptions ??= [];
 	await context.route(`${origin}/cdn-cgi/image/**`, async (route) => {
 		const request = route.request();
-		const url = new URL(request.url());
-		const parsed = parseResizeUrl(url.pathname + url.search, origin);
-		if (!parsed) return route.continue();
-		const conditional = {};
-		const headers = request.headers();
-		if (headers["if-none-match"]) conditional["if-none-match"] = headers["if-none-match"];
-		if (headers["if-modified-since"])
-			conditional["if-modified-since"] = headers["if-modified-since"];
-		try {
-			const source = await fetch(parsed.source, { headers: conditional });
-			if (source.status === 304) {
-				stats.revalidated++;
-				return route.fulfill({ status: 304, headers: responseHeaders(source.headers, "") });
-			}
-			if (!source.ok) throw new Error(`source ${source.status}`);
-			const input = Buffer.from(await source.arrayBuffer());
-			const out = await resizeImage(
-				input,
-				parsed.options,
-				headers.accept ?? "",
-				source.headers.get("content-type") ?? "",
-			);
-			stats.served++;
-			stats.outputs[request.url()] = { width: out.width, height: out.height };
-			for (const option of out.ignored) {
-				if (!stats.ignoredOptions.includes(option)) stats.ignoredOptions.push(option);
-			}
-			return route.fulfill({
-				status: 200,
-				body: out.body,
-				headers: responseHeaders(source.headers, out.contentType),
-			});
-		} catch (error) {
-			stats.failed++;
-			if (parsed.options.onerror === "redirect") {
-				return route.fulfill({
-					status: 302,
-					headers: { location: parsed.source, "x-perf-audit-emulated": "cdn-cgi-image" },
-				});
-			}
-			return route.fulfill({ status: 502, body: String(error) });
-		}
+		const fulfilled = await emulateResize(
+			new URL(request.url()),
+			request.headers(),
+			origin,
+			stats,
+			request.url(),
+		);
+		if (!fulfilled) return route.continue();
+		return route.fulfill(fulfilled);
 	});
+	await context.route(
+		(url) => url.origin === origin && url.pathname === "/_image",
+		async (route) => {
+			const request = route.request();
+			const response = await route.fetch({ maxRedirects: 0 });
+			const location = response.headers().location;
+			const target = location ? new URL(location, request.url()) : null;
+			if (target?.origin === origin && target.pathname.startsWith(PREFIX)) {
+				const fulfilled = await emulateResize(
+					target,
+					request.headers(),
+					origin,
+					stats,
+					request.url(),
+				);
+				if (fulfilled) {
+					stats.redirected++;
+					return route.fulfill(fulfilled);
+				}
+			}
+			return route.fulfill({ response });
+		},
+	);
 }

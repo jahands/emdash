@@ -95,6 +95,7 @@ It differs from Cloudflare in these ways:
 - There is no edge cache, so the one-hour minimum edge lifetime is not applied. Every request fetches and transforms the source again.
 - `gravity` (crops are centered) and the effect options (`blur`, `sharpen`, `rotate` and the like) are ignored. A page that used one lists it under `resizeEmulation.ignoredOptions` in `results.json`.
 - Zone settings and authorization are not checked, and only `/cdn-cgi/image` is emulated. EmDash's own `/_image` endpoint runs unchanged.
+- Playwright routes never see the target of a redirect. When `/_image` redirects into `/cdn-cgi/image`, as EmDash's URL-mode endpoint does, the `/_image` request is answered with the emulated rendition, so the redirect's round trip is not measured. `resizeEmulation.redirected` in `results.json` counts these.
 
 ## Common options
 

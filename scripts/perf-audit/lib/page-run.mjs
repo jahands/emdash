@@ -369,6 +369,7 @@ export async function measurePage({
 							served: stats.resize.served,
 							failed: stats.resize.failed,
 							revalidated: stats.resize.revalidated,
+							redirected: stats.resize.redirected,
 							ignoredOptions: stats.resize.ignoredOptions,
 						}
 					: undefined,
