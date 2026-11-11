@@ -2,7 +2,7 @@ import type { MessageDescriptor, Messages } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 
 import { resolveLocale } from "./config.js";
-import { loadMessages } from "./loadMessages.js";
+import { loadServerMessages } from "./loadServerMessages.js";
 
 export interface VisualEditingToolbarLabels {
 	publish: string;
@@ -132,6 +132,6 @@ export async function loadVisualEditingToolbarLabels(
 	request: Request,
 ): Promise<VisualEditingToolbarLabels> {
 	const locale = resolveLocale(request);
-	const messages: Messages = await loadMessages(locale);
+	const messages: Messages = await loadServerMessages(locale);
 	return translateVisualEditingToolbarLabels(messages);
 }

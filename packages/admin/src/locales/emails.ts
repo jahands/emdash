@@ -15,7 +15,7 @@
 import { setupI18n, type I18n, type MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 
-import { loadMessages } from "./loadMessages.js";
+import { loadServerMessages } from "./loadServerMessages.js";
 
 /** Mirrors `InviteEmailStrings` in `@emdash-cms/auth`. */
 export interface InviteEmailStrings {
@@ -84,9 +84,8 @@ const DOMAIN_MOVE: Record<keyof DomainMoveEmailStrings, MessageDescriptor> = {
  * locale on it server-side would race with the UI.
  */
 async function i18nFor(locale: string): Promise<I18n> {
-	// loadMessages falls back to the default (English) catalog for
-	// unknown locales, so an unconfigured/garbage locale yields English.
-	const messages = await loadMessages(locale);
+	// Unknown locales fall back to the default (English) catalog.
+	const messages = await loadServerMessages(locale);
 	return setupI18n({ locale, messages: { [locale]: messages } });
 }
 
