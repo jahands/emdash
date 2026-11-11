@@ -174,6 +174,12 @@ export function snapshotGeometry({ exclude, grows, within, key = "default", limi
 		}
 		return { x, y, width: r.width, height: r.height };
 	};
+	// Content starts at the inline-start edge, so a box that keeps that
+	// edge and narrows from the other side was resized, not moved.
+	const startEdgeShift = (before, after, rtl) =>
+		rtl
+			? Math.abs(after.x + after.width - (before.x + before.width))
+			: Math.abs(after.x - before.x);
 	const vw = window.innerWidth;
 	const vh = window.innerHeight;
 	const scope = within ? document.querySelector(within) : document.body;
@@ -204,6 +210,7 @@ export function snapshotGeometry({ exclude, grows, within, key = "default", limi
 		tracked.push({
 			el,
 			rect,
+			rtl: getComputedStyle(el).direction === "rtl",
 			below: growing.filter(
 				(g) =>
 					!el.contains(g.el) &&
@@ -239,12 +246,17 @@ export function snapshotGeometry({ exclude, grows, within, key = "default", limi
 			if (state.removed.has(el)) continue;
 			const r = el.isConnected ? layoutRect(el) : null;
 			if (!r || (r.width === 0 && r.height === 0)) {
-				state.removed.set(el, { at: now, rect: item.rect, detached: !el.isConnected });
+				state.removed.set(el, {
+					at: now,
+					rect: item.rect,
+					rtl: item.rtl,
+					detached: !el.isConnected,
+				});
 				continue;
 			}
 			const shiftDown = item.below.reduce((sum, g) => sum + growth(g), 0);
 			const grew = item.around.reduce((sum, g) => sum + growth(g), 0);
-			const dx = Math.abs(r.x - item.rect.x);
+			const dx = startEdgeShift(item.rect, r, item.rtl);
 			const dy = Math.abs(r.y - item.rect.y - shiftDown);
 			const dw = Math.abs(r.width - item.rect.width);
 			const dh = Math.abs(r.height - item.rect.height - grew);
@@ -295,6 +307,10 @@ export function finishGeometry(key = "default") {
 		const text = (el.textContent ?? "").trim().replace(/\s+/g, " ").slice(0, 50);
 		return text ? `${label} "${text}"` : label;
 	};
+	const startEdgeShift = (before, after, rtl) =>
+		rtl
+			? Math.abs(after.x + after.width - (before.x + before.width))
+			: Math.abs(after.x - before.x);
 	const overlap = (a, b) => {
 		const w = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
 		const h = Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y);
@@ -342,7 +358,7 @@ export function finishGeometry(key = "default") {
 			});
 			continue;
 		}
-		const dx = Math.abs(best.rect.x - gone.rect.x);
+		const dx = startEdgeShift(gone.rect, best.rect, gone.rtl);
 		const dy = Math.abs(best.rect.y - gone.rect.y);
 		const dw = Math.abs(best.rect.width - gone.rect.width);
 		const dh = Math.abs(best.rect.height - gone.rect.height);
