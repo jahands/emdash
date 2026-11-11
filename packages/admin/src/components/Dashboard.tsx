@@ -89,6 +89,7 @@ export function Dashboard({ manifest }: DashboardProps) {
 					<SummaryMetrics
 						stats={stats}
 						loading={isLoading}
+						expectedCount={(user?.role ?? 0) >= ROLE_ADMIN ? 3 : 2}
 						linkCalendar={
 							(user?.role ?? 0) >= ROLE_CONTRIBUTOR &&
 							!manifest.admin?.hiddenNavItems?.includes("calendar")
@@ -362,29 +363,42 @@ function QuickActions({ manifest }: { manifest: AdminManifest }) {
 
 // --- Summary metrics ---
 
+/**
+ * Two to four metrics take two rows below `lg` and one row from `lg` up, so the
+ * Scheduled metric, which only the loaded stats can reveal, never adds a row.
+ */
+function metricGridClassName(count: number) {
+	return cn(
+		"grid gap-4",
+		count > 2 && "max-lg:grid-cols-2 max-lg:[&>:last-child:nth-child(odd)]:col-span-2",
+		count === 2 ? "lg:grid-cols-2" : count === 3 ? "lg:grid-cols-3" : "lg:grid-cols-4",
+	);
+}
+
 function SummaryMetrics({
 	stats,
 	loading,
+	expectedCount,
 	linkCalendar,
 }: {
 	stats?: DashboardStats;
 	loading: boolean;
+	/** How many metrics to hold space for while the stats load. */
+	expectedCount: number;
 	/** Link the Scheduled count to the calendar, for roles that can open it. */
 	linkCalendar: boolean;
 }) {
 	if (loading) {
 		return (
-			<div className="grid gap-4 sm:grid-cols-3">
-				{[1, 2, 3].map((i) => (
+			<div className={metricGridClassName(expectedCount)}>
+				{Array.from({ length: expectedCount }, (_, i) => (
 					<LayerCard key={i}>
-						<LayerCard.Secondary>
-							<DashboardCardInset>
-								<SkeletonLine minWidth={45} maxWidth={70} />
-							</DashboardCardInset>
-						</LayerCard.Secondary>
+						<DashboardCardHeading>
+							<SkeletonLine blockHeight="1lh" minWidth={45} maxWidth={70} />
+						</DashboardCardHeading>
 						<LayerCard.Primary className="text-3xl font-semibold leading-none">
 							<DashboardCardInset>
-								<SkeletonLine minWidth={20} maxWidth={35} />
+								<SkeletonLine blockHeight="1lh" minWidth={20} maxWidth={35} />
 							</DashboardCardInset>
 						</LayerCard.Primary>
 					</LayerCard>
@@ -432,15 +446,7 @@ function SummaryMetrics({
 	];
 
 	return (
-		<div
-			className={
-				metrics.length === 4
-					? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-					: metrics.length === 3
-						? "grid gap-4 sm:grid-cols-3"
-						: "grid gap-4 sm:grid-cols-2"
-			}
-		>
+		<div className={metricGridClassName(metrics.length)}>
 			{metrics.map((metric) => (
 				<LayerCard key={metric.label} data-testid="dashboard-metric">
 					<DashboardCardHeading>
@@ -482,6 +488,26 @@ function SkeletonRows({ count }: { count: number }) {
 
 // --- Collection list with counts ---
 
+/** Matches the height of the loaded collection rows, or of the empty message when there are none. */
+function CollectionSkeletonRows({ count }: { count: number }) {
+	if (count === 0) {
+		return (
+			<DashboardCardInset className="text-sm leading-6">
+				<SkeletonLine blockHeight="1lh" minWidth={40} maxWidth={60} />
+			</DashboardCardInset>
+		);
+	}
+	return (
+		<div className="space-y-1">
+			{Array.from({ length: count }, (_, i) => (
+				<div key={i} className="px-3 py-2 text-base leading-5">
+					<SkeletonLine blockHeight="1lh" minWidth={50} maxWidth={90} />
+				</div>
+			))}
+		</div>
+	);
+}
+
 function CollectionList({
 	collections,
 	manifest,
@@ -499,7 +525,7 @@ function CollectionList({
 			<DashboardCardHeading>{t`Content`}</DashboardCardHeading>
 			<LayerCard.Primary className="flex-1">
 				{loading ? (
-					<SkeletonRows count={3} />
+					<CollectionSkeletonRows count={visibleCollectionEntries(manifest.collections).length} />
 				) : visibleCollections.length === 0 ? (
 					<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
 						{t`No collections configured`}
