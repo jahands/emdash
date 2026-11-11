@@ -82,24 +82,50 @@ export function renderSummary(run) {
 	if (run.comparison) {
 		lines.push("## Compared with the other workspace", "");
 		const regs = run.comparison.regressions;
+		const candidates = run.comparison.candidates ?? [];
+		const noise = candidates.filter((c) => !c.confirmed);
 		lines.push(
 			regs.length === 0
 				? "No regressions over the thresholds.\n"
-				: `${regs.length} regression(s):\n`,
+				: `${regs.length} regression(s), shown as medians when they were re-measured:\n`,
 		);
-		lines.push(
-			table(
-				["Profile", "Where", "Metric", "Before", "After", ""],
-				run.comparison.rows
-					.filter((r) => r.regression || r.where === "build" || r.where === "cold start")
-					.map((r) => [
+		if (regs.length > 0) {
+			lines.push(
+				table(
+					["Profile", "Where", "Metric", "Before", "After"],
+					regs.map((r) => [
 						r.profile,
 						r.where,
 						r.metric,
-						r.before,
-						r.after,
-						r.regression ? "**regressed**" : "",
+						r.medianBefore ?? r.before,
+						r.medianAfter ?? r.after,
 					]),
+				),
+			);
+		}
+		if (noise.length > 0) {
+			lines.push(
+				`${noise.length} first-pass difference(s) did not hold up when measured again (medians of ${run.options.confirmSamples + 1} samples per workspace):\n`,
+			);
+			lines.push(
+				table(
+					["Profile", "Where", "Metric", "First pass", "Medians"],
+					noise.map((r) => [
+						r.profile,
+						r.where,
+						r.metric,
+						`${r.before} -> ${r.after}`,
+						`${r.medianBefore} -> ${r.medianAfter}`,
+					]),
+				),
+			);
+		}
+		lines.push(
+			table(
+				["Profile", "Metric", "Before", "After"],
+				run.comparison.rows
+					.filter((r) => r.where === "build" || r.where === "cold start")
+					.map((r) => [r.profile, r.metric, r.before, r.after]),
 			),
 		);
 	}

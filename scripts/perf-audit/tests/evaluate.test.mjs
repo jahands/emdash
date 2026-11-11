@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { DEFAULT_THRESHOLDS } from "../lib/args.mjs";
-import { compareResults, evaluateBudgets } from "../lib/evaluate.mjs";
+import {
+	compareResults,
+	confirmationPlan,
+	confirmRegressions,
+	evaluateBudgets,
+	median,
+} from "../lib/evaluate.mjs";
 import { RestoreLedger, writeStatements } from "../lib/ledger.mjs";
 
 const page = (over = {}) => ({
@@ -127,4 +133,71 @@ void test("write detection ignores reads", () => {
 			"DELETE FROM y",
 		],
 	);
+});
+
+const sample = (cls) => ({ cls, apiCount: 8, imageBytes: 200_000, oversized: 0 });
+
+void test("a candidate that does not hold up on medians is not reported", () => {
+	const before = [profile()];
+	const after = [
+		profile({
+			pages: [page({ cls: 0.06 })],
+			coldStart: { publicPage: { ttfbMs: 300 }, adminApi: { ttfbMs: 100 } },
+		}),
+	];
+	const { regressions } = compareResults(before, after, DEFAULT_THRESHOLDS);
+	assert.equal(regressions.length, 2);
+	const plan = confirmationPlan(regressions);
+	assert.deepEqual(plan.get("blog-workerd-d1"), {
+		pages: [{ viewport: "desktop", name: "admin media library" }],
+		coldStart: true,
+	});
+	const confirmed = confirmRegressions(
+		regressions,
+		before,
+		after,
+		{
+			"blog-workerd-d1": {
+				pages: { "desktop admin media library": [sample(0.06), sample(0.06)] },
+				coldStart: [
+					{ publicPage: { ttfbMs: 290 }, adminApi: { ttfbMs: 100 } },
+					{ publicPage: { ttfbMs: 310 }, adminApi: { ttfbMs: 100 } },
+				],
+			},
+		},
+		{
+			"blog-workerd-d1": {
+				pages: { "desktop admin media library": [sample(0.01), sample(0.06)] },
+				coldStart: [
+					{ publicPage: { ttfbMs: 205 }, adminApi: { ttfbMs: 100 } },
+					{ publicPage: { ttfbMs: 320 }, adminApi: { ttfbMs: 100 } },
+				],
+			},
+		},
+		DEFAULT_THRESHOLDS,
+	);
+	assert.deepEqual(
+		confirmed.map((c) => [c.where, c.confirmed, c.medianBefore, c.medianAfter]),
+		[
+			["cold start", false, 290, 300],
+			["desktop admin media library", false, 0.06, 0.06],
+		],
+	);
+});
+
+void test("a regression that holds on medians stays confirmed", () => {
+	const before = [profile()];
+	const after = [profile({ pages: [page({ cls: 0.08 })] })];
+	const { regressions } = compareResults(before, after, DEFAULT_THRESHOLDS);
+	const key = "desktop admin media library";
+	const [row] = confirmRegressions(
+		regressions,
+		before,
+		after,
+		{ "blog-workerd-d1": { pages: { [key]: [sample(0.01), sample(0.012)] } } },
+		{ "blog-workerd-d1": { pages: { [key]: [sample(0.08), sample(0.075)] } } },
+		DEFAULT_THRESHOLDS,
+	);
+	assert.equal(row.confirmed, true);
+	assert.equal(median([3, 1, 2, 10]), 2.5);
 });

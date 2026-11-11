@@ -40,9 +40,18 @@ async function timeFirstRequest(site, path, cookies) {
 	};
 }
 
-export async function measureColdStarts(site, cookies) {
-	return {
-		publicPage: await timeFirstRequest(site, "/"),
-		adminApi: await timeFirstRequest(site, "/_emdash/api/auth/me", cookies),
-	};
+function medianSample(samples) {
+	const sorted = samples.toSorted((a, b) => a.ttfbMs - b.ttfbMs);
+	return { ...sorted[Math.floor(sorted.length / 2)], samplesTtfbMs: samples.map((s) => s.ttfbMs) };
+}
+
+/** Median of `samples` restarts for the first public page and the first admin API request. */
+export async function measureColdStarts(site, cookies, samples = 3) {
+	const publicPage = [];
+	const adminApi = [];
+	for (let i = 0; i < samples; i++) {
+		publicPage.push(await timeFirstRequest(site, "/"));
+		adminApi.push(await timeFirstRequest(site, "/_emdash/api/auth/me", cookies));
+	}
+	return { publicPage: medianSample(publicPage), adminApi: medianSample(adminApi) };
 }

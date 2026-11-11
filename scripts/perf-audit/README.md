@@ -72,7 +72,7 @@ For each profile:
 - the largest packages in the server bundle, read from rolldown's region markers
 - the startup import closure of the server entry
 - client asset count, and the gzip size of the admin document's initial JavaScript
-- cold starts: the runtime is restarted before the first public page and again before the first admin API request
+- cold starts: the runtime is restarted before the first public page and again before the first admin API request, three times each; the median is reported
 
 Interaction scenarios sample element positions with `requestAnimationFrame` and fail when a visible element moves. Scrolling a container does not count, and neither do overlays that appear on top. The scenarios cover typing in the long entry (input-to-frame time per keystroke), autosave and save, a failed save, a save conflict, the command palette and a dialog, moving between admin sections, the phone menu, uploading media, a failed API request, and navigating while offline.
 
@@ -95,6 +95,8 @@ pnpm perf:audit --max-cls 0.05 --max-server-gz 6000 --max-initial-js-gz 2500 --m
 ```
 
 `--workspace <dir>` builds the sites against another checkout's packages. `--compare <dir>` runs the same profiles against a second checkout and prints a before/after table. A row is a regression when CLS rises by more than 0.01, server gzip by more than 5%, API requests by more than 1, image bytes by more than 20%, or a cold start by more than 25%. Change the thresholds with `--threshold-cls`, `--threshold-server-gz`, `--threshold-api`, `--threshold-image-bytes` and `--threshold-cold-start`.
+
+Layout races and cold starts vary between runs of the same code, so each first-pass regression is measured twice more in both workspaces and judged on the median of three. Differences that don't hold up are listed separately in the summary. Set the number of extra samples with `--confirm-samples` (0 turns confirmation off).
 
 Both workspaces need `pnpm install` and `pnpm build`. The compare workspace's sites live in `.perf-audit/compare/`.
 

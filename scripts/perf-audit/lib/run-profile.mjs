@@ -209,3 +209,71 @@ export async function runProfile(ctx) {
 	}
 	return result;
 }
+
+/**
+ * Measure some screens and the cold starts again, `samples` times each, on
+ * the site this run prepared. Compare uses it to confirm a regression
+ * before reporting it, because layout races and cold starts vary between
+ * runs of the same code.
+ */
+export async function remeasureProfile(ctx, { pages, coldStart, samples }) {
+	const { browser, options } = ctx;
+	const { site, cookies, prepared } = await prepareProfile({
+		...ctx,
+		options: { ...options, reuse: true },
+	});
+	const ledger = new RestoreLedger(SEEDED);
+	const out = { pages: {}, coldStart: [] };
+	const warm = () =>
+		fetch(`${site.origin}/`, { headers: { "x-perf-phase": "warm-up" } }).then((r) =>
+			r.arrayBuffer(),
+		);
+	const ensureClean = async (name) => {
+		await site.ensureRunning();
+		if (!ledger.needsRestore()) return;
+		const started = performance.now();
+		await site.stop();
+		await site.restore(SEEDED);
+		await site.start();
+		await warm();
+		ledger.restored(name, performance.now() - started);
+	};
+	try {
+		await warm();
+		const targets = discoverTargets(site, prepared);
+		for (const { name, viewport } of pages) {
+			const target = targets.find((t) => t.name === name);
+			if (!target) continue;
+			const key = `${viewport} ${name}`;
+			out.pages[key] = [];
+			for (let i = 0; i < samples; i++) {
+				await ensureClean(key);
+				const phase = `confirm:${viewport}:${slug(name)}:${i}`;
+				const page = await measurePage({
+					browser,
+					site,
+					target,
+					viewport,
+					cookies: target.kind === "admin" ? cookies : null,
+					options: { ...options, screenshots: false, hold: null },
+					phase,
+					paths: {},
+				});
+				ledger.record(key, { observedSql: eventsForPhase(site, phase).map((e) => e.sql) });
+				out.pages[key].push({
+					cls: page.cls,
+					apiCount: page.api.count,
+					imageBytes: page.bytesByType?.Image ?? 0,
+					oversized: page.oversizedImages.length,
+				});
+			}
+		}
+		if (coldStart) {
+			await ensureClean("cold start");
+			out.coldStart.push(await measureColdStarts(site, cookies, samples));
+		}
+	} finally {
+		await site.close();
+	}
+	return out;
+}

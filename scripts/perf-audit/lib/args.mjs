@@ -28,6 +28,8 @@ Workspaces
   --threshold-api <n>        Compare: flag more than n extra API requests (default: 1)
   --threshold-image-bytes <%>  Compare: flag image byte growth above % (default: 20)
   --threshold-cold-start <%> Compare: flag cold start growth above % (default: 25)
+  --confirm-samples <n>      Compare: measure each candidate regression n more times in both
+                             workspaces and judge on medians (default: 2, 0 turns it off)
 
 Budgets (exit 1 when exceeded)
   --max-cls <n>
@@ -69,6 +71,7 @@ export function parseArgs(argv) {
 		workspace: null,
 		compare: null,
 		thresholds: { ...DEFAULT_THRESHOLDS },
+		confirmSamples: 2,
 		budgets: {},
 		hold: null,
 		slowApi: 0,
@@ -146,6 +149,9 @@ export function parseArgs(argv) {
 				break;
 			case "--threshold-cold-start":
 				options.thresholds.coldStartPercent = number(flag, take(flag));
+				break;
+			case "--confirm-samples":
+				options.confirmSamples = Math.floor(number(flag, take(flag)));
 				break;
 			case "--max-cls":
 				options.budgets.cls = number(flag, take(flag));

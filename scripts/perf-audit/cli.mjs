@@ -11,7 +11,12 @@ import { join, resolve } from "node:path";
 import { chromium } from "@playwright/test";
 
 import { distortingOptions, parseArgs, USAGE } from "./lib/args.mjs";
-import { compareResults, evaluateBudgets } from "./lib/evaluate.mjs";
+import {
+	compareResults,
+	confirmationPlan,
+	confirmRegressions,
+	evaluateBudgets,
+} from "./lib/evaluate.mjs";
 import { generateMedia, generateScenarioUpload } from "./lib/media-gen.mjs";
 import { startPostgres } from "./lib/postgres.mjs";
 import {
@@ -21,7 +26,7 @@ import {
 	selectProfiles,
 } from "./lib/profiles.mjs";
 import { renderSummary } from "./lib/report.mjs";
-import { runProfile } from "./lib/run-profile.mjs";
+import { remeasureProfile, runProfile } from "./lib/run-profile.mjs";
 
 const harnessRoot = resolve(import.meta.dirname, "../..");
 const auditDir = join(harnessRoot, ".perf-audit");
@@ -58,6 +63,38 @@ function listProfiles() {
 	console.log("\n* default profile set");
 }
 
+function workspaceDirs(label, resultsDir) {
+	const base = label === "primary" ? auditDir : join(auditDir, "compare");
+	return {
+		sites: join(base, "sites"),
+		state: join(base, "state"),
+		logs: join(resultsDir, "logs", label),
+		scratch: join(base, "scratch"),
+	};
+}
+
+/** Re-measure candidate regressions on one workspace's prepared sites. */
+async function remeasureWorkspace({ label, workspace, plan, options, browser, resultsDir }) {
+	const dirs = workspaceDirs(label, resultsDir);
+	const profiles = Array.from(plan.keys(), resolveProfile);
+	const pg = profiles.some((p) => p.usesPostgres)
+		? await startPostgres({ stateDir: join(auditDir, "postgres"), log: process.stdout })
+		: null;
+	const out = {};
+	try {
+		for (const profile of profiles) {
+			console.log(`  confirming ${profile.id} (${label})`);
+			out[profile.id] = await remeasureProfile(
+				{ browser, profile, workspace, dirs, pg, options, log: () => {}, label },
+				{ ...plan.get(profile.id), samples: options.confirmSamples },
+			);
+		}
+	} finally {
+		await pg?.stop();
+	}
+	return out;
+}
+
 async function runWorkspace({
 	label,
 	workspace,
@@ -70,13 +107,7 @@ async function runWorkspace({
 	results,
 	onProfile,
 }) {
-	const base = label === "primary" ? auditDir : join(auditDir, "compare");
-	const dirs = {
-		sites: join(base, "sites"),
-		state: join(base, "state"),
-		logs: join(resultsDir, "logs", label),
-		scratch: join(base, "scratch"),
-	};
+	const dirs = workspaceDirs(label, resultsDir);
 	const needsPg = profiles.some((p) => p.usesPostgres);
 	const pg = needsPg
 		? await startPostgres({ stateDir: join(auditDir, "postgres"), log: process.stdout })
@@ -188,6 +219,28 @@ async function main() {
 			});
 			run.errors.push(...other.errors.map((e) => ({ ...e, profile: `${e.profile} (compare)` })));
 			run.comparison = compareResults(run.compareProfiles, run.profiles, options.thresholds);
+			const candidates = run.comparison.regressions;
+			if (candidates.length > 0 && options.confirmSamples > 0) {
+				console.log(`\nConfirming ${candidates.length} candidate regression(s)`);
+				const plan = confirmationPlan(candidates);
+				const shared = { plan, options, browser, resultsDir };
+				const extraBefore = await remeasureWorkspace({
+					...shared,
+					label: "compare",
+					workspace: compare,
+				});
+				const extraAfter = await remeasureWorkspace({ ...shared, label: "primary", workspace });
+				const judged = confirmRegressions(
+					candidates,
+					run.compareProfiles,
+					run.profiles,
+					extraBefore,
+					extraAfter,
+					options.thresholds,
+				);
+				run.comparison.candidates = judged;
+				run.comparison.regressions = judged.filter((c) => c.confirmed);
+			}
 		}
 	} finally {
 		await browser.close();
@@ -206,7 +259,13 @@ async function main() {
 				: `Compare: ${run.comparison.regressions.length} regression(s):`,
 		);
 		for (const r of run.comparison.regressions) {
-			console.log(`  ${r.profile} ${r.where} ${r.metric}: ${r.before} -> ${r.after}`);
+			console.log(
+				`  ${r.profile} ${r.where} ${r.metric}: ${r.medianBefore ?? r.before} -> ${r.medianAfter ?? r.after}`,
+			);
+		}
+		const noise = (run.comparison.candidates ?? []).filter((c) => !c.confirmed);
+		if (noise.length > 0) {
+			console.log(`Compare: ${noise.length} candidate(s) did not hold up on repeat samples.`);
 		}
 	}
 	for (const f of run.budgetFailures) {
