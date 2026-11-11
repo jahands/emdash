@@ -181,13 +181,13 @@ const MEDIA_DRAG_OVERLAY_MODIFIERS = [centerMediaOverlayOnCursor];
  * Media library component with upload, provider tabs, and grid view
  */
 export function MediaLibrary({
-	items = [],
+	items: liveItems = [],
 	isLoading,
 	onUpload,
 	onItemUpdated,
 	hasMore,
 	onLoadMore,
-	pagination,
+	pagination: livePagination,
 	onLocalSearchChange,
 	onLocalMimeFilterChange,
 	onActiveProviderChange,
@@ -447,9 +447,38 @@ export function MediaLibrary({
 		return tabs;
 	}, [providers, t]);
 
+	// Uploads refresh the list behind the open dialog. Holding the previous
+	// list until the dialog closes keeps cards from moving without user input.
+	const [listBehindUpload, setListBehindUpload] = React.useState<{
+		items: MediaItem[];
+		providerItems: MediaProviderItem[] | undefined;
+		pagination: Pick<ListPagination, "page" | "perPage" | "totalCount"> | undefined;
+	} | null>(null);
+	if (uploadDialogOpen && !listBehindUpload) {
+		setListBehindUpload({
+			items: liveItems,
+			providerItems: providerData?.items,
+			pagination: livePagination && {
+				page: livePagination.page,
+				perPage: livePagination.perPage,
+				totalCount: livePagination.totalCount,
+			},
+		});
+	} else if (!uploadDialogOpen && listBehindUpload) {
+		setListBehindUpload(null);
+	}
+	const items = listBehindUpload?.items ?? liveItems;
+	const pagination =
+		livePagination && listBehindUpload?.pagination
+			? { ...livePagination, ...listBehindUpload.pagination }
+			: livePagination;
+
 	// Get current items based on active provider
 	const currentItems = activeProvider === "local" ? items : [];
-	const currentProviderItems = activeProvider !== "local" ? providerData?.items || [] : [];
+	const currentProviderItems =
+		activeProvider !== "local"
+			? (listBehindUpload ? listBehindUpload.providerItems : providerData?.items) || []
+			: [];
 	const currentLoading = activeProvider === "local" ? isLoading : providerLoading;
 	React.useEffect(() => {
 		if (

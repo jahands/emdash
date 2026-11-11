@@ -1,7 +1,7 @@
 import { Toasty } from "@cloudflare/kumo";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { page } from "vitest/browser";
+import { page, userEvent } from "vitest/browser";
 
 import "../../dist/styles.css";
 import { MediaLibrary } from "../../src/components/MediaLibrary.js";
@@ -304,5 +304,41 @@ describe("Media Library loading stability", () => {
 		await expect.element(screen.getByText("Media usage tracking needs attention")).toBeVisible();
 		await log.record("settled");
 		log.expectStable();
+	});
+});
+
+describe("Media Library upload stability", () => {
+	it("keeps existing cards in place until the upload dialog closes", async () => {
+		activation.resolve(activeStatus);
+		progress.resolve(ready);
+		const settledRoute: RouteState = {
+			...loadingRoute,
+			items,
+			isLoading: false,
+			foldersLoading: false,
+		};
+		const screen = await render(library(settledRoute, "ltr"));
+		const card = (filename: string) =>
+			document.querySelector(`[data-media-grid] [aria-label='${filename}']`)!;
+		await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
+		const before = card("document-0.txt").getBoundingClientRect();
+
+		await screen.getByRole("button", { name: "Upload Files" }).click();
+		await expect.element(screen.getByRole("dialog")).toBeVisible();
+		const uploaded: MediaItem = { ...items[0]!, id: "uploaded", filename: "uploaded.txt" };
+		await screen.rerender(library({ ...settledRoute, items: [uploaded, ...items] }, "ltr"));
+		await nextFrames();
+
+		expect(document.querySelector("[data-media-grid] [aria-label='uploaded.txt']")).toBeNull();
+		const during = card("document-0.txt").getBoundingClientRect();
+		expect(during.left).toBeCloseTo(before.left, 0);
+		expect(during.top).toBeCloseTo(before.top, 0);
+
+		await userEvent.keyboard("{Escape}");
+		await expect.element(screen.getByRole("button", { name: "uploaded.txt" })).toBeVisible();
+		expect(document.querySelector("[data-media-grid] [aria-label]")).toHaveAttribute(
+			"aria-label",
+			"uploaded.txt",
+		);
 	});
 });
