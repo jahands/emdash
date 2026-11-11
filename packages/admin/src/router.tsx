@@ -3592,19 +3592,21 @@ function ContentTypesListPage() {
 		return <ErrorScreen error={error.message} />;
 	}
 
+	const loading = collectionsLoading || orphansLoading || blockTypesLoading;
+
 	return (
 		<div className="space-y-6">
 			<ContentTypeList
 				collections={collections ?? []}
 				orphanedTables={orphanedTables}
-				isLoading={collectionsLoading || orphansLoading}
+				isLoading={loading}
 				onDelete={(slug) => deleteMutation.mutateAsync(slug)}
 				isDeleting={deleteMutation.isPending}
 				deleteError={deleteMutation.error}
 				onRegisterOrphan={(slug) => registerOrphanMutation.mutate(slug)}
 				onReorder={(slugs) => reorderMutation.mutate(slugs)}
 			/>
-			<BlockTypeList blockTypes={blockTypes ?? []} isLoading={blockTypesLoading} />
+			{!loading && <BlockTypeList blockTypes={blockTypes ?? []} />}
 		</div>
 	);
 }

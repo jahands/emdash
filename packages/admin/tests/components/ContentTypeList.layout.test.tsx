@@ -7,6 +7,7 @@ import { BlockTypeList } from "../../src/components/BlockTypeList.js";
 import { ContentTypeList } from "../../src/components/ContentTypeList.js";
 import type { SchemaCollection } from "../../src/lib/api";
 import type { BlockType } from "../../src/lib/api/schema.js";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 vi.mock("../../src/lib/api", async () => {
@@ -153,6 +154,34 @@ describe("Content types table", () => {
 		expect(visibleCount(screen.getByText("posts", { exact: true }).elements())).toBe(1);
 		expect(visibleCount(screen.getByText("pages", { exact: true }).elements())).toBe(1);
 	});
+});
+
+describe("Content types while the schema loads", () => {
+	it.each([272, 900])(
+		"leaves everything it drew in place when the collections arrive in a %ipx column",
+		async (width) => {
+			const screen = await render(
+				<div style={{ width }}>
+					<ContentTypeList collections={[]} isLoading onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("heading", { name: "Content Types" })).toBeVisible();
+			const before = snapshotPositions(
+				[...screen.container.querySelectorAll("h1, p, a, th")].filter(
+					(element) => !element.closest('[role="status"]'),
+				),
+			);
+
+			await screen.rerender(
+				<div style={{ width }}>
+					<ContentTypeList collections={collections} onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("link", { name: "Testimonials" })).toBeVisible();
+
+			expect(largestMovement(before)).toBeLessThanOrEqual(1);
+		},
+	);
 });
 
 const fingerprint = (seed: string) => `block-type:v1:sha256:${seed.repeat(64).slice(0, 64)}`;
