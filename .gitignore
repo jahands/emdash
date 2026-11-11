@@ -87,6 +87,7 @@ examples/wp-theme-unit-test/
 !.claude/skills
 
 .perf-query-counts
+.perf-audit/
 query-counts-out/
 
 # Generated query-dump artefacts; tooling lives in scripts/query-dumps/ but
