@@ -8,7 +8,9 @@ import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { measureBuildOutput, measureInitialAdminJs } from "./build-output.mjs";
+import { burstPlan, measureColdBursts } from "./cold-burst.mjs";
 import { measureColdStarts } from "./cold-start.mjs";
+import { failedResponses } from "./evaluate.mjs";
 import { RestoreLedger } from "./ledger.mjs";
 import { measurePage } from "./page-run.mjs";
 import { prepareProfile, SEEDED } from "./prepare.mjs";
@@ -50,8 +52,12 @@ function runtimeInfo(site, workspace) {
 	return info;
 }
 
+function readSeed(site) {
+	return JSON.parse(readFileSync(join(site.siteDir, "seed/seed.json"), "utf8"));
+}
+
 function discoverTargets(site, prepared) {
-	const seed = JSON.parse(readFileSync(join(site.siteDir, "seed/seed.json"), "utf8"));
+	const seed = readSeed(site);
 	const plan = planOwnerEdits(seed);
 	const heaviest = prepared.seed.edits?.heaviestEntry;
 	const firstPage = Object.values(seed.content ?? {}).flat()[0];
@@ -63,6 +69,16 @@ function discoverTargets(site, prepared) {
 		term: plan?.terms?.[0] ?? null,
 		menu: seed.menus?.[0]?.name ?? null,
 		firstPageSlug: firstPage?.slug ?? null,
+	});
+}
+
+function coldBurstPlan(site, prepared) {
+	const seed = readSeed(site);
+	return burstPlan({
+		publicPaths: discoverTargets(site, prepared)
+			.filter((t) => t.kind === "public")
+			.map((t) => t.path),
+		collection: planOwnerEdits(seed)?.collection ?? seed.collections?.[0]?.slug ?? null,
 	});
 }
 
@@ -198,6 +214,25 @@ export async function runProfile(ctx) {
 			} catch (error) {
 				result.errors.push({ measurement: "cold start", error: String(error).slice(0, 800) });
 			}
+			try {
+				await ensureClean("cold-start burst");
+				result.coldBurst = await measureColdBursts(site, {
+					plan: coldBurstPlan(site, prepared),
+					cookies,
+					rounds: options.burstRounds,
+				});
+				ledger.record("cold-start burst", {
+					observedSql: eventsForPhase(site, "cold-burst").map((e) => e.sql),
+				});
+				log(
+					`  cold-start bursts: ${result.coldBurst.failedRequests} of ${result.coldBurst.requests} requests failed`,
+				);
+			} catch (error) {
+				result.errors.push({
+					measurement: "cold-start burst",
+					error: String(error).slice(0, 800),
+				});
+			}
 		}
 		result.queryLog = site.queryEvents.length > 0 ? "available" : "unavailable";
 	} finally {
@@ -208,6 +243,7 @@ export async function runProfile(ctx) {
 			lines: site.serverErrors.length,
 			examples: [...new Set(site.serverErrors)].slice(0, 8),
 		};
+		result.failedResponses = failedResponses(result, site.origin);
 		result.seconds = Math.round((Date.now() - startedAt) / 1000);
 		await site.close();
 	}

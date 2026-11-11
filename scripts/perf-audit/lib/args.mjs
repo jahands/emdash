@@ -46,7 +46,8 @@ Debugging
   --locale ar                Use the Arabic admin
   --dark                     Use the dark color scheme
   --skip-scenarios           Skip interaction scenarios
-  --skip-cold-start          Skip cold start measurements
+  --skip-cold-start          Skip cold start measurements and cold-start bursts
+  --burst-rounds <n>         Times to run each cold-start burst (default: 2)
   --reuse                    Reuse prepared sites when the workspace commit matches
   --run <name>               Results folder name (default: a timestamp). Runs with
                              different names can run at the same time.
@@ -94,6 +95,7 @@ export function parseArgs(argv) {
 		dark: false,
 		skipScenarios: false,
 		skipColdStart: false,
+		burstRounds: 2,
 		reuse: false,
 		run: null,
 		sites: null,
@@ -210,6 +212,9 @@ export function parseArgs(argv) {
 				break;
 			case "--skip-cold-start":
 				options.skipColdStart = true;
+				break;
+			case "--burst-rounds":
+				options.burstRounds = Math.max(1, Math.floor(number(flag, take(flag))));
 				break;
 			case "--reuse":
 				options.reuse = true;

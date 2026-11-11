@@ -13,6 +13,7 @@ import { chromium } from "@playwright/test";
 
 import { distortingOptions, parseArgs, USAGE } from "./lib/args.mjs";
 import {
+	coldBurstFailures,
 	compareResults,
 	confirmationPlan,
 	confirmRegressions,
@@ -292,6 +293,7 @@ async function main() {
 	}
 
 	run.budgetFailures = evaluateBudgets(run.profiles, options.budgets);
+	run.burstFailures = coldBurstFailures(run.profiles);
 	run.finishedAt = new Date().toISOString();
 	writeFileSync(resultsPath, JSON.stringify(run, null, "\t"));
 	const summary = renderSummary(run);
@@ -316,8 +318,14 @@ async function main() {
 	for (const f of run.budgetFailures) {
 		console.log(`Over budget: ${f.profile} ${f.budget} ${f.actual} > ${f.limit} (${f.where})`);
 	}
+	for (const f of run.burstFailures) {
+		const e = f.example;
+		console.log(
+			`Cold-start burst: ${f.profile} ${f.failed} of ${f.requests} requests failed (first: ${e.status || e.error} ${e.path})`,
+		);
+	}
 	if (run.errors.length > 0) return 1;
-	return run.budgetFailures.length > 0 ? 1 : 0;
+	return run.budgetFailures.length > 0 || run.burstFailures.length > 0 ? 1 : 0;
 }
 
 main()

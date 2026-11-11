@@ -390,6 +390,34 @@ export function renderSummary(run) {
 		),
 	);
 
+	const burstProfiles = profiles.filter((p) => p.coldBurst);
+	if (burstProfiles.length > 0) {
+		lines.push("## Cold-start bursts", "");
+		lines.push(
+			"The runtime is restarted before each burst, then every request is sent at once. A request fails unless it gets a 2xx or 3xx response.\n",
+		);
+		lines.push(
+			table(
+				["Profile", "Burst", "Failed per round", "Slowest", "First failure"],
+				burstProfiles.flatMap((p) => {
+					const byName = Map.groupBy(p.coldBurst.bursts, (b) => b.name);
+					return Array.from(byName, ([name, rounds]) => {
+						const first = rounds.flatMap((b) => b.failed)[0];
+						return [
+							p.profile,
+							`${name} (${rounds[0].requests} requests)`,
+							rounds.map((b) => (b.failed.length > 0 ? `**${b.failed.length}**` : "0")).join(", "),
+							ms(Math.max(...rounds.map((b) => b.maxMs))),
+							first
+								? `${first.status || first.error} ${first.path}${first.body ? `: ${first.body.replace(/\s+/g, " ").slice(0, 80)}` : ""}`
+								: "-",
+						];
+					});
+				}),
+			),
+		);
+	}
+
 	const scenarioRows = profiles.flatMap((p) =>
 		(p.scenarios ?? []).map((s) => [
 			p.profile,
@@ -462,6 +490,17 @@ export function renderSummary(run) {
 			"Error lines in the server output during the run. Check them before trusting the numbers above.\n",
 		);
 		lines.push(table(["Profile", "Error lines", "Crashes", "Examples"], serverErrorRows));
+	}
+
+	const failedRows = profiles.flatMap((p) =>
+		(p.failedResponses ?? []).map((f) => [p.profile, f.where, f.path, f.status, f.count]),
+	);
+	if (failedRows.length > 0) {
+		lines.push("## Failed responses", "");
+		lines.push(
+			"Server errors the measurements got back. Workerd answers a request it cancelled with a 500 and logs nothing, so these may not appear under server errors.\n",
+		);
+		lines.push(table(["Profile", "Measurement", "Request", "Status", "Count"], failedRows));
 	}
 
 	const errors = profiles.flatMap((p) =>

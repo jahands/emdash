@@ -75,6 +75,7 @@ For each profile:
 - the startup import closure of the server entry
 - client asset count, and the gzip size of the admin document's initial JavaScript
 - cold starts: the runtime is restarted before the first public page and again before the first admin API request, three times each; the median is reported
+- cold-start bursts: the runtime is restarted, then at least 15 signed-out page requests are sent at once, and again with at least 15 signed-in admin API requests mixed in, twice each (`--burst-rounds <n>` changes that). Any response that is not 2xx or 3xx fails the run. Workerd answers a request it cancelled with a 500 and logs nothing, so the summary lists failed responses separately from server errors.
 
 Interaction scenarios sample element positions with `requestAnimationFrame` and fail when a visible element moves. Scrolling a container does not count, and neither do overlays that appear on top. An element that is removed counts as moved when a new element takes its place somewhere else; one removed with nothing in its place is listed separately. Regions that grow by design are measured rather than skipped: while typing, the paragraph being edited may grow and everything below it may move down by exactly that much, and the same goes for the media grid gaining an upload. When the command palette, the upload dialog or the phone menu opens, the scenario screenshots it while it is open and samples positions inside it while it settles.
 

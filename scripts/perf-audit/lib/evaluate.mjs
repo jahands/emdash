@@ -269,3 +269,53 @@ export function confirmRegressions(candidates, before, after, extraBefore, extra
 		};
 	});
 }
+
+function sameOriginPath(url, origin) {
+	try {
+		const parsed = new URL(url);
+		return parsed.origin === origin ? parsed.pathname + parsed.search : null;
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Server errors (5xx) the profile's own requests got back, from page loads,
+ * the server pass and cold starts, grouped by where and path. Workerd answers
+ * a request it cancelled with a 500 and logs nothing, so these can be missing
+ * from the server output.
+ */
+export function failedResponses(profile, origin) {
+	const counts = new Map();
+	const add = (where, path, status) => {
+		if (!(status >= 500)) return;
+		const key = `${where}\u0000${path}\u0000${status}`;
+		const entry = counts.get(key) ?? { where, path, status, count: 0 };
+		entry.count++;
+		counts.set(key, entry);
+	};
+	for (const page of profile.pages ?? []) {
+		const where = `${page.viewport} ${page.name}`;
+		for (const r of page.waterfall ?? []) {
+			const path = sameOriginPath(r.url, origin);
+			if (path) add(where, path, r.status);
+		}
+		for (const r of page.serverPass ?? []) add(`${where} (server pass)`, r.path, r.status);
+	}
+	for (const sample of Object.values(profile.coldStart ?? {})) {
+		add("cold start", sample.path, sample.status);
+	}
+	return [...counts.values()];
+}
+
+/** Cold-start burst requests that did not get a 2xx or 3xx response. */
+export function coldBurstFailures(profiles) {
+	return profiles
+		.filter((p) => p.coldBurst?.failedRequests > 0)
+		.map((p) => ({
+			profile: p.profile,
+			failed: p.coldBurst.failedRequests,
+			requests: p.coldBurst.requests,
+			example: p.coldBurst.bursts.flatMap((b) => b.failed)[0],
+		}));
+}
