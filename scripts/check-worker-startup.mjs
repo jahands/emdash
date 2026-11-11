@@ -1,16 +1,16 @@
 #!/usr/bin/env node
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import { fileClosure } from "./perf-audit/lib/closure.mjs";
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const defaultConfig = resolve(repoRoot, "templates/starter-cloudflare/dist/server/wrangler.json");
 const configPath = resolve(process.argv[2] ?? defaultConfig);
 const maxModules = 30;
 const maxBytes = 2_000_000;
-const staticImportPattern = /\b(?:import|export)\s+(?:[^"'()]*?\s+from\s*)?["']([^"']+)["']/g;
-const sourceRegionPattern = /^\/\/#region (.+)$/gm;
 const forbiddenSources = [
 	{ label: "WordPress WXR importer", pattern: /(?:parse5|cli\/wxr|import\/wxr)/i },
 	{ label: "Tiptap or ProseMirror", pattern: /(?:@tiptap|prosemirror)/i },
@@ -38,34 +38,7 @@ if (typeof config.main !== "string" || config.main.length === 0) {
 
 const buildRoot = dirname(configPath);
 const entry = isAbsolute(config.main) ? config.main : resolve(buildRoot, config.main);
-const modules = new Set();
-const pending = [entry];
-
-while (pending.length > 0) {
-	const file = pending.pop();
-	if (!file || modules.has(file) || !existsSync(file)) continue;
-	modules.add(file);
-
-	const source = readFileSync(file, "utf8");
-	staticImportPattern.lastIndex = 0;
-	for (const match of source.matchAll(staticImportPattern)) {
-		const specifier = match[1];
-		if (!specifier?.startsWith(".")) continue;
-		const dependency = resolve(dirname(file), specifier);
-		if (dependency.startsWith(buildRoot)) pending.push(dependency);
-	}
-}
-
-const eagerFiles = [...modules];
-const eagerBytes = eagerFiles.reduce((total, file) => total + statSync(file).size, 0);
-const sourceRegions = [];
-for (const file of eagerFiles) {
-	const source = readFileSync(file, "utf8");
-	sourceRegionPattern.lastIndex = 0;
-	for (const match of source.matchAll(sourceRegionPattern)) {
-		if (match[1]) sourceRegions.push(match[1]);
-	}
-}
+const { files: eagerFiles, bytes: eagerBytes, sourceRegions } = fileClosure(entry, buildRoot);
 
 const forbidden = forbiddenSources.flatMap(({ label, pattern }) => {
 	const matches = sourceRegions.filter((source) => pattern.test(source));
