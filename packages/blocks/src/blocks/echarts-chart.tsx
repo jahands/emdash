@@ -153,16 +153,12 @@ function CustomChartBlock({ block, isDarkMode }: { block: ChartBlock; isDarkMode
 	);
 }
 
-export function ChartBlockComponent({ block }: { block: ChartBlock }) {
+export default function EChartsChart({ block }: { block: ChartBlock }) {
 	const isDarkMode = useIsDarkMode();
 
-	return (
-		<div className="rounded-lg border border-kumo-line p-4">
-			{block.config.chart_type === "timeseries" ? (
-				<TimeseriesChartBlock block={block} isDarkMode={isDarkMode} />
-			) : (
-				<CustomChartBlock block={block} isDarkMode={isDarkMode} />
-			)}
-		</div>
+	return block.config.chart_type === "timeseries" ? (
+		<TimeseriesChartBlock block={block} isDarkMode={isDarkMode} />
+	) : (
+		<CustomChartBlock block={block} isDarkMode={isDarkMode} />
 	);
 }
