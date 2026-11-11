@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import { loadSharp } from "../lib/deps.mjs";
+import { decodedSize } from "../lib/image-pixels.mjs";
 import {
 	auditImages,
 	computeCls,
 	computeTbt,
+	imageStates,
+	oversizeFactor,
 	parseServerTiming,
 	summarizeRequests,
 } from "../lib/metrics.mjs";
@@ -48,21 +52,93 @@ void test("TBT counts only the part of long tasks over 50 ms after FCP", () => {
 	assert.equal(computeTbt(tasks, 100), 50 + 70);
 });
 
+const loadedImage = (src, natural, rendered, extra = {}) => ({
+	src,
+	complete: true,
+	visible: true,
+	naturalWidth: natural[0],
+	naturalHeight: natural[1],
+	renderedWidth: rendered[0],
+	renderedHeight: rendered[1],
+	...extra,
+});
+
 void test("oversized images need both a 2x pixel excess and 50 KiB", () => {
 	const images = [
-		{ src: "a", naturalWidth: 4000, naturalHeight: 3000, renderedWidth: 176, renderedHeight: 99 },
-		{ src: "b", naturalWidth: 400, naturalHeight: 300, renderedWidth: 200, renderedHeight: 150 },
-		{ src: "c", naturalWidth: 4000, naturalHeight: 3000, renderedWidth: 176, renderedHeight: 99 },
-		{ src: "d", naturalWidth: 900, naturalHeight: 600, renderedWidth: 200, renderedHeight: 150 },
+		loadedImage("a", [4000, 3000], [176, 99]),
+		loadedImage("b", [400, 300], [200, 150]),
+		loadedImage("c", [4000, 3000], [176, 99]),
+		loadedImage("d", [900, 600], [200, 150]),
 	];
 	const bytes = { a: 3_000_000, b: 80_000, c: 20_000, d: 200_000 };
-	const result = auditImages(images, 2, (src) => bytes[src]);
+	const result = auditImages(images, 2, { bytesForUrl: (src) => bytes[src] });
 	assert.deepEqual(
 		result.map((r) => r.oversized),
 		[true, false, false, true],
 	);
 	assert.equal(result[0].needed, "352x198");
 	assert.equal(result[3].factor, 2.3);
+});
+
+void test("oversize is judged on the decoded pixels, not the density-corrected naturalWidth", () => {
+	// A 2560px file chosen from a srcset for an 1136px slot reports naturalWidth 1136.
+	const hero = loadedImage("hero", [1136, 852], [568, 284], { srcset: "a 1136w, b 2560w" });
+	const decoded = { width: 2560, height: 1920, from: "decoded" };
+	const [withPixels] = auditImages([hero], 2, {
+		bytesForUrl: () => 400_000,
+		pixelsForUrl: () => decoded,
+	});
+	assert.equal(withPixels.pixels, "2560x1920");
+	assert.equal(withPixels.pixelsFrom, "decoded");
+	assert.equal(withPixels.natural, "1136x852");
+	assert.equal(withPixels.oversized, true);
+	const [fallback] = auditImages([hero], 2, { bytesForUrl: () => 400_000 });
+	assert.equal(fallback.pixelsFrom, "naturalWidth");
+	assert.equal(fallback.oversized, false);
+});
+
+void test("object-fit cover only counts the side that is not cropped", () => {
+	const box = { renderedWidth: 300, renderedHeight: 300 };
+	const pixels = { width: 1200, height: 600 };
+	assert.equal(oversizeFactor(pixels, { ...box, objectFit: "cover" }, 1).factor, 2);
+	assert.equal(oversizeFactor(pixels, { ...box, objectFit: "fill" }, 1).factor, 4);
+});
+
+void test("offscreen, failed and pending images are kept apart from painted ones", () => {
+	const images = [
+		loadedImage("painted", [4000, 3000], [176, 99]),
+		loadedImage("below", [4000, 3000], [176, 99], { visible: false }),
+		{ ...loadedImage("broken", [0, 0], [100, 100]), complete: true },
+		{ ...loadedImage("lazy", [0, 0], [100, 100], { loading: "lazy" }), complete: false },
+		loadedImage("404", [0, 0], [100, 100]),
+	];
+	const result = auditImages(images, 2, {
+		bytesForUrl: () => 3_000_000,
+		requestFailed: (src) => src === "404",
+	});
+	assert.deepEqual(
+		result.map((r) => r.state),
+		["painted", "offscreen", "failed", "not-loaded", "failed"],
+	);
+	assert.deepEqual(
+		result.map((r) => r.oversized),
+		[true, false, false, false, false],
+	);
+	assert.equal(result[1].factor, 15.2, "offscreen images still report their excess");
+	assert.deepEqual(imageStates(result), { painted: 1, offscreen: 1, failed: 2, "not-loaded": 1 });
+});
+
+void test("decoded sizes follow EXIF orientation", async () => {
+	const sharp = loadSharp();
+	const rotated = await sharp({
+		create: { width: 300, height: 200, channels: 3, background: "#777" },
+	})
+		.jpeg()
+		.withMetadata({ orientation: 6 })
+		.toBuffer();
+	assert.deepEqual(await decodedSize(rotated), { width: 200, height: 300 });
+	const svg = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"/>');
+	assert.equal(await decodedSize(svg), null);
 });
 
 void test("waves count requests that waited for an earlier response", () => {

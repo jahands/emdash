@@ -46,6 +46,23 @@ function oversizedRows(profile) {
 	return [...seen.values()].toSorted((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0));
 }
 
+function imageRows(profile, state) {
+	const seen = new Map();
+	for (const page of profile.pages ?? []) {
+		for (const img of page.images ?? []) {
+			if (img.state !== state) continue;
+			const key = `${page.viewport}|${img.src}`;
+			const entry = seen.get(key) ?? { ...img, viewport: page.viewport, screens: [] };
+			entry.screens.push(page.name);
+			seen.set(key, entry);
+		}
+	}
+	return [...seen.values()].toSorted((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0));
+}
+
+const pixelsCell = (img) =>
+	img.pixelsFrom === "naturalWidth" ? `${img.pixels} (naturalWidth)` : img.pixels;
+
 export function renderSummary(run) {
 	const lines = [];
 	lines.push(`# Perf audit: ${run.name}`, "");
@@ -216,19 +233,19 @@ export function renderSummary(run) {
 
 	lines.push("## Oversized images", "");
 	lines.push(
-		"More than 2x the pixels the screen needs (rendered size x device pixel ratio) and over 50 KiB.\n",
+		"Painted images with more than 2x the pixels the screen needs (rendered size x device pixel ratio) and over 50 KiB. Pixels are the selected file's own dimensions, read from the file; `naturalWidth` is divided by the srcset density and is only used when the file could not be read.\n",
 	);
 	const overs = profiles.flatMap((p) => oversizedRows(p).map((img) => ({ p, img })));
 	lines.push(
 		table(
-			["Profile", "Viewport", "Image", "Natural", "Needed", "Factor", "Bytes", "Screens"],
+			["Profile", "Viewport", "Image", "Pixels", "Needed", "Factor", "Bytes", "Screens"],
 			overs
 				.slice(0, 30)
 				.map(({ p, img }) => [
 					p.profile,
 					img.viewport,
 					shortUrl(img.src, p.origin) + (img.emulated ? " (emulated resize)" : ""),
-					img.natural,
+					pixelsCell(img),
 					img.needed,
 					`${img.factor}x`,
 					kib(img.bytes),
@@ -237,6 +254,46 @@ export function renderSummary(run) {
 		),
 	);
 	if (overs.length > 30) lines.push(`_${overs.length - 30} more in results.json._\n`);
+
+	const failed = profiles.flatMap((p) => imageRows(p, "failed").map((img) => ({ p, img })));
+	lines.push("## Images that failed to load", "");
+	lines.push(
+		table(
+			["Profile", "Viewport", "Image", "Screens"],
+			failed
+				.slice(0, 20)
+				.map(({ p, img }) => [
+					p.profile,
+					img.viewport,
+					shortUrl(img.src || "(no src)", p.origin),
+					[...new Set(img.screens)].slice(0, 3).join("; "),
+				]),
+		),
+	);
+
+	const offscreen = profiles.flatMap((p) => imageRows(p, "offscreen").map((img) => ({ p, img })));
+	lines.push("## Images loaded outside the viewport", "");
+	lines.push(
+		"Downloaded during the page load but not painted in the first viewport, largest first. Not counted as oversized.\n",
+	);
+	lines.push(
+		table(
+			["Profile", "Viewport", "Image", "Pixels", "Rendered", "Loading", "Bytes", "Screens"],
+			offscreen
+				.slice(0, 20)
+				.map(({ p, img }) => [
+					p.profile,
+					img.viewport,
+					shortUrl(img.src, p.origin),
+					pixelsCell(img),
+					img.rendered,
+					img.loading ?? "eager",
+					kib(img.bytes),
+					[...new Set(img.screens)].slice(0, 3).join("; "),
+				]),
+		),
+	);
+	if (offscreen.length > 20) lines.push(`_${offscreen.length - 20} more in results.json._\n`);
 
 	lines.push("## Build output", "");
 	lines.push(

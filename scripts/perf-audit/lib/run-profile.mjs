@@ -124,6 +124,7 @@ export async function runProfile(ctx) {
 
 		const targets = filterTargets(discoverTargets(site, prepared), options.only);
 		const passCache = new Map();
+		const pixelCache = new Map();
 		for (const viewport of options.viewports) {
 			for (const target of targets) {
 				const name = `${viewport} ${target.name}`;
@@ -140,6 +141,7 @@ export async function runProfile(ctx) {
 						options,
 						phase,
 						paths: { screenshot: `${shotBase}.png`, hold: `${shotBase}-hold.png` },
+						pixelCache,
 					});
 					const sql = eventsForPhase(site, phase).map((e) => e.sql);
 					page.serverQueriesLogged = sql.length;

@@ -72,30 +72,83 @@ export const OVERSIZE_FACTOR = 2;
 export const OVERSIZE_MIN_BYTES = 50 * 1024;
 
 /**
- * Flag images whose natural size is more than twice what the viewport
- * needs (rendered size times device pixel ratio) and that cost more than
- * 50 KB on the wire.
+ * How far an image's pixels exceed what its box needs: rendered size times
+ * device pixel ratio. `object-fit: cover` crops the longer side, so only the
+ * smaller ratio is resolution the screen can show.
  */
-export function auditImages(images, dpr, bytesForUrl) {
+export function oversizeFactor(pixels, { renderedWidth, renderedHeight, objectFit }, dpr) {
+	const neededWidth = Math.max(1, Math.ceil(renderedWidth * dpr));
+	const neededHeight = Math.max(1, Math.ceil(renderedHeight * dpr));
+	const fx = pixels.width / neededWidth;
+	const fy = pixels.height / neededHeight;
+	return {
+		neededWidth,
+		neededHeight,
+		factor: objectFit === "cover" ? Math.min(fx, fy) : Math.max(fx, fy),
+	};
+}
+
+/**
+ * Where an image stands after the page settled: `painted` in the viewport,
+ * loaded but `offscreen` (or hidden), `failed`, or `not-loaded` (lazy or
+ * still pending).
+ */
+export function imageState(img, requestFailed = false) {
+	if (requestFailed) return "failed";
+	if (img.complete && img.naturalWidth === 0) return img.src ? "failed" : "not-loaded";
+	if (!img.complete) return "not-loaded";
+	return img.visible ? "painted" : "offscreen";
+}
+
+/**
+ * Audit every image on the page. Oversize is judged on the decoded image's
+ * real pixels (`pixelsForUrl`); `naturalWidth` is density-corrected for
+ * `srcset` width descriptors, so it is only the fallback. Painted images are
+ * flagged when the excess is over 2x and they cost more than 50 KiB.
+ */
+export function auditImages(
+	images,
+	dpr,
+	{ bytesForUrl, pixelsForUrl = () => null, requestFailed = () => false },
+) {
 	return images.map((img) => {
-		const neededWidth = Math.max(1, Math.ceil(img.renderedWidth * dpr));
-		const neededHeight = Math.max(1, Math.ceil(img.renderedHeight * dpr));
-		const factor = Math.max(img.naturalWidth / neededWidth, img.naturalHeight / neededHeight);
-		const bytes = bytesForUrl(img.src);
-		const oversized =
+		const state = imageState(img, requestFailed(img.src));
+		const bytes = bytesForUrl(img.src) ?? null;
+		const decoded = state === "painted" || state === "offscreen" ? pixelsForUrl(img.src) : null;
+		const pixels = decoded ?? { width: img.naturalWidth, height: img.naturalHeight };
+		const out = {
+			src: img.src,
+			state,
+			pixels: `${pixels.width}x${pixels.height}`,
+			pixelsFrom: decoded ? decoded.from : "naturalWidth",
+			natural: `${img.naturalWidth}x${img.naturalHeight}`,
+			rendered: `${Math.round(img.renderedWidth)}x${Math.round(img.renderedHeight)}`,
+			bytes,
+			loading: img.loading ?? null,
+			fetchPriority: img.fetchPriority ?? null,
+			sizes: img.sizes || null,
+			srcset: Boolean(img.srcset),
+			oversized: false,
+		};
+		if (state !== "painted" && state !== "offscreen") return out;
+		if (img.renderedWidth <= 0 || img.renderedHeight <= 0) return out;
+		const { neededWidth, neededHeight, factor } = oversizeFactor(pixels, img, dpr);
+		out.needed = `${neededWidth}x${neededHeight}`;
+		out.factor = Math.round(factor * 10) / 10;
+		out.oversized =
+			state === "painted" &&
 			factor > OVERSIZE_FACTOR &&
 			bytes !== null &&
-			bytes !== undefined &&
 			bytes > OVERSIZE_MIN_BYTES;
-		return {
-			src: img.src,
-			natural: `${img.naturalWidth}x${img.naturalHeight}`,
-			needed: `${neededWidth}x${neededHeight}`,
-			factor: Math.round(factor * 10) / 10,
-			bytes: bytes ?? null,
-			oversized,
-		};
+		return out;
 	});
+}
+
+/** Counts of images by state. */
+export function imageStates(audited) {
+	const counts = { painted: 0, offscreen: 0, failed: 0, "not-loaded": 0 };
+	for (const img of audited) counts[img.state] = (counts[img.state] ?? 0) + 1;
+	return counts;
 }
 
 export function isApiRequest(url) {

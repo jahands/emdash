@@ -62,7 +62,7 @@ For each screen:
 - API requests, their bytes, the time to the last API response, and API waves (calls that waited for an earlier response)
 - the request waterfall, with the request each one waited on
 - transfer bytes by resource type
-- every image painted in the viewport, flagged when it has more than twice the pixels the screen needs (rendered size × device pixel ratio) and costs over 50 KiB
+- every image on the page, as painted in the viewport, loaded but outside it, failed, or not loaded (lazy). Painted images are flagged when they have more than twice the pixels the screen needs (rendered size × device pixel ratio) and cost over 50 KiB. Pixels are the selected file's own dimensions: the harness fetches each image's `currentSrc` again and reads its header, because `naturalWidth` is divided by the `srcset` density (a 2560 px file picked for an 1136 px slot reports 1136). For `object-fit: cover` only the uncropped side counts.
 
 After each page load, the page's GET document and API requests are replayed one at a time. The query log (`EMDASH_QUERY_LOG=1`) gives the query count per request. On Postgres profiles the latency proxy also records round trips, new connections, and sequential waves.
 
@@ -173,4 +173,4 @@ FONTCONFIG_FILE=/path/to/arabic-fonts.conf pnpm perf:audit --locale ar
 node --test scripts/perf-audit/tests/*.test.mjs
 ```
 
-The tests cover profile materialization against the real templates, port leasing and slot locks, the seeded image counts, CLS session windows, blocking time, oversized-image detection, waves, the resize emulation against Cloudflare's documented examples, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.
+The tests cover profile materialization against the real templates, port leasing and slot locks, the seeded image counts, CLS session windows, blocking time, oversized-image detection on decoded pixels, image states, waves, the resize emulation against Cloudflare's documented examples, budgets and comparison, restore bookkeeping, the latency proxy, and argument parsing. They also run as part of `pnpm test:unit`.

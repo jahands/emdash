@@ -5,9 +5,11 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 
+import { measurePixels } from "./image-pixels.mjs";
 import {
 	auditImages,
 	computeCls,
+	imageStates,
 	computeTbt,
 	isApiRequest,
 	parseServerTiming,
@@ -216,8 +218,9 @@ export async function measurePage({
 	options,
 	paths,
 	phase,
+	pixelCache = new Map(),
 }) {
-	const stats = { resize: { served: 0, failed: 0 } };
+	const stats = { resize: {} };
 	const context = await openContext(browser, { site, viewport, cookies, options, phase, stats });
 	const notes = [];
 	try {
@@ -253,7 +256,19 @@ export async function measurePage({
 			const match = requests.findLast((r) => r.url === src && r.bytes > 0);
 			return match ? match.bytes : null;
 		};
-		const images = auditImages(probe.images, probe.dpr, bytesForUrl).map((img) => ({
+		const requestFailed = (src) =>
+			requests.some((r) => r.url === src && (r.failed || (r.status ?? 0) >= 400));
+		const loaded = probe.images.filter((img) => img.complete && img.naturalWidth > 0);
+		const pixels = await measurePixels(
+			context,
+			loaded.map((img) => img.src),
+			{ cache: pixelCache, emulated: stats.resize.outputs, phase },
+		);
+		const images = auditImages(probe.images, probe.dpr, {
+			bytesForUrl,
+			requestFailed,
+			pixelsForUrl: (src) => pixels.get(src) ?? null,
+		}).map((img) => ({
 			...img,
 			emulated: requests.find((r) => r.url === img.src)?.emulated ?? null,
 		}));
@@ -288,8 +303,17 @@ export async function measurePage({
 			maxDepth: summary.maxDepth,
 			waterfall: summary.waterfall,
 			images,
+			imageStates: imageStates(images),
 			oversizedImages: images.filter((img) => img.oversized),
-			resizeEmulation: site.profile.images === "url" ? stats.resize : undefined,
+			resizeEmulation:
+				site.profile.images === "url"
+					? {
+							served: stats.resize.served,
+							failed: stats.resize.failed,
+							revalidated: stats.resize.revalidated,
+							ignoredOptions: stats.resize.ignoredOptions,
+						}
+					: undefined,
 			consoleErrors: consoleErrors.slice(0, 10),
 			notes,
 		};

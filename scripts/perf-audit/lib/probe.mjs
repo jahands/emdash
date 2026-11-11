@@ -94,7 +94,7 @@ export function installProbe() {
 	);
 }
 
-/** Collect probe data plus an audit of images painted in the viewport. */
+/** Collect probe data plus every image on the page, loaded or not. */
 export function collectProbe() {
 	const probe = window.__perfProbe ?? {
 		shifts: [],
@@ -108,20 +108,24 @@ export function collectProbe() {
 	const vh = window.innerHeight;
 	const images = [];
 	for (const img of document.querySelectorAll("img")) {
-		if (!img.complete || img.naturalWidth === 0) continue;
 		const r = img.getBoundingClientRect();
-		const visible =
-			r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
 		const style = getComputedStyle(img);
-		if (!visible || style.visibility === "hidden" || style.display === "none") continue;
+		const inViewport =
+			r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < vh && r.left < vw;
 		images.push({
 			src: img.currentSrc || img.src,
 			alt: img.alt,
+			complete: img.complete,
+			visible: inViewport && style.visibility !== "hidden" && style.display !== "none",
 			naturalWidth: img.naturalWidth,
 			naturalHeight: img.naturalHeight,
 			renderedWidth: r.width,
 			renderedHeight: r.height,
 			objectFit: style.objectFit,
+			loading: img.getAttribute("loading"),
+			fetchPriority: img.getAttribute("fetchpriority"),
+			sizes: img.getAttribute("sizes"),
+			srcset: img.getAttribute("srcset"),
 		});
 	}
 	const resources = performance.getEntriesByType("resource").map((e) => ({
