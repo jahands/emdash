@@ -252,6 +252,10 @@
     "./internal/plugins/http-wire": {
       "types": "./dist/plugins/http-wire.d.mts",
       "default": "./dist/plugins/http-wire.mjs"
+    },
+    "./internal/node-compression": {
+      "types": "./dist/astro/node/compression.d.mts",
+      "default": "./dist/astro/node/compression.mjs"
     }
   },
   "imports": {

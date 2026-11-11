@@ -117,6 +117,18 @@ emdash({
 });
 ```
 
+### `compression`
+
+**Optional.** Controls whether the `@astrojs/node` standalone server compresses responses. The default is `true`. Other adapters and the Node adapter's middleware mode are not affected.
+
+When enabled, the build stores Brotli and gzip copies of the client assets, and the server compresses pages and API responses as it sends them. Set `compression: false` when a reverse proxy or CDN in front of the server compresses responses. [Deploy to Node.js](/deployment/nodejs/#compression) lists which responses are compressed.
+
+```js
+emdash({
+	compression: false,
+});
+```
+
 ### `imagePlaceholders`
 
 **Optional.** Controls whether EmDash generates blurhash and dominant-color placeholders for uploaded images. The default is `true` on every runtime, including Cloudflare Workers.

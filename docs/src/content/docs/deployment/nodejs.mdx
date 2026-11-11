@@ -64,6 +64,27 @@ Set the variable both where `npm run build` runs and where the server runs. The 
 
 The proxy must also forward WebSocket upgrades for co-editing. See [Forward WebSocket upgrades](#forward-websocket-upgrades).
 
+## Compression
+
+The standalone server compresses responses for browsers that send `Accept-Encoding`. It uses Brotli when the browser accepts it and gzip otherwise:
+
+- JavaScript, CSS and other text assets in `dist/client/_astro/` are compressed during `npm run build`. The build writes a `.br` and a `.gz` copy next to each file, and the server sends the copy that matches the request.
+- Pages, API responses and other text responses are compressed as the server sends them.
+
+Images, fonts in WOFF formats, responses smaller than 1 KiB, event streams, range requests and responses marked `Cache-Control: no-transform` are sent as they are. Compressible responses carry `Vary: Accept-Encoding`, so caches keep the compressed and uncompressed versions apart.
+
+A reverse proxy or CDN in front of the server passes these responses through without compressing them again. To leave compression entirely to the proxy, set `compression: false`:
+
+```js title="astro.config.mjs"
+emdash({
+	database: sqlite({ url: "file:./data/emdash.db" }),
+	storage: local({ directory: "./data/uploads", baseUrl: "/_emdash/api/media/file" }),
+	compression: false,
+}),
+```
+
+With `node({ mode: "middleware" })`, your own server sends the responses, so EmDash does not compress them. Add compression in that server, for example with Express's [`compression`](https://expressjs.com/en/resources/middleware/compression.html) middleware.
+
 ## Build and run
 
 1. Build the project:

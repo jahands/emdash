@@ -44,6 +44,7 @@ import { loadDevEnv } from "./dev-env.js";
 import { startDevSchedulerBridge } from "./dev-scheduler-bridge.js";
 import { createDebouncedTypegenRefresh, listenForDevTypegenRefresh } from "./dev-typegen.js";
 import { notoSans } from "./font-provider.js";
+import { createNodeCompression } from "./node-compression.js";
 import {
 	hasUserDefinedPublicRoute,
 	injectCoreRoutes,
@@ -621,6 +622,8 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 	let usesCloudflareAdapter = false;
 	let normalizedI18n: ReturnType<typeof normalizeAstroI18n> = null;
 	const migrationMetadata = createMigrationIntegrationMetadata(resolvedConfig.database);
+	const nodeCompression =
+		resolvedConfig.compression === false ? undefined : createNodeCompression();
 
 	const integration: AstroIntegration = {
 		name: "emdash",
@@ -758,21 +761,26 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					);
 				}
 
+				const viteConfig = createViteConfig(
+					{
+						serializableConfig,
+						resolvedConfig,
+						pluginDescriptors,
+						astroConfig,
+					},
+					command,
+				);
+				if (nodeCompression && astroConfig.adapter?.name === "@astrojs/node") {
+					viteConfig.plugins = [...(viteConfig.plugins ?? []), nodeCompression.vitePlugin];
+				}
+
 				updateConfig({
 					security: securityConfig,
 					...(Object.keys(imageConfig).length ? { image: imageConfig } : {}),
 					// fonts is a valid AstroConfig key but may not be in the
 					// type definition for the minimum supported Astro version
 					...({ fonts: emdashFonts } as Record<string, unknown>),
-					vite: createViteConfig(
-						{
-							serializableConfig,
-							resolvedConfig,
-							pluginDescriptors,
-							astroConfig,
-						},
-						command,
-					),
+					vite: viteConfig,
 				});
 
 				// Astro reads a route's `export const prerender` by matching the file's
@@ -816,6 +824,7 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					typeof cookie === "string"
 						? cookie || "astro-session"
 						: (cookie?.name ?? "astro-session");
+				nodeCompression?.setConfig(finalConfig);
 				const warning = missingReactIntegrationWarning(finalConfig.integrations);
 				if (warning) logger.warn(warning);
 				const adapterWarning = adapterVersionMismatchWarning(finalConfig.root);
@@ -885,7 +894,8 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					refreshDevTypes();
 				});
 			},
-			"astro:build:done": ({ logger }) => {
+			"astro:build:done": async ({ logger }) => {
+				await nodeCompression?.precompress(logger);
 				logger.info("Build complete");
 			},
 		},
