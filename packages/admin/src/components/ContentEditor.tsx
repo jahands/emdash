@@ -753,6 +753,8 @@ export interface ContentEditorProps {
 	adminLayout?: ListLayout;
 	/** Available users for author selection (only shown to editors+) */
 	users?: UserListItem[];
+	/** While the user list loads, the Ownership section holds its place. */
+	usersLoading?: boolean;
 	/** Callback when author is changed */
 	onAuthorChange?: (authorId: string | null) => void;
 	/** Available byline profiles */
@@ -875,6 +877,7 @@ export function ContentEditor({
 	currentUser,
 	adminLayout,
 	users,
+	usersLoading,
 	onAuthorChange,
 	availableBylines,
 	availableBylinesLoaded,
@@ -3087,6 +3090,7 @@ export function ContentEditor({
 										currentUser={currentUser}
 										adminLayout={adminLayout}
 										users={users}
+										usersLoading={usersLoading}
 										onAuthorChange={onAuthorChange}
 										activeBylines={activeBylines}
 										inferredByline={resolvedItemBylines.inferredByline}

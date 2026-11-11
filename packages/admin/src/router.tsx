@@ -1619,7 +1619,7 @@ function ContentEditPage() {
 	}, [rawItem, draftRevision]);
 
 	// Fetch users list for author selector (only if user is editor+)
-	const { data: usersData } = useQuery({
+	const { data: usersData, isLoading: usersLoading } = useQuery({
 		queryKey: ["users"],
 		queryFn: () => fetchUsers({ limit: 100 }),
 		enabled: !!currentUser && currentUser.role >= ROLE_EDITOR,
@@ -2620,6 +2620,7 @@ function ContentEditPage() {
 			currentUser={currentUser}
 			adminLayout={adminLayout.editor}
 			users={usersData?.items}
+			usersLoading={usersLoading}
 			onAuthorChange={handleAuthorChange}
 			i18n={i18n}
 			translations={translationsData?.translations}

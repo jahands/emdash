@@ -958,6 +958,8 @@ export interface ContentSettingsPanelProps {
 	currentUser?: CurrentUserInfo;
 	adminLayout?: ListLayout;
 	users?: UserListItem[];
+	/** While the user list loads, the Ownership section holds its place. */
+	usersLoading?: boolean;
 	onAuthorChange?: (authorId: string | null) => void;
 	activeBylines: BylineCreditInput[];
 	inferredByline?: BylineSummary | null;
@@ -1028,6 +1030,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	currentUser,
 	adminLayout = EMPTY_LIST_LAYOUT,
 	users,
+	usersLoading,
 	onAuthorChange,
 	activeBylines,
 	inferredByline,
@@ -1308,22 +1311,25 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 					</div>
 				</ContentSettingsSection>
 
-				{currentUser && currentUser.role >= ROLE_EDITOR && users && users.length > 0 && (
-					<ContentSettingsSection id="ownership">
-						<div className="p-4">
-							<Text as="h3" DANGEROUS_className="mb-4 font-semibold">
-								{t`Ownership`}
-							</Text>
-							<div data-emdash-outside="author">
-								<AuthorSelector
-									authorId={item?.authorId || null}
-									users={users}
-									onChange={onAuthorChange}
-								/>
+				{currentUser &&
+					currentUser.role >= ROLE_EDITOR &&
+					((users && users.length > 0) || usersLoading) && (
+						<ContentSettingsSection id="ownership">
+							<div className="p-4">
+								<Text as="h3" DANGEROUS_className="mb-4 font-semibold">
+									{t`Ownership`}
+								</Text>
+								<div data-emdash-outside="author">
+									<AuthorSelector
+										authorId={item?.authorId || null}
+										users={users ?? []}
+										loading={!users}
+										onChange={onAuthorChange}
+									/>
+								</div>
 							</div>
-						</div>
-					</ContentSettingsSection>
-				)}
+						</ContentSettingsSection>
+					)}
 
 				{currentUser && currentUser.role >= ROLE_EDITOR && (
 					<ContentSettingsSection id="bylines">
@@ -1542,10 +1548,11 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 interface AuthorSelectorProps {
 	authorId: string | null;
 	users: UserListItem[];
+	loading?: boolean;
 	onChange?: (authorId: string | null) => void;
 }
 
-function AuthorSelector({ authorId, users, onChange }: AuthorSelectorProps) {
+function AuthorSelector({ authorId, users, loading, onChange }: AuthorSelectorProps) {
 	const { t } = useLingui();
 	const currentAuthor = users.find((u) => u.id === authorId);
 
@@ -1559,6 +1566,7 @@ function AuthorSelector({ authorId, users, onChange }: AuthorSelectorProps) {
 			<Select
 				aria-label={t`Author`}
 				className="w-full"
+				disabled={loading}
 				value={authorId || "unassigned"}
 				onValueChange={(value) =>
 					onChange?.(value === "unassigned" || value === null ? null : value)
@@ -1581,9 +1589,9 @@ function AuthorSelector({ authorId, users, onChange }: AuthorSelectorProps) {
 					</Select.Option>
 				))}
 			</Select>
-			{currentAuthor && (
-				<p className="text-xs text-kumo-subtle">
-					<bdi dir="ltr">{currentAuthor.email}</bdi>
+			{(currentAuthor || (loading && authorId)) && (
+				<p className="min-h-4 text-xs text-kumo-subtle">
+					{currentAuthor ? <bdi dir="ltr">{currentAuthor.email}</bdi> : null}
 				</p>
 			)}
 		</div>

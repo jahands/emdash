@@ -330,4 +330,19 @@ describe("ContentEditor layout stability", () => {
 			expect(moved(dirty, anchors())).toEqual([]);
 		},
 	);
+
+	it("keeps later settings sections in place while the user list loads", async () => {
+		const users = deferred();
+		server = createMockServer({ usersReady: users.promise });
+		await renderEditPage("en");
+		const bylines = () => document.querySelector('[data-settings-section="bylines"]');
+		await expect.poll(() => bylines()).not.toBeNull();
+		const loading = anchors();
+
+		users.resolve();
+		await expect
+			.poll(() => document.querySelector('[data-settings-section="ownership"]')?.textContent)
+			.toContain("first@example.com");
+		expect(moved(loading, anchors())).toEqual([]);
+	});
 });
