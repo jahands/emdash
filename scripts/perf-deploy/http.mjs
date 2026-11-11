@@ -1,22 +1,26 @@
+import { promises as dns } from "node:dns";
 import { request } from "node:https";
 import { performance } from "node:perf_hooks";
 
-const DOH_ENDPOINT = "https://cloudflare-dns.com/dns-query";
+const RESOLVERS = { A: "resolve4", AAAA: "resolve6", CNAME: "resolveCname" };
+const NO_RECORD = new Set(["ENOTFOUND", "ENODATA"]);
 
 /**
- * Resolve a name through Cloudflare's DNS-over-HTTPS resolver. Bypassing the
- * local resolver avoids its negative cache: the hostname does not exist until
- * the custom domain is attached, and an early local lookup would be cached as
- * NXDOMAIN for the zone's negative TTL.
+ * Look a name up on the zone's authoritative nameservers. Caching resolvers,
+ * public or local, would remember the NXDOMAIN from the preflight check for the
+ * zone's negative TTL (30 minutes on Cloudflare) and hide the record the custom
+ * domain creates.
  */
-export async function resolveDoh(name, type) {
-	const url = new URL(DOH_ENDPOINT);
-	url.searchParams.set("name", name);
-	url.searchParams.set("type", type);
-	const response = await fetch(url, { headers: { Accept: "application/dns-json" } });
-	if (!response.ok) throw new Error(`DNS-over-HTTPS lookup for ${name} failed: ${response.status}`);
-	const json = await response.json();
-	return (json.Answer ?? []).map((answer) => answer.data);
+export async function resolveAuthoritative(name, type, nameServers) {
+	const addresses = (await Promise.all(nameServers.map((ns) => dns.resolve4(ns)))).flat();
+	const resolver = new dns.Resolver({ timeout: 5000, tries: 2 });
+	resolver.setServers(addresses);
+	try {
+		return await resolver[RESOLVERS[type]](name);
+	} catch (error) {
+		if (NO_RECORD.has(error?.code)) return [];
+		throw error;
+	}
 }
 
 /**

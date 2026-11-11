@@ -120,7 +120,10 @@ export async function createCloudflareClient({ wranglerBin, cwd, accountId }) {
 				const { result } = await request("GET", "/zones", {
 					query: { name, "account.id": accountId },
 				});
-				if (result.length > 0) return { id: result[0].id, name: result[0].name };
+				if (result.length > 0) {
+					const [zone] = result;
+					return { id: zone.id, name: zone.name, nameServers: zone.name_servers };
+				}
 			}
 			return null;
 		},

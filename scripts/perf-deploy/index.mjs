@@ -14,7 +14,7 @@ import {
 	VIEWPORTS,
 } from "./browser.mjs";
 import { createCloudflareClient, findLeftovers, killChildren, teardownRun } from "./cloudflare.mjs";
-import { resolveDoh, timedGet } from "./http.mjs";
+import { resolveAuthoritative, timedGet } from "./http.mjs";
 import {
 	createRunId,
 	domainConflict,
@@ -84,11 +84,11 @@ async function runTeardownOnly(options) {
 	return result.clean ? 0 : 2;
 }
 
-/** Wait until the hostname resolves publicly and the Worker answers over HTTPS. */
-async function waitForHostname(hostname, deadlineMs) {
+/** Wait until the hostname is in the zone and the Worker answers over HTTPS. */
+async function waitForHostname(hostname, nameServers, deadlineMs) {
 	let ip = null;
 	while (Date.now() < deadlineMs) {
-		ip = (await resolveDoh(hostname, "A").catch(() => []))[0] ?? null;
+		ip = (await resolveAuthoritative(hostname, "A", nameServers).catch(() => []))[0] ?? null;
 		if (ip) break;
 		await sleep(3000);
 	}
@@ -259,7 +259,7 @@ async function runDeploy(options) {
 		});
 		if (conflict) throw new Error(`${conflict}; refusing to replace it`);
 		for (const type of ["A", "AAAA", "CNAME"]) {
-			const answers = await resolveDoh(options.hostname, type);
+			const answers = await resolveAuthoritative(options.hostname, type, zone.nameServers);
 			if (answers.length > 0)
 				throw new Error(
 					`${options.hostname} already has ${type} records (${answers.join(", ")}); refusing to replace them`,
@@ -324,7 +324,11 @@ async function runDeploy(options) {
 		);
 		record.resources.domain.id = domain.id;
 		saveRecord();
-		const { ip, firstResponse } = await waitForHostname(options.hostname, Date.now() + 10 * 60_000);
+		const { ip, firstResponse } = await waitForHostname(
+			options.hostname,
+			zone.nameServers,
+			Date.now() + 10 * 60_000,
+		);
 		const origin = `https://${options.hostname}`;
 		results.reachability = { ip, msFromDeploy: Date.now() - deployedAt, firstResponse };
 		log(
