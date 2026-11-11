@@ -69,6 +69,7 @@ import {
 	formatFileSize,
 	getMediaThumbnailUrl,
 	getMediaPreviewUrl,
+	renditionWidthFor,
 	getMediaObjectPosition,
 	fallbackToOriginalThumbnail,
 	metaNumber,
@@ -1728,7 +1729,15 @@ function MediaListItem({ item, selected, draggable, isMoving, onClick }: MediaLi
 				<div className="h-10 w-10 overflow-hidden rounded">
 					{isImage ? (
 						<img
-							src={getMediaThumbnailUrl(item.url, item.mimeType, 80, item.contentHash)}
+							src={getMediaThumbnailUrl(
+								item.url,
+								item.mimeType,
+								renditionWidthFor(
+									{ width: 40, height: 40 },
+									{ fit: "cover", sourceWidth: item.width, sourceHeight: item.height },
+								),
+								item.contentHash,
+							)}
 							alt={item.alt || item.filename}
 							draggable={false}
 							className="emdash-media-transparency-grid h-full w-full object-cover"

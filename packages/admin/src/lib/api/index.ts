@@ -83,6 +83,8 @@ export {
 	MEDIA_SEARCH_MAX_LENGTH,
 	fetchMediaList,
 	fetchMediaItem,
+	fetchMediaItemBatched,
+	fetchMediaItems,
 	fetchMediaUsageDetails,
 	MediaUsageAccessDeniedError,
 	fetchMediaFolders,

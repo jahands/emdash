@@ -435,7 +435,11 @@ function GalleryImageSettings({
 	return (
 		<div className="border rounded-lg p-3 space-y-3">
 			<div className="emdash-media-transparency-grid relative flex aspect-video items-center justify-center overflow-hidden rounded-lg">
-				<GalleryPreviewImage image={image} className="max-h-full max-w-full object-contain" />
+				<GalleryPreviewImage
+					image={image}
+					fit="contain"
+					className="max-h-full max-w-full object-contain"
+				/>
 			</div>
 			<div className="flex flex-wrap items-center gap-2">
 				<Button

@@ -12,7 +12,6 @@
 import { Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowsClockwise, Subtitles, Trash, VideoCameraSlash } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
 import type { Editor } from "@tiptap/core";
 import type { NodeType } from "@tiptap/pm/model";
 import { NodeSelection } from "@tiptap/pm/state";
@@ -21,12 +20,13 @@ import { NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import * as React from "react";
 
 import { isDimension, isString } from "../../internal/video-block.js";
-import { fetchMediaItem, type MediaItem } from "../../lib/api/media.js";
+import type { MediaItem } from "../../lib/api/media.js";
 import {
 	canonicalMediaProviderId,
 	getMediaPreviewUrl,
 	localMediaFileUrl,
 } from "../../lib/media-utils.js";
+import { useMediaItem } from "../../lib/use-media-rendition.js";
 import { cn } from "../../lib/utils";
 import { getLocaleDir } from "../../locales/config.js";
 import { VideoBlockNode } from "../../portable-text/schema.js";
@@ -95,11 +95,7 @@ function VideoNodeView({
 		isString(attrs.mediaId) && attrs.mediaId && canonicalMediaProviderId(attrs.provider) === "local"
 			? attrs.mediaId
 			: null;
-	const { data: currentMedia } = useQuery({
-		queryKey: ["media", mediaId],
-		queryFn: ({ signal }) => fetchMediaItem(mediaId!, { signal }),
-		enabled: mediaId !== null,
-	});
+	const { data: currentMedia } = useMediaItem(mediaId);
 	// Without a stored file URL the site can't play the video either, so the
 	// editor doesn't preview one.
 	const src = getMediaPreviewUrl(currentMedia?.url || storedSrc, currentMedia?.contentHash);

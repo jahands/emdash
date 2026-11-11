@@ -7,14 +7,18 @@
  */
 
 import { useLingui } from "@lingui/react/macro";
-import { useQuery } from "@tanstack/react-query";
 import type { NodeViewProps } from "@tiptap/react";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
 import * as React from "react";
 
-import { fetchMediaItem } from "../../lib/api/media.js";
 import { useStableCallback } from "../../lib/hooks";
-import { canonicalMediaProviderId, getMediaPreviewUrl } from "../../lib/media-utils.js";
+import {
+	canonicalMediaProviderId,
+	fallbackToOriginalThumbnail,
+	getMediaPreviewUrl,
+	getMediaThumbnailUrl,
+} from "../../lib/media-utils.js";
+import { useMediaItem, useRenditionWidth } from "../../lib/use-media-rendition.js";
 import { cn } from "../../lib/utils";
 import { ImageNode } from "../../portable-text/schema.js";
 import type { ImageAttributes, ImagePanelAttributes } from "./ImageDetailPanel";
@@ -79,13 +83,8 @@ function ImageNodeView({
 		canonicalMediaProviderId(node.attrs.provider) === "local"
 			? node.attrs.mediaId
 			: null;
-	const { data: currentMedia } = useQuery({
-		queryKey: ["media", mediaId],
-		queryFn: ({ signal }) => fetchMediaItem(mediaId!, { signal }),
-		enabled: mediaId !== null,
-	});
+	const { data: currentMedia, isError: mediaFailed } = useMediaItem(mediaId);
 	const storedSrc = typeof node.attrs.src === "string" ? node.attrs.src : "";
-	const displaySrc = getMediaPreviewUrl(currentMedia?.url || storedSrc, currentMedia?.contentHash);
 
 	/** Whether this node currently has its sidebar panel open */
 	const sidebarOpenRef = React.useRef(false);
@@ -254,8 +253,8 @@ function ImageNodeView({
 	const alignmentStyle: React.CSSProperties =
 		alignment === "center" ? { width: "fit-content", marginInline: "auto" } : {};
 	const { width, height, displayWidth, displayHeight } = node.attrs as ImageAttributes;
-	const originalWidth = imageDimension(width);
-	const originalHeight = imageDimension(height);
+	const originalWidth = imageDimension(width) ?? imageDimension(currentMedia?.width);
+	const originalHeight = imageDimension(height) ?? imageDimension(currentMedia?.height);
 	const customWidth = imageDimension(displayWidth);
 	const customHeight = imageDimension(displayHeight);
 	const aspectRatio = originalWidth && originalHeight ? originalWidth / originalHeight : undefined;
@@ -270,6 +269,25 @@ function ImageNodeView({
 	} else if (customHeight && aspectRatio) {
 		renderWidth = Math.round(customHeight * aspectRatio);
 		renderHeight = customHeight;
+	}
+
+	const [imageRef, renditionWidth] = useRenditionWidth<HTMLImageElement>({
+		sourceWidth: imageDimension(currentMedia?.width),
+		sourceHeight: imageDimension(currentMedia?.height),
+	});
+	// A local image waits for its media item, so it is requested once, at its current version and size.
+	const fileSrc = currentMedia?.url || storedSrc;
+	const previewSrc = getMediaPreviewUrl(fileSrc, currentMedia?.contentHash);
+	let displaySrc: string | undefined;
+	if (mediaId === null || mediaFailed) displaySrc = storedSrc;
+	else if (currentMedia && !(renderWidth && renderHeight)) displaySrc = previewSrc;
+	else if (currentMedia && renditionWidth) {
+		displaySrc = getMediaThumbnailUrl(
+			fileSrc,
+			currentMedia.mimeType,
+			renditionWidth,
+			currentMedia.contentHash,
+		);
 	}
 
 	return (
@@ -287,15 +305,22 @@ function ImageNodeView({
 		>
 			<figure className="relative my-0!">
 				<img
+					ref={imageRef}
 					src={displaySrc}
 					alt={node.attrs.alt || ""}
 					title={node.attrs.title || ""}
 					className="rounded-lg max-w-full h-auto object-cover"
 					width={renderWidth}
 					height={renderHeight}
+					loading="lazy"
+					decoding="async"
 					style={{
 						aspectRatio:
 							renderWidth && renderHeight ? `${renderWidth} / ${renderHeight}` : undefined,
+					}}
+					onError={(event) => {
+						if (displaySrc !== previewSrc)
+							fallbackToOriginalThumbnail(event.currentTarget, previewSrc);
 					}}
 					draggable={false}
 				/>

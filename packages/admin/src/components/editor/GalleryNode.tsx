@@ -10,18 +10,19 @@
 import { Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Images, Trash, SlidersHorizontal } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
 import type { NodeViewProps } from "@tiptap/react";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
 import * as React from "react";
 
-import { fetchMediaItem } from "../../lib/api/media.js";
 import {
 	canonicalMediaProviderId,
+	fallbackToOriginalThumbnail,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
+	getMediaThumbnailUrl,
 	localMediaFileUrl,
 } from "../../lib/media-utils.js";
+import { useMediaItem, useRenditionWidth } from "../../lib/use-media-rendition.js";
 import type { GalleryImage } from "../../portable-text/convert.js";
 import { GalleryNode } from "../../portable-text/schema.js";
 import { PORTABLE_TEXT_KEY_ATTR } from "./portableTextIdentity.js";
@@ -67,25 +68,48 @@ export function galleryImageUrl(image: GalleryImage): string {
 export function GalleryPreviewImage({
 	image,
 	className,
+	fit = "cover",
 }: {
 	image: GalleryImage;
 	className: string;
+	/** `contain` letterboxes the picture in the image's parent, which sets its size. */
+	fit?: "cover" | "contain";
 }) {
 	const mediaId =
 		canonicalMediaProviderId(image.asset.provider) === "local" && image.asset._ref
 			? image.asset._ref
 			: null;
-	const { data: currentMedia } = useQuery({
-		queryKey: mediaId ? ["media", mediaId] : ["media-preview-disabled", image.asset._ref],
-		queryFn: ({ signal }) => fetchMediaItem(mediaId!, { signal }),
-		enabled: false,
+	const { data: currentMedia, isError: mediaFailed } = useMediaItem(mediaId);
+	const [imageRef, renditionWidth] = useRenditionWidth<HTMLImageElement>({
+		fit,
+		measure: fit === "contain" ? "parent" : "self",
+		sourceWidth: currentMedia?.width ?? image.width,
+		sourceHeight: currentMedia?.height ?? image.height,
 	});
+	const fileUrl = galleryImageUrl(image);
+	const previewUrl = getMediaPreviewUrl(fileUrl, currentMedia?.contentHash);
+	let src: string | undefined;
+	if (mediaId === null || mediaFailed) src = fileUrl;
+	else if (currentMedia && renditionWidth) {
+		src = getMediaThumbnailUrl(
+			fileUrl,
+			currentMedia.mimeType,
+			renditionWidth,
+			currentMedia.contentHash,
+		);
+	}
 	return (
 		<img
-			src={getMediaPreviewUrl(galleryImageUrl(image), currentMedia?.contentHash)}
+			ref={imageRef}
+			src={src}
 			alt={image.alt || ""}
 			className={className}
 			style={{ objectPosition: getMediaObjectPosition(image) }}
+			loading="lazy"
+			decoding="async"
+			onError={(event) => {
+				if (src !== previewUrl) fallbackToOriginalThumbnail(event.currentTarget, previewUrl);
+			}}
 			draggable={false}
 		/>
 	);

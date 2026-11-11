@@ -258,6 +258,44 @@ export function getMediaThumbnailUrl(
 	return `/_image?${params.toString()}`;
 }
 
+/** Widths renditions are requested at, so boxes of similar sizes share one cached rendition. */
+const RENDITION_WIDTHS = [
+	64, 96, 128, 192, 256, 384, 512, 640, 768, 1024, 1280, 1536, 1920, 2560, 3840,
+];
+const MAX_RENDITION_DPR = 3;
+
+/**
+ * The width to request a rendition at, in image pixels, so it fills a box of
+ * `box` CSS pixels on this screen: the next width in {@link RENDITION_WIDTHS},
+ * and never wider than the source. A picture of another shape than its box is
+ * cropped to the box under `cover`, so it needs more width than the box, and
+ * letterboxed in it under `contain`, so it needs less.
+ */
+export function renditionWidthFor(
+	box: { width: number; height: number },
+	options: {
+		fit?: "cover" | "contain";
+		sourceWidth?: number | null;
+		sourceHeight?: number | null;
+		dpr?: number;
+	} = {},
+): number {
+	const { fit = "contain", sourceWidth, sourceHeight } = options;
+	let cssWidth = box.width;
+	if (sourceWidth && sourceHeight && box.height > 0) {
+		const widthAtBoxHeight = (box.height * sourceWidth) / sourceHeight;
+		cssWidth =
+			fit === "cover" ? Math.max(cssWidth, widthAtBoxHeight) : Math.min(cssWidth, widthAtBoxHeight);
+	}
+	const devicePixelRatio =
+		options.dpr ?? (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+	const dpr = Math.min(Math.max(devicePixelRatio, 1), MAX_RENDITION_DPR);
+	const needed = Math.ceil(cssWidth * dpr);
+	const width =
+		RENDITION_WIDTHS.find((candidate) => candidate >= needed) ?? RENDITION_WIDTHS.at(-1)!;
+	return sourceWidth && sourceWidth > 0 ? Math.min(width, sourceWidth) : width;
+}
+
 /**
  * `onError` fallback for grid thumbnails: if a `/_image` rendition fails to
  * load (e.g. the endpoint rejects the request on a site whose configured origin
