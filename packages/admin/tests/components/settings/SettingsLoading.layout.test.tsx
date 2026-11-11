@@ -3,13 +3,19 @@ import * as React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import "../../../dist/styles.css";
-import type { AdminManifest, SiteSettings } from "../../../src/lib/api";
+import type { AdminManifest, SiteDomain, SiteSettings } from "../../../src/lib/api";
 import type { BackupOverview } from "../../../src/lib/api/backups.js";
-import { deferred, largestMovement, snapshotPositions } from "../../utils/geometry.js";
+import {
+	deferred,
+	largestMovement,
+	snapshotPositions,
+	watchMovement,
+} from "../../utils/geometry.js";
 import { render } from "../../utils/render.js";
 
 const mockFetchSettings = vi.fn<() => Promise<Partial<SiteSettings>>>();
 const mockFetchBackupOverview = vi.fn<() => Promise<BackupOverview>>();
+const mockFetchSiteDomain = vi.fn<() => Promise<SiteDomain>>();
 
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual("@tanstack/react-router");
@@ -28,7 +34,7 @@ vi.mock("../../../src/lib/api", async () => {
 	return {
 		...actual,
 		fetchSettings: () => mockFetchSettings(),
-		fetchSiteDomain: async () => ({ configuredUrl: null, siteOrigin: window.location.origin }),
+		fetchSiteDomain: () => mockFetchSiteDomain(),
 		fetchManifest: async () =>
 			({
 				version: "test",
@@ -82,6 +88,10 @@ const pages = [
 describe("Settings pages while their settings load", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockFetchSiteDomain.mockResolvedValue({
+			configuredUrl: null,
+			siteOrigin: window.location.origin,
+		});
 	});
 
 	it.each(pages)(
@@ -114,4 +124,34 @@ describe("Settings pages while their settings load", () => {
 			expect(largestMovement(contentBefore, { includeSize: false })).toBeLessThanOrEqual(1);
 		},
 	);
+
+	it("keeps the General form in place when the site address answers after the settings", async () => {
+		const siteDomain = deferred<SiteDomain>();
+		mockFetchSettings.mockResolvedValue(settings);
+		mockFetchSiteDomain.mockReturnValue(siteDomain.promise);
+
+		const headings = watchMovement("h1, h2");
+		const screen = await render(
+			<Toasty>
+				<GeneralSettings />
+			</Toasty>,
+		);
+		await vi.waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
+		await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100)));
+
+		siteDomain.resolve({
+			configuredUrl: "https://cms.example.com",
+			siteOrigin: "https://cms.example.com",
+		});
+		await expect
+			.element(
+				screen.getByText("Links in emails and plugins use https://cms.example.com", {
+					exact: false,
+				}),
+			)
+			.toBeVisible();
+		await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100)));
+
+		expect(headings.stop()).toBeLessThanOrEqual(1);
+	});
 });

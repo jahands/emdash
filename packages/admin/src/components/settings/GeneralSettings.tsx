@@ -153,15 +153,15 @@ export function GeneralSettings() {
 		queryFn: fetchSettings,
 		staleTime: Infinity,
 	});
-	const { data: siteDomain } = useQuery({
+	const { data: siteDomain, isPending: siteDomainPending } = useQuery({
 		queryKey: ["site-domain"],
 		queryFn: fetchSiteDomain,
 	});
-	const { data: manifest } = useQuery({
+	const { data: manifest, isPending: manifestPending } = useQuery({
 		queryKey: ["manifest"],
 		queryFn: fetchManifest,
 	});
-	const { data: emailSettings } = useQuery({
+	const { data: emailSettings, isPending: emailSettingsPending } = useQuery({
 		queryKey: ["email-settings"],
 		queryFn: fetchEmailSettings,
 	});
@@ -307,7 +307,7 @@ export function GeneralSettings() {
 	const title = t`General Settings`;
 	const description = t`Site identity, logo, favicon, and reading preferences`;
 
-	if (isLoading) {
+	if (isLoading || siteDomainPending || manifestPending || emailSettingsPending) {
 		return (
 			<SettingsFrame title={title} description={description} actions={<PendingSaveAction />}>
 				<div
