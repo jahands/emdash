@@ -178,6 +178,13 @@ const centerMediaOverlayOnCursor: Modifier = ({
 };
 const MEDIA_DRAG_OVERLAY_MODIFIERS = [centerMediaOverlayOnCursor];
 
+/** A newest-first list with the items not in `shown` moved after the others, oldest first. */
+function shownFirst<T extends { id: string }>(items: T[], shown: ReadonlySet<string> | undefined) {
+	if (!shown) return items;
+	const added = items.filter((item) => !shown.has(item.id)).toReversed();
+	return added.length ? [...items.filter((item) => shown.has(item.id)), ...added] : items;
+}
+
 /**
  * Media library component with upload, provider tabs, and grid view
  */
@@ -188,7 +195,7 @@ export function MediaLibrary({
 	onItemUpdated,
 	hasMore,
 	onLoadMore,
-	pagination: livePagination,
+	pagination,
 	onLocalSearchChange,
 	onLocalMimeFilterChange,
 	onActiveProviderChange,
@@ -448,38 +455,64 @@ export function MediaLibrary({
 		return tabs;
 	}, [providers, t]);
 
-	// Uploads refresh the list behind the open dialog. Holding the previous
-	// list until the dialog closes keeps cards from moving without user input.
-	const [listBehindUpload, setListBehindUpload] = React.useState<{
-		items: MediaItem[];
-		providerItems: MediaProviderItem[] | undefined;
-		pagination: Pick<ListPagination, "page" | "perPage" | "totalCount"> | undefined;
-	} | null>(null);
-	if (uploadDialogOpen && !listBehindUpload) {
-		setListBehindUpload({
-			items: liveItems,
-			providerItems: providerData?.items,
-			pagination: livePagination && {
-				page: livePagination.page,
-				perPage: livePagination.perPage,
-				totalCount: livePagination.totalCount,
-			},
-		});
-	} else if (!uploadDialogOpen && listBehindUpload) {
-		setListBehindUpload(null);
+	// Another page, search, filter or folder is a new list once its own items arrive. Until then
+	// the cards shown stay as they are; then the grid is drawn anew instead of moving cards that
+	// happen to be in both lists.
+	const listView = [
+		activeProvider,
+		folderId ?? "",
+		pagination?.page ?? 1,
+		debouncedSearch.trim(),
+		localTypeFilter,
+	].join("\n");
+	const liveList: Array<{ id: string }> =
+		activeProvider === "local" ? liveItems : (providerData?.items ?? []);
+	const [shownList, setShownList] = React.useState<{
+		view: string;
+		generation: number;
+		leftWith?: Array<{ id: string }>;
+	}>({ view: listView, generation: 0 });
+	if (shownList.view === listView) {
+		if (shownList.leftWith) setShownList({ view: listView, generation: shownList.generation });
+	} else if (!shownList.leftWith) {
+		setShownList({ ...shownList, leftWith: liveList });
+	} else if (shownList.leftWith !== liveList) {
+		setShownList({ view: listView, generation: shownList.generation + 1 });
 	}
-	const items = listBehindUpload?.items ?? liveItems;
-	const pagination =
-		livePagination && listBehindUpload?.pagination
-			? { ...livePagination, ...listBehindUpload.pagination }
-			: livePagination;
+
+	// The list is newest first, so an upload would land first and move every card. Until the list
+	// changes, items that weren't shown when the upload dialog opened go after the others, in upload
+	// order.
+	const [uploadBaseline, setUploadBaseline] = React.useState<{
+		generation: number;
+		shown: ReadonlySet<string>;
+	} | null>(null);
+	if (uploadDialogOpen && uploadBaseline?.generation !== shownList.generation) {
+		setUploadBaseline({
+			generation: shownList.generation,
+			shown: new Set(liveList.map((item) => item.id)),
+		});
+	}
+	const shownBeforeUpload =
+		uploadBaseline?.generation === shownList.generation ? uploadBaseline.shown : undefined;
 
 	// Get current items based on active provider
-	const currentItems = activeProvider === "local" ? items : [];
+	const currentItems = activeProvider === "local" ? shownFirst(liveItems, shownBeforeUpload) : [];
 	const currentProviderItems =
-		activeProvider !== "local"
-			? (listBehindUpload ? listBehindUpload.providerItems : providerData?.items) || []
-			: [];
+		activeProvider !== "local" ? shownFirst(providerData?.items ?? [], shownBeforeUpload) : [];
+	const lastShownItem = (activeProvider === "local" ? currentItems : currentProviderItems).at(-1);
+	const latestUploadId =
+		shownBeforeUpload && lastShownItem && !shownBeforeUpload.has(lastShownItem.id)
+			? lastShownItem.id
+			: undefined;
+	const revealedUploadRef = React.useRef<string | undefined>(undefined);
+	React.useEffect(() => {
+		if (uploadDialogOpen || !latestUploadId || revealedUploadRef.current === latestUploadId) return;
+		revealedUploadRef.current = latestUploadId;
+		document
+			.querySelector(`[data-media-id="${CSS.escape(latestUploadId)}"]`)
+			?.scrollIntoView({ block: "nearest" });
+	}, [latestUploadId, uploadDialogOpen]);
 	const currentLoading = activeProvider === "local" ? isLoading : providerLoading;
 	React.useEffect(() => {
 		if (
@@ -704,8 +737,11 @@ export function MediaLibrary({
 		setUploadTarget(null);
 		const returnTarget = returnFocusRef.current;
 		returnFocusRef.current = null;
+		// Focus returns without scrolling, which would take the screen off an upload just revealed.
 		window.requestAnimationFrame(() => {
-			(returnTarget?.isConnected ? returnTarget : mediaHeadingRef.current)?.focus();
+			(returnTarget?.isConnected ? returnTarget : mediaHeadingRef.current)?.focus({
+				preventScroll: true,
+			});
 		});
 	}, []);
 	const handleUploadQueueIdle = React.useCallback(() => {
@@ -1150,6 +1186,7 @@ export function MediaLibrary({
 				)
 			) : viewMode === "grid" ? (
 				<Grid
+					key={shownList.generation}
 					variant="4up"
 					gap="sm"
 					className="2xl:grid-cols-6"
@@ -1267,7 +1304,7 @@ export function MediaLibrary({
 						{activeProvider === "local"
 							? currentItems.map((item) => (
 									<MediaListItem
-										key={item.id}
+										key={`${shownList.generation}:${item.id}`}
 										item={item}
 										selected={detailItem?.id === item.id}
 										draggable={
@@ -1282,7 +1319,7 @@ export function MediaLibrary({
 								))
 							: currentProviderItems.map((item) => (
 									<ProviderListItem
-										key={item.id}
+										key={`${shownList.generation}:${item.id}`}
 										item={item}
 										selected={detailItem?.id === item.id}
 										onClick={() => {
@@ -1652,6 +1689,7 @@ function MediaGridItem({ item, selected, draggable, isMoving, onClick }: MediaGr
 			ref={setNodeRef}
 			{...listeners}
 			aria-busy={isMoving || undefined}
+			data-media-id={item.id}
 			data-media-draggable={draggable || undefined}
 			className={cn(
 				"min-w-0 transition-opacity",
@@ -1680,13 +1718,15 @@ interface ProviderGridItemProps {
 
 function ProviderGridItem({ item, selected, onClick, onDimensionsLoaded }: ProviderGridItemProps) {
 	return (
-		<MediaBrowserItem
-			item={providerItemToMediaItem("provider", item)}
-			layout="grid"
-			selected={selected}
-			onClick={onClick}
-			onDimensionsLoaded={onDimensionsLoaded}
-		/>
+		<div data-media-id={item.id} className="min-w-0">
+			<MediaBrowserItem
+				item={providerItemToMediaItem("provider", item)}
+				layout="grid"
+				selected={selected}
+				onClick={onClick}
+				onDimensionsLoaded={onDimensionsLoaded}
+			/>
+		</div>
 	);
 }
 
@@ -1715,6 +1755,7 @@ function MediaListItem({ item, selected, draggable, isMoving, onClick }: MediaLi
 			ref={setNodeRef}
 			{...listeners}
 			aria-busy={isMoving || undefined}
+			data-media-id={item.id}
 			data-media-draggable={draggable || undefined}
 			data-selected={selected || undefined}
 			data-clickable
@@ -1781,6 +1822,7 @@ function ProviderListItem({ item, selected, onClick, onDimensionsLoaded }: Provi
 
 	return (
 		<tr
+			data-media-id={item.id}
 			data-selected={selected || undefined}
 			data-clickable
 			className="cursor-pointer"

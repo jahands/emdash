@@ -308,37 +308,100 @@ describe("Media Library loading stability", () => {
 });
 
 describe("Media Library upload stability", () => {
-	it("keeps existing cards in place until the upload dialog closes", async () => {
-		activation.resolve(activeStatus);
-		progress.resolve(ready);
-		const settledRoute: RouteState = {
-			...loadingRoute,
-			items,
-			isLoading: false,
-			foldersLoading: false,
-		};
-		const screen = await render(library(settledRoute, "ltr"));
-		const card = (filename: string) =>
-			document.querySelector(`[data-media-grid] [aria-label='${filename}']`)!;
-		await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
-		const before = card("document-0.txt").getBoundingClientRect();
+	const settledRoute: RouteState = {
+		...loadingRoute,
+		items,
+		isLoading: false,
+		foldersLoading: false,
+	};
+	const gridNames = () =>
+		Array.from(document.querySelectorAll("[data-media-grid] [aria-label]"), (card) =>
+			card.getAttribute("aria-label"),
+		);
+	/** Card positions in the scrolled content, so revealing an upload by scrolling isn't movement. */
+	const cardBoxes = () =>
+		new Map(
+			Array.from(document.querySelectorAll("[data-media-grid] [aria-label]"), (card) => {
+				const box = card.getBoundingClientRect();
+				let { left, top } = box;
+				for (let parent = card.parentElement; parent; parent = parent.parentElement) {
+					left += parent.scrollLeft;
+					top += parent.scrollTop;
+				}
+				return [card.getAttribute("aria-label"), { left, top }] as const;
+			}),
+		);
+	const uploadedItem = (name: string): MediaItem => ({ ...items[0]!, id: name, filename: name });
 
+	async function upload(screen: Awaited<ReturnType<typeof render>>, shownItems: MediaItem[]) {
 		await screen.getByRole("button", { name: "Upload Files" }).click();
 		await expect.element(screen.getByRole("dialog")).toBeVisible();
-		const uploaded: MediaItem = { ...items[0]!, id: "uploaded", filename: "uploaded.txt" };
-		await screen.rerender(library({ ...settledRoute, items: [uploaded, ...items] }, "ltr"));
+		await screen.rerender(library({ ...settledRoute, items: shownItems }, "ltr"));
 		await nextFrames();
-
-		expect(document.querySelector("[data-media-grid] [aria-label='uploaded.txt']")).toBeNull();
-		const during = card("document-0.txt").getBoundingClientRect();
-		expect(during.left).toBeCloseTo(before.left, 0);
-		expect(during.top).toBeCloseTo(before.top, 0);
-
 		await userEvent.keyboard("{Escape}");
-		await expect.element(screen.getByRole("button", { name: "uploaded.txt" })).toBeVisible();
-		expect(document.querySelector("[data-media-grid] [aria-label]")).toHaveAttribute(
-			"aria-label",
-			"uploaded.txt",
-		);
+		await expect.element(screen.getByRole("dialog")).not.toBeInTheDocument();
+		await nextFrames();
+	}
+
+	it("adds uploads after the cards already shown, without moving them", async () => {
+		activation.resolve(activeStatus);
+		progress.resolve(ready);
+		const screen = await render(library(settledRoute, "ltr"));
+		await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
+		const before = cardBoxes();
+
+		const first = uploadedItem("first.txt");
+		await upload(screen, [first, ...items]);
+		const second = uploadedItem("second.txt");
+		await upload(screen, [second, first, ...items]);
+
+		expect(gridNames()).toEqual([...items.map((item) => item.filename), "first.txt", "second.txt"]);
+		const after = cardBoxes();
+		for (const [name, box] of before) {
+			expect(after.get(name)?.left, name!).toBeCloseTo(box.left, 0);
+			expect(after.get(name)?.top, name!).toBeCloseTo(box.top, 0);
+		}
+	});
+
+	it("shows search results without shifting the cards they share with the list before", async () => {
+		activation.resolve(activeStatus);
+		progress.resolve(ready);
+		const screen = await render(library(settledRoute, "ltr"));
+		await expect.element(screen.getByRole("button", { name: "document-9.txt" })).toBeVisible();
+		await screen.getByRole("searchbox", { name: "Search media" }).fill("9");
+		await new Promise((resolve) => setTimeout(resolve, 600));
+
+		const shifts: number[] = [];
+		const observer = new PerformanceObserver((list) => {
+			for (const entry of list.getEntries())
+				shifts.push((entry as unknown as { value: number }).value);
+		});
+		observer.observe({ type: "layout-shift" });
+		await screen.rerender(library({ ...settledRoute, items: [items[9]!] }, "ltr"));
+		await expect
+			.element(screen.getByRole("button", { name: "document-0.txt" }))
+			.not.toBeInTheDocument();
+		await nextFrames();
+		observer.disconnect();
+
+		expect(gridNames()).toEqual(["document-9.txt"]);
+		expect(shifts.reduce((sum, value) => sum + value, 0)).toBeLessThan(0.01);
+	});
+
+	it("lists uploads newest first again once the list shows another search", async () => {
+		activation.resolve(activeStatus);
+		progress.resolve(ready);
+		const screen = await render(library(settledRoute, "ltr"));
+		await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
+		const uploaded = uploadedItem("uploaded.txt");
+		await upload(screen, [uploaded, ...items]);
+		expect(gridNames().at(-1)).toBe("uploaded.txt");
+
+		await screen.getByRole("searchbox", { name: "Search media" }).fill("txt");
+		await new Promise((resolve) => setTimeout(resolve, 400));
+		expect(gridNames().at(-1)).toBe("uploaded.txt");
+
+		await screen.rerender(library({ ...settledRoute, items: [uploaded, ...items] }, "ltr"));
+		await vi.waitFor(() => expect(gridNames()[0]).toBe("uploaded.txt"));
 	});
 });
