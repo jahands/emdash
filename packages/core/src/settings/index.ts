@@ -24,6 +24,7 @@ import {
 	decryptPluginSetting,
 	isEncryptedPluginSetting,
 } from "../plugins/settings.js";
+import type { VersionedValue } from "../plugins/types.js";
 import type { CacheHint } from "../query.js";
 import { peekRequestCache, requestCached } from "../request-cache.js";
 import { getRequestContext } from "../request-context.js";
@@ -49,7 +50,7 @@ import type {
 import { normalizeSiteSettingsVersion } from "./version.js";
 
 /** Prefix for site settings in the options table */
-const SETTINGS_PREFIX = "site:";
+export const SETTINGS_PREFIX = "site:";
 
 /** Settings stored as one object whose fields are updated individually. */
 const NESTED_SETTING_KEYS = new Set(["seo", "social"]);
@@ -435,12 +436,40 @@ export async function getSiteSettingsWithDb(
 	return (await loadSiteSettingsSnapshot(db, storage)).data;
 }
 
+/** The settings cache generation, for `primeSiteSettings`. @internal */
+export function siteSettingsGeneration(): number {
+	return settingsCache.generation;
+}
+
+/**
+ * Install a snapshot built from `site:*` options the caller read, unless a
+ * snapshot is already cached or the cache has been invalidated since
+ * `generation` was taken, before the read. @internal
+ */
+export async function primeSiteSettings(
+	allOptions: Map<string, VersionedValue>,
+	db: Kysely<Database>,
+	generation: number,
+): Promise<void> {
+	if (settingsCache.snapshot || generation !== settingsCache.generation) return;
+	const snapshot = await buildSiteSettingsSnapshot(allOptions, db);
+	if (settingsCache.snapshot || generation !== settingsCache.generation) return;
+	installSiteSettings(snapshot);
+}
+
 async function loadSiteSettingsSnapshot(
 	db: Kysely<Database>,
 	storage: Storage | null = null,
 ): Promise<CachedSiteSettings> {
-	const options = new OptionsRepository(db);
-	const allOptions = await options.getVersionedByPrefix(SETTINGS_PREFIX);
+	const allOptions = await new OptionsRepository(db).getVersionedByPrefix(SETTINGS_PREFIX);
+	return buildSiteSettingsSnapshot(allOptions, db, storage);
+}
+
+async function buildSiteSettingsSnapshot(
+	allOptions: Map<string, VersionedValue>,
+	db: Kysely<Database>,
+	storage: Storage | null = null,
+): Promise<CachedSiteSettings> {
 	const version = normalizeSiteSettingsVersion(
 		JSON.stringify(
 			[...allOptions]

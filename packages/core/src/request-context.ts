@@ -176,6 +176,14 @@ export function runInFreshRequestContext<T>(fn: () => Promise<T>): Promise<T> {
 }
 
 /**
+ * Run `fn` with no request context, for work that outlives the request that
+ * starts it.
+ */
+export function runOutsideRequestContext<T>(fn: () => T): T {
+	return storage.exit(fn);
+}
+
+/**
  * Get the current request context.
  * Returns undefined if no context is set (logged-out fast path).
  */

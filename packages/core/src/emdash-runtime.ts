@@ -57,9 +57,11 @@ import type {
 import type { EmDashManifest } from "./astro/types.js";
 import { getAuthMode } from "./auth/mode.js";
 import { getTrustedProxyHeaders } from "./auth/trusted-proxy.js";
+import { primeBylineFieldDefs } from "./bylines/field-defs-cache.js";
 import { lookupContentAuthor, sendCommentNotification } from "./comments/notifications.js";
 import type { ContentFieldFilters } from "./content-list-query.js";
 import { keepKnownFields, staleStoredKeys } from "./content/known-fields.js";
+import { readColdStartState, type ColdStartState } from "./database/cold-start-reads.js";
 import { ContentDatetimeNormalizer } from "./database/content-datetime.js";
 import { isSqlite } from "./database/dialect-helpers.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
@@ -70,6 +72,7 @@ import {
 import {
 	getAppliedMigrationCount,
 	isMigrationCountCurrent,
+	isMigrationTableMissingError,
 	MIGRATION_RACE_WAIT_MS,
 	MigrationFailedError,
 	MigrationLockHeldError,
@@ -332,7 +335,7 @@ import {
 } from "./plugins/storage-indexes.js";
 import { getRegistryConfigInput, resolveManifestRegistryConfig } from "./registry/config.js";
 import { requestCached } from "./request-cache.js";
-import { getRequestContext } from "./request-context.js";
+import { getRequestContext, runOutsideRequestContext } from "./request-context.js";
 import { notifyRoom } from "./rooms/notifications.js";
 import { roomId, RoomSaveError, type EntryRef, type RuntimeRoomHost } from "./rooms/types.js";
 import {
@@ -343,7 +346,12 @@ import {
 import { normalizeBlocksData, resolveBlockTypes } from "./schema/block-values.js";
 import { SchemaError, SchemaRegistry } from "./schema/registry.js";
 import { FTSManager } from "./search/fts-manager.js";
-import { invalidateSiteSettingsCache } from "./settings/index.js";
+import {
+	invalidateSiteSettingsCache,
+	primeSiteSettings,
+	SETTINGS_PREFIX,
+	siteSettingsGeneration,
+} from "./settings/index.js";
 import type { Storage } from "./storage/types.js";
 import { assertSiteWriteAllowed } from "./transfer/fence.js";
 
@@ -2136,17 +2144,19 @@ export class EmDashRuntime {
 			}
 		};
 
-		const readSiteInfo = async (readDb: Kysely<Database>) => {
-			const siteOpts = await new OptionsRepository(readDb).getMany([
-				"site:title",
-				"emdash:site_title",
-				"site:url",
-				"emdash:site_url",
-				"emdash:locale",
-				LOCALE_CASING_REPAIR_OPTION,
-				AUTO_SEED_COMPLETE_OPTION,
-				SETUP_COMPLETE_OPTION,
-			]);
+		const siteInfoOptionNames = [
+			"site:title",
+			"emdash:site_title",
+			"site:url",
+			"emdash:site_url",
+			"emdash:locale",
+			LOCALE_CASING_REPAIR_OPTION,
+			AUTO_SEED_COMPLETE_OPTION,
+			SETUP_COMPLETE_OPTION,
+		];
+		const readSiteInfo = async (readDb: Kysely<Database>) =>
+			buildSiteInfo(await new OptionsRepository(readDb).getMany(siteInfoOptionNames));
+		const buildSiteInfo = (siteOpts: Map<string, unknown>) => {
 			const siteTitle = resolveSiteTitle(
 				siteOpts.get("site:title"),
 				siteOpts.get("emdash:site_title"),
@@ -2175,17 +2185,62 @@ export class EmDashRuntime {
 			};
 		};
 
-		// Each pass returns its own results, so a pass that runs again after
-		// migrations replaces the first pass's results whole.
+		// Built-in and sandboxed providers register after these reads, so only
+		// configured plugins' hooks and the always-present comment:moderate and
+		// email:deliver are known here. Hook resolution reads the rest.
+		const exclusiveHookKeys = Array.from(
+			new Set([
+				"comment:moderate",
+				"email:deliver",
+				...deps.plugins.flatMap((plugin) =>
+					Object.entries(plugin.hooks)
+						.filter(([, hook]) => hook?.exclusive)
+						.map(([name]) => name),
+				),
+			]),
+			(name) => `${EXCLUSIVE_HOOK_KEY_PREFIX}${name}`,
+		);
+
+		interface ColdStartReads {
+			pluginStates: Map<string, string>;
+			pluginStatesRead: boolean;
+			installedPluginStates: PluginState[];
+			exclusiveHookSelections?: Map<string, string | undefined>;
+			site?: ReturnType<typeof buildSiteInfo>;
+			seedCollectionsReadable: boolean;
+		}
+
+		const toColdStartReads = (state: ColdStartState): ColdStartReads => {
+			if (ownsConfiguredDb) primeRegisteredCollections(state.collectionSlugs);
+			return {
+				pluginStates: new Map(state.pluginStates.map((s) => [s.plugin_id, s.status])),
+				pluginStatesRead: true,
+				installedPluginStates: state.pluginStates
+					.filter((s) => s.source === "marketplace" || s.source === "registry")
+					.map(rowToPluginState),
+				exclusiveHookSelections: new Map(
+					exclusiveHookKeys.map((key) => {
+						const selection = state.options.get(key);
+						return [key, typeof selection === "string" ? selection : undefined];
+					}),
+				),
+				site: buildSiteInfo(state.options),
+				seedCollectionsReadable: ownsConfiguredDb,
+			};
+		};
+
+		// One statement for every cold-start read. Null when it failed because the
+		// migration table does not exist, undefined when it failed otherwise.
+		const readColdStart = (readDb: Kysely<Database>) =>
+			phase("rt.reads", "Cold-start reads", () =>
+				readColdStartState(readDb, [...siteInfoOptionNames, ...exclusiveHookKeys], SETTINGS_PREFIX),
+			).catch((error: unknown) => (isMigrationTableMissingError(error) ? null : undefined));
+
+		// The same reads as separate queries, so a missing table fails only its
+		// own read. Each pass returns its own results, so a pass that runs again
+		// after migrations replaces the first pass's results whole.
 		const runColdStartReads = async (readDb: Kysely<Database>) => {
-			const reads: {
-				pluginStates: Map<string, string>;
-				pluginStatesRead: boolean;
-				installedPluginStates: PluginState[];
-				exclusiveHookSelections?: Map<string, string | undefined>;
-				site?: Awaited<ReturnType<typeof readSiteInfo>>;
-				seedCollectionsReadable: boolean;
-			} = {
+			const reads: ColdStartReads = {
 				pluginStates: new Map(),
 				pluginStatesRead: false,
 				installedPluginStates: [],
@@ -2214,25 +2269,11 @@ export class EmDashRuntime {
 					}
 				}),
 				phase("rt.hookselections", "Exclusive hook selections", async () => {
-					// Built-in and sandboxed providers register after these reads, so
-					// only configured plugins' hooks and the always-present
-					// comment:moderate and email:deliver are known here. Hook
-					// resolution reads the rest.
-					const keys = Array.from(
-						new Set([
-							"comment:moderate",
-							"email:deliver",
-							...deps.plugins.flatMap((plugin) =>
-								Object.entries(plugin.hooks)
-									.filter(([, hook]) => hook?.exclusive)
-									.map(([name]) => name),
-							),
-						]),
-						(name) => `${EXCLUSIVE_HOOK_KEY_PREFIX}${name}`,
-					);
 					try {
-						const stored = await new OptionsRepository(readDb).getMany<string>(keys);
-						reads.exclusiveHookSelections = new Map(keys.map((key) => [key, stored.get(key)]));
+						const stored = await new OptionsRepository(readDb).getMany<string>(exclusiveHookKeys);
+						reads.exclusiveHookSelections = new Map(
+							exclusiveHookKeys.map((key) => [key, stored.get(key)]),
+						);
 					} catch (error) {
 						captureMissingManualSchema(error);
 						// Hook resolution reads the selections itself when this fails.
@@ -2266,39 +2307,43 @@ export class EmDashRuntime {
 			return reads;
 		};
 
-		// The applied-migration count rides in the cold-start batch on the
-		// coalescing connection instead of costing its own round trip first. In
-		// auto mode the policy uses it for its fast path. Reads in a batch whose
-		// count was current saw a fully migrated schema; otherwise they run again
-		// once the policy has finished.
+		// The cold-start reads carry the applied-migration count, which the
+		// migration policy uses in auto mode instead of reading its own: on the
+		// coalescing connection before the database is initialized, otherwise on
+		// the new database inside its initialization. Reads whose count was
+		// current saw a fully migrated schema; otherwise they run again once the
+		// policy has finished.
+		const settingsGeneration = siteSettingsGeneration();
+		let folded: ColdStartState | undefined;
 		let migrationsCurrent = false;
-		let foldedColdStartReads: ReturnType<typeof runColdStartReads> | undefined;
+		const foldInto = (state: ColdStartState | null | undefined) => {
+			folded = state ?? undefined;
+			migrationsCurrent = isMigrationCountCurrent(state?.appliedMigrationCount);
+			return state === null ? null : state?.appliedMigrationCount;
+		};
+		const autoMigrate = (deps.migrationMode ?? "auto") === "auto";
 		let appliedMigrationCount: Promise<number | null | undefined> | undefined;
 		// Only fold when getDatabase will actually initialize: a cached db needs
 		// no count, and during a backoff getDatabase throws without touching the
 		// database, so neither should the reads.
-		if (
-			coalescingDb &&
-			(deps.migrationMode ?? "auto") === "auto" &&
-			EmDashRuntime.databaseNeedsInit(deps)
-		) {
+		if (coalescingDb && autoMigrate && EmDashRuntime.databaseNeedsInit(deps)) {
 			// A read error leaves the policy to read the count itself.
-			appliedMigrationCount = getAppliedMigrationCount(coalescingDb).catch(() => undefined);
-			foldedColdStartReads = runColdStartReads(coalescingDb);
+			appliedMigrationCount = readColdStart(coalescingDb).then(foldInto);
 		}
 
 		// Initialize the database and enforce its configured migration policy.
 		let db: Kysely<Database>;
 		try {
-			db = await phase("rt.db", "DB init + migration policy", async () => {
-				const count = await appliedMigrationCount;
-				migrationsCurrent = isMigrationCountCurrent(count);
-				return EmDashRuntime.getDatabase(deps, { appliedMigrationCount: count });
-			});
+			db = await phase("rt.db", "DB init + migration policy", async () =>
+				EmDashRuntime.getDatabase(deps, {
+					appliedMigrationCount: await appliedMigrationCount,
+					readAppliedMigrationCount:
+						coalescingDb || !autoMigrate
+							? undefined
+							: async (newDb) => foldInto(await readColdStart(newDb)),
+				}),
+			);
 		} catch (error) {
-			// Drain the folded reads without letting a secondary read failure
-			// replace the migration/init error we want to report.
-			await foldedColdStartReads?.catch(() => undefined);
 			await disposeReadDb();
 			throw error;
 		}
@@ -2320,8 +2365,16 @@ export class EmDashRuntime {
 		};
 
 		const readDb = coalescingDb ?? db;
-		const foldedReads = await foldedColdStartReads;
-		const reads = foldedReads && migrationsCurrent ? foldedReads : await runColdStartReads(readDb);
+		const coldStart = folded && migrationsCurrent ? folded : await readColdStart(readDb);
+		const reads = coldStart ? toColdStartReads(coldStart) : await runColdStartReads(readDb);
+		if (coldStart && ownsConfiguredDb) {
+			primeBylineFieldDefs(coldStart.bylineFieldsVersion, coldStart.bylineFields);
+			try {
+				await primeSiteSettings(coldStart.prefixedOptions, db, settingsGeneration);
+			} catch {
+				// Non-fatal — the first getSiteSettings() call loads them.
+			}
+		}
 		const {
 			pluginStates,
 			pluginStatesRead,
@@ -2771,7 +2824,7 @@ export class EmDashRuntime {
 		// so the timer scheduler's cleanup can route scheduled publishing through
 		// the runtime wrapper (firing content:afterPublish hooks). The first tick
 		// is ≥1s out, well after the synchronous assignment below.
-		await phase("rt.cron", "Cron init (recovery deferred post-response)", async () => {
+		await phase("rt.cron", "Cron init", async () => {
 			try {
 				cronExecutor = new CronExecutor(resolveDb, invokeCronHook, deps.now);
 				// Plugin schedules are always database-backed. On long-lived runtimes this
@@ -2781,25 +2834,7 @@ export class EmDashRuntime {
 					cronReschedule: () => cronScheduler?.reschedule(),
 				});
 
-				// Recover stale locks from previous crashes. Pure bookkeeping
-				// against the _emdash_cron_tasks table — no request needs the
-				// result — so we defer it past the response via after(). On
-				// Cloudflare this goes into waitUntil (extending the worker
-				// lifetime); on Node it's fire-and-forget (the process stays
-				// up anyway). Saves one cold-start write per D1 isolate.
-				const executorForRecovery = cronExecutor;
-				after(async () => {
-					try {
-						const recovered = await executorForRecovery.recoverStaleLocks();
-						if (recovered > 0) {
-							console.log(`[cron] Recovered ${recovered} stale task lock(s)`);
-						}
-					} catch (error) {
-						// Keep the `[cron]` prefix so a failure is easy to trace back
-						// rather than surfacing as a generic deferred-task error.
-						console.error("[cron] Failed to recover stale task locks:", error);
-					}
-				});
+				// Every scheduled tick recovers stale task locks, so startup doesn't.
 
 				// The platform decides whether a long-lived timer heartbeat exists.
 				// `createScheduler` is injected by the generated virtual:emdash/scheduler
@@ -2825,9 +2860,11 @@ export class EmDashRuntime {
 							console.error("[scheduled] Maintenance tick failed:", error);
 						}
 					});
+					// The scheduler outlives this request: its timers must not
+					// inherit the request's context, connection or deferred work.
 					// start() is void on the timer scheduler but the interface
 					// allows a promise (alarm-backed schedulers); we don't block on it.
-					void scheduler.start();
+					runOutsideRequestContext(() => void scheduler.start());
 				}
 			} catch (error) {
 				console.warn("[cron] Failed to initialize cron system:", error);
@@ -2967,10 +3004,15 @@ export class EmDashRuntime {
 	 *
 	 * `appliedMigrationCount` is a count the caller already read from this
 	 * database; the migration policy uses it rather than reading its own.
+	 * Otherwise, in auto mode, `readAppliedMigrationCount` reads it from the
+	 * new database, and the policy reads its own when that returns undefined.
 	 */
 	private static async getDatabase(
 		deps: RuntimeDependencies,
-		options?: { appliedMigrationCount?: number | null },
+		options?: {
+			appliedMigrationCount?: number | null;
+			readAppliedMigrationCount?: (db: Kysely<Database>) => Promise<number | null | undefined>;
+		},
 	): Promise<Kysely<Database>> {
 		// Only use the per-request `ctx.db` when it's an isolated instance
 		// (playground / DO preview). Plain D1 Sessions set `ctx.db` on every
@@ -3033,10 +3075,11 @@ export class EmDashRuntime {
 				const migrationMode = deps.migrationMode ?? "auto";
 
 				try {
-					const appliedCount =
-						options?.appliedMigrationCount !== undefined || migrationMode !== "auto"
-							? options?.appliedMigrationCount
-							: await getAppliedMigrationCount(db);
+					let appliedCount = options?.appliedMigrationCount;
+					if (appliedCount === undefined && migrationMode === "auto") {
+						appliedCount = await options?.readAppliedMigrationCount?.(db);
+						if (appliedCount === undefined) appliedCount = await getAppliedMigrationCount(db);
+					}
 					if (appliedCount === null) holder.unmigrated.add(cacheKey);
 					else if (appliedCount !== undefined) holder.unmigrated.delete(cacheKey);
 					await enforceRuntimeMigrationPolicy(db, migrationMode, {

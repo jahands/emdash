@@ -445,11 +445,16 @@ export async function getAppliedMigrationCount(db: Kysely<Database>): Promise<nu
 		`.execute(db);
 		return Number(result.rows[0]?.count ?? 0);
 	} catch (error) {
-		if (MIGRATION_TABLE_MISSING_PATTERN.test(deepErrorMessage(error))) {
+		if (isMigrationTableMissingError(error)) {
 			return null;
 		}
 		throw error;
 	}
+}
+
+/** Whether `error` says the migration table does not exist. */
+export function isMigrationTableMissingError(error: unknown): boolean {
+	return MIGRATION_TABLE_MISSING_PATTERN.test(deepErrorMessage(error));
 }
 
 /**
