@@ -2,7 +2,7 @@
 import type { MigrationBaseline } from "../baseline.js";
 
 export const POSTGRES_BASELINE: MigrationBaseline = {
-	through: "098_content_live_list_indexes",
+	through: "099_content_sitemap_indexes",
 	statements: [
 		`CREATE TABLE "revisions" (
 	"id" text NOT NULL,
@@ -1075,6 +1075,7 @@ export const POSTGRES_BASELINE: MigrationBaseline = {
 		`CREATE INDEX idx__emdash_relations_parent_collection ON _emdash_relations USING btree (parent_collection)`,
 		`CREATE INDEX idx__emdash_relations_child_collection ON _emdash_relations USING btree (child_collection)`,
 		`CREATE INDEX idx_emdash_redirect_generation_artifacts_digest ON _emdash_redirect_generation_artifacts USING btree (digest)`,
+		`CREATE INDEX idx_emdash_seo_no_index ON _emdash_seo USING btree (collection, content_id) WHERE (seo_no_index <> 0)`,
 		`CREATE OR REPLACE FUNCTION emdash_media_usage_lock_cleanup()
  RETURNS trigger
  LANGUAGE plpgsql

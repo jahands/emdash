@@ -6,6 +6,7 @@
 
 import { sql, type Kysely } from "kysely";
 
+import { isPostgres } from "../../database/dialect-helpers.js";
 import type { Database } from "../../database/types.js";
 import { validateIdentifier } from "../../database/validate.js";
 import type { ApiResult } from "../types.js";
@@ -159,6 +160,70 @@ function indexableRows(collection: string) {
 }
 
 /**
+ * The same rows as `indexableRows`, written so Postgres reads them in ID order
+ * from `idx_ec_{collection}_sitemap`, a partial index that covers every column
+ * the sitemap lists, and excludes noindex entries through the small partial
+ * index `idx_emdash_seo_no_index`. `NOT EXISTS` rather than `NOT IN`: Postgres
+ * estimates `NOT IN` at half the rows and then prefers a scan and a sort.
+ */
+function indexableKeys(collection: string) {
+	return sql`
+		FROM ${sql.ref(`ec_${collection}`)} c
+		WHERE c.status = 'published'
+		AND c.deleted_at IS NULL
+		AND c.slug IS NOT NULL
+		AND TRIM(c.slug) <> ''
+		AND NOT EXISTS (
+			SELECT 1 FROM _emdash_seo noindex
+			WHERE noindex.collection = ${collection}
+			AND noindex.content_id = c.id
+			AND noindex.seo_no_index <> 0
+		)
+	`;
+}
+
+/**
+ * One row per page of indexable entries, with the page's latest update.
+ *
+ * Postgres walks the pages by key, one page of index entries per step, so
+ * it reads each entry once and keeps no per-row window state. SQLite numbers
+ * the rows instead: its planner does not read the partial index in order.
+ */
+function sitemapPagesQuery(db: Kysely<Database>, collection: string, pageSize: number) {
+	if (isPostgres(db)) {
+		const keys = indexableKeys(collection);
+		return sql<{ page: number | string; lastmod: string }>`
+			WITH RECURSIVE pages (page, last_id, lastmod) AS (
+				SELECT 0, MAX(p.id), MAX(p.updated_at)
+				FROM (SELECT c.id, c.updated_at ${keys} ORDER BY c.id LIMIT ${pageSize}) p
+				UNION ALL
+				SELECT prev.page + 1, step.last_id, step.lastmod
+				FROM pages prev
+				CROSS JOIN LATERAL (
+					SELECT MAX(p.id) AS last_id, MAX(p.updated_at) AS lastmod
+					FROM (
+						SELECT c.id, c.updated_at ${keys} AND c.id > prev.last_id
+						ORDER BY c.id LIMIT ${pageSize}
+					) p
+				) step
+				WHERE prev.last_id IS NOT NULL
+			)
+			SELECT page, lastmod FROM pages WHERE last_id IS NOT NULL ORDER BY page
+		`;
+	}
+	return sql<{ page: number | string; lastmod: string }>`
+		SELECT p.page AS page, MAX(p.updated_at) AS lastmod
+		FROM (
+			SELECT c.updated_at,
+				(ROW_NUMBER() OVER (ORDER BY c.id) - 1) / CAST(${pageSize} AS INTEGER) AS page
+			${indexableRows(collection)}
+		) p
+		GROUP BY p.page
+		ORDER BY p.page
+	`;
+}
+
+/**
  * List the child sitemaps for the sitemap index: one per page of each
  * SEO-enabled collection that has indexable content, with the page's latest
  * update as `lastmod`.
@@ -175,16 +240,7 @@ export async function handleSitemapIndexData(
 			// A missing or broken table skips that collection instead of failing
 			// the whole index.
 			try {
-				const rows = await sql<{ page: number | string; lastmod: string }>`
-					SELECT p.page AS page, MAX(p.updated_at) AS lastmod
-					FROM (
-						SELECT c.updated_at,
-							(ROW_NUMBER() OVER (ORDER BY c.id) - 1) / CAST(${pageSize} AS INTEGER) AS page
-						${indexableRows(col.slug)}
-					) p
-					GROUP BY p.page
-					ORDER BY p.page
-				`.execute(db);
+				const rows = await sitemapPagesQuery(db, col.slug, pageSize).execute(db);
 
 				for (const row of rows.rows) {
 					sitemaps.push({
@@ -208,6 +264,82 @@ export async function handleSitemapIndexData(
 	}
 }
 
+interface SitemapPageRow {
+	slug: string | null;
+	id: string;
+	updated_at: string;
+	published_at: string | null;
+	locale: string;
+	translation_group: string | null;
+	seo_image: string | null;
+	on_page: number | string;
+}
+
+/**
+ * The entries on one page, plus, with `includeTranslations`, the indexable
+ * entries on other pages that share a translation group with one of them.
+ */
+function sitemapPageQuery(
+	db: Kysely<Database>,
+	collection: string,
+	{
+		pageSize,
+		offset,
+		includeTranslations,
+	}: { pageSize: number; offset: number; includeTranslations: boolean },
+) {
+	if (isPostgres(db)) {
+		const keys = indexableKeys(collection);
+		const translations = includeTranslations
+			? sql`
+				UNION ALL
+				SELECT c.id, c.slug, c.updated_at, c.published_at, c.locale, c.translation_group, 0
+				${keys}
+				AND c.translation_group IN (SELECT translation_group FROM page)
+				AND c.id NOT IN (SELECT id FROM page)
+			`
+			: sql``;
+		return sql<SitemapPageRow>`
+			WITH page AS (
+				SELECT c.id, c.slug, c.updated_at, c.published_at, c.locale, c.translation_group
+				${keys}
+				ORDER BY c.id
+				LIMIT ${pageSize} OFFSET ${offset}
+			),
+			listed AS (
+				SELECT page.*, 1 AS on_page FROM page
+				${translations}
+			)
+			SELECT l.slug, l.id, l.updated_at, l.published_at, l.locale, l.translation_group,
+				s.seo_image, l.on_page
+			FROM listed l
+			LEFT JOIN _emdash_seo s ON s.collection = ${collection} AND s.content_id = l.id
+			ORDER BY l.id
+		`;
+	}
+	const from = indexableRows(collection);
+	const listed = includeTranslations
+		? sql`
+			c.id IN (SELECT id FROM page)
+			OR c.translation_group IN (SELECT translation_group FROM page)
+		`
+		: sql`c.id IN (SELECT id FROM page)`;
+	return sql<SitemapPageRow>`
+		WITH page AS (
+			SELECT c.id, c.translation_group
+			${from}
+			ORDER BY c.id
+			LIMIT ${pageSize} OFFSET ${offset}
+		)
+		SELECT c.slug, c.id, c.updated_at, c.published_at, c.locale, c.translation_group,
+			s.seo_image,
+			CASE WHEN c.id IN (SELECT id FROM page) THEN 1 ELSE 0 END AS on_page
+		${from}
+		AND (${listed})
+		ORDER BY c.id
+	`;
+}
+
 /**
  * Collect one page of published, indexable content per SEO-enabled
  * collection for sitemap generation, ordered by ID so editing an entry does
@@ -221,10 +353,16 @@ export async function handleSitemapData(
 	db: Kysely<Database>,
 	/** When set, only return data for this collection. */
 	collectionSlug?: string,
-	options: { page?: number; pageSize?: number } = {},
+	options: {
+		page?: number;
+		pageSize?: number;
+		/** Whether to return `translations`. Defaults to true. */
+		includeTranslations?: boolean;
+	} = {},
 ): Promise<ApiResult<SitemapDataResponse>> {
 	const page = options.page ?? 1;
 	const pageSize = options.pageSize ?? SITEMAP_PAGE_SIZE;
+	const includeTranslations = options.includeTranslations ?? true;
 	try {
 		const collections = await getSitemapCollections(db, collectionSlug);
 		const result: SitemapCollectionData[] = [];
@@ -233,33 +371,11 @@ export async function handleSitemapData(
 			// A missing or broken table skips that collection instead of failing
 			// the whole sitemap.
 			try {
-				const from = indexableRows(col.slug);
-				const rows = await sql<{
-					slug: string | null;
-					id: string;
-					updated_at: string;
-					published_at: string | null;
-					locale: string;
-					translation_group: string | null;
-					seo_image: string | null;
-					on_page: number | string;
-				}>`
-					WITH page AS (
-						SELECT c.id, c.translation_group
-						${from}
-						ORDER BY c.id
-						LIMIT ${pageSize} OFFSET ${(page - 1) * pageSize}
-					)
-					SELECT c.slug, c.id, c.updated_at, c.published_at, c.locale, c.translation_group,
-						s.seo_image,
-						CASE WHEN c.id IN (SELECT id FROM page) THEN 1 ELSE 0 END AS on_page
-					${from}
-					AND (
-						c.id IN (SELECT id FROM page)
-						OR c.translation_group IN (SELECT translation_group FROM page)
-					)
-					ORDER BY c.id
-				`.execute(db);
+				const rows = await sitemapPageQuery(db, col.slug, {
+					pageSize,
+					offset: (page - 1) * pageSize,
+					includeTranslations,
+				}).execute(db);
 
 				const entries: SitemapContentEntry[] = [];
 				const translations: SitemapContentEntry[] = [];

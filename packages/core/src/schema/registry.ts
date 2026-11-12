@@ -2049,6 +2049,15 @@ export class SchemaRegistry {
 				ON ${sql.ref(tableName)} (status, published_at DESC, id DESC)
 				WHERE deleted_at IS NULL
 			`.execute(conn);
+
+			// Sitemaps read indexable entries in ID order from this index alone.
+			// Keep the name and definition identical to migration 099.
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_sitemap`)}
+				ON ${sql.ref(tableName)} (id)
+				INCLUDE (updated_at, translation_group, slug, published_at, locale)
+				WHERE status = 'published' AND deleted_at IS NULL AND slug IS NOT NULL AND TRIM(slug) <> ''
+			`.execute(conn);
 		}
 	}
 

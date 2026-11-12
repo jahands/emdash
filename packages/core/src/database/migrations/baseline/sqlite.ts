@@ -2,7 +2,7 @@
 import type { MigrationBaseline } from "../baseline.js";
 
 export const SQLITE_BASELINE: MigrationBaseline = {
-	through: "098_content_live_list_indexes",
+	through: "099_content_sitemap_indexes",
 	statements: [
 		`CREATE TABLE "revisions" ("id" text primary key, "collection" text not null, "entry_id" text not null, "data" text not null, "author_id" text, "created_at" text default (datetime('now')), "kind" text, "edited_by" text)`,
 		`CREATE TABLE "media" ("id" text primary key, "filename" text not null, "mime_type" text not null, "size" integer, "width" integer, "height" integer, "alt" text, "caption" text, "storage_key" text not null, "content_hash" text, "created_at" text default (datetime('now')), "author_id" text, "status" text default 'ready' not null, blurhash TEXT, dominant_color TEXT, "folder_id" text references "media_folders" ("id") on delete set null, "focal_x" real, "focal_y" real)`,
