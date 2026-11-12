@@ -1,91 +1,126 @@
 /**
- * Eager, transparent prefetch of site-global "chrome" data.
+ * Learned prefetch of site-global "chrome" data for public pages.
  *
- * On a public page render, the shared layout pulls the same site-global data on
- * every request -- menus, widget areas, taxonomy term lists, site settings --
- * but each is awaited inside a separately-rendered Astro component, so they
- * execute as serial DB round trips. This fires them all CONCURRENTLY at the
- * very start of the request, before `next()`:
+ * The layout reads site settings, menus, widget areas and taxonomy term lists
+ * from separately rendered components, so on a remote backend the reads
+ * serialize. Starting them concurrently at the beginning of the request lets
+ * them overlap, and the results land in the per-request `requestCached` store
+ * under the keys the helpers use, so the components find them warm.
  *
- *   - On remote backends whose adapter can overlap queries the round trips
- *     overlap instead of serializing, collapsing ~N sequential RTTs into ~1
- *     wall-clock RTT. On a coalescing backend they additionally batch into a
- *     single round trip.
- *   - The results land in the per-request `requestCached` store under the exact
- *     keys the layout helpers use, so when the components render they hit a warm
- *     (in-flight or resolved) cache entry instead of issuing their own query.
- *
- * Nothing here changes what templates call -- it warms the real helpers, so the
- * cache keys and value shapes are guaranteed identical. The caller gates this to
- * the public-page path on a request-scoped (remote) backend that can overlap
- * queries; it is a no-op-ish waste on synchronous local SQLite and only delays
- * the page on a handle that runs one query at a time, so don't call it there.
- *
- * Fire-and-forget: never awaited by middleware, never throws (a prefetch failure
- * must not affect the request -- the helpers will simply run on demand).
+ * Only reads the page is known to make are started. Each render records the
+ * layout helpers it called (see `layout-reads.ts`); later requests for the
+ * same route start those reads. A route that has not rendered yet starts the
+ * reads every finished render so far has made. A read that was started but
+ * not used is never started again for that route. So the prefetch issues no
+ * query the page would not issue itself, except at most once per route and
+ * read in an isolate.
  */
 
-import { getDb } from "../loader.js";
-import { getMenu } from "../menus/index.js";
-import { cachedQuery, CacheNamespace } from "../object-cache/index.js";
-import { requestCached, setRequestCacheEntry } from "../request-cache.js";
-import { getSiteSettings } from "../settings/index.js";
-import { getTaxonomyDefs, getTaxonomyTerms } from "../taxonomies/index.js";
-import { getWidgetAreas } from "../widgets/index.js";
+import type { LayoutRead, LayoutReadLog } from "../layout-reads.js";
+import { replayLayoutRead } from "../layout-reads.js";
+import type { EmDashRequestContext } from "../request-context.js";
+import { wrapResponseForScopedClose } from "./middleware/scoped-db.js";
 
-/** Warm widget areas: one bulk load, primed under each per-area cache key. */
-async function prefetchWidgetAreas(): Promise<void> {
-	const areas = await requestCached("widget-areas", getWidgetAreas);
-	// getWidgetArea(name) caches under `widget-area:${name}` and returns the same
-	// WidgetArea shape getWidgetAreas yields, so priming here makes those calls hit.
-	for (const area of areas) {
-		setRequestCacheEntry(`widget-area:${area.name}`, area);
+interface RouteReads {
+	reads: Map<string, LayoutRead>;
+	rejected: Set<string>;
+}
+
+interface PrefetchState {
+	routes: Map<string, RouteReads>;
+	/** Reads every finished render has made, or null before the first one. */
+	common: Map<string, LayoutRead> | null;
+}
+
+const STATE_KEY = Symbol.for("emdash:layout-prefetch");
+const g = globalThis as Record<symbol, unknown>;
+const state: PrefetchState =
+	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- globalThis singleton pattern (see request-context.ts)
+	(g[STATE_KEY] as PrefetchState | undefined) ??
+	(() => {
+		const initial: PrefetchState = { routes: new Map(), common: null };
+		g[STATE_KEY] = initial;
+		return initial;
+	})();
+
+export interface LayoutPrefetch {
+	/** Learn from the render once the response body has been sent in full. */
+	trackResponse(response: Response): Response;
+	/** Settles when the started reads have. */
+	settled: Promise<unknown>;
+}
+
+function candidateReads(route: string): Array<[string, LayoutRead]> {
+	const known = state.routes.get(route);
+	const source = known?.reads ?? state.common;
+	if (!source) return [];
+	return [...source].filter(([id]) => !known?.rejected.has(id));
+}
+
+function learn(route: string, log: LayoutReadLog, started: Set<string>, ok: boolean): void {
+	let known = state.routes.get(route);
+	if (!known) {
+		known = { reads: new Map(), rejected: new Set() };
+		state.routes.set(route, known);
+	}
+	for (const id of started) {
+		if (log.reads.has(id)) continue;
+		known.reads.delete(id);
+		known.rejected.add(id);
+	}
+	if (!ok) return;
+	for (const [id, read] of log.reads) {
+		if (!known.rejected.has(id)) known.reads.set(id, read);
+	}
+	if (state.common === null) {
+		state.common = new Map(log.reads);
+	} else {
+		for (const id of state.common.keys()) {
+			if (!log.reads.has(id)) state.common.delete(id);
+		}
 	}
 }
 
 /**
- * Warm every taxonomy's term list via the real helper (primes per-name keys).
- * Counts are left out: they cost an aggregate over the whole assignment pivot
- * per taxonomy, and only a consumer that renders one can say it's needed. A
- * consumer that does asks for it and reuses the term list warmed here.
+ * Start the layout reads learned for `route` and record what this render
+ * reads. Call inside the request ALS frame that owns `ctx`, before rendering.
+ * Never throws: a failed read is left for the helper to run on demand.
  */
-async function prefetchTaxonomyTerms(): Promise<void> {
-	const defs = await getTaxonomyDefs();
-	await Promise.allSettled(defs.map((def) => getTaxonomyTerms(def.name, { includeCounts: false })));
-}
+export function startLayoutPrefetch(ctx: EmDashRequestContext, route: string): LayoutPrefetch {
+	const log: LayoutReadLog = { owner: ctx, reads: new Map() };
+	ctx.layoutReads = log;
 
-/** Warm every menu via the real helper (primes `menu:${name}:${locale}`). */
-async function prefetchMenus(): Promise<void> {
-	// The layout calls getMenu(name) with hardcoded names; we can't know them, so
-	// discover every menu name and warm them all (small, bounded chrome table).
-	const names = await cachedQuery({
-		namespace: CacheNamespace.MENUS,
-		key: "names",
-		load: async () => {
-			const db = await getDb();
-			const rows = await db.selectFrom("_emdash_menus").select("name").distinct().execute();
-			return [...new Set(rows.map((r) => r.name))];
+	const started = new Set<string>();
+	const pending: Promise<unknown>[] = [];
+	for (const [id, read] of candidateReads(route)) {
+		started.add(id);
+		try {
+			pending.push(replayLayoutRead(read).catch(() => undefined));
+		} catch {
+			// The helper runs on demand.
+		}
+	}
+
+	let learned = false;
+	const finish = (ok: boolean) => {
+		if (learned) return;
+		learned = true;
+		learn(route, log, started, ok);
+	};
+
+	return {
+		settled: Promise.all(pending),
+		trackResponse(response) {
+			// A cancelled stream also finishes. Its render may have stopped early,
+			// which can only reject reads, never add one the page did not make.
+			const ok = response.status >= 200 && response.status < 300;
+			return wrapResponseForScopedClose(response, () => finish(ok));
 		},
-	});
-	await Promise.allSettled(names.map((name) => getMenu(name)));
+	};
 }
 
-/**
- * Concurrently warm the site-global layout data for the current request.
- * Safe to call only inside the request ALS frame that owns the (remote)
- * request-scoped db. Never throws.
- */
-export async function prefetchLayoutData(): Promise<void> {
-	try {
-		await Promise.allSettled([
-			getSiteSettings(),
-			prefetchMenus(),
-			prefetchWidgetAreas(),
-			prefetchTaxonomyTerms(),
-		]);
-	} catch (error) {
-		// Defensive: Promise.allSettled shouldn't reject, but never let a prefetch
-		// failure surface to the request.
-		console.error("[emdash] layout prefetch failed (non-fatal):", error);
-	}
+/** @internal */
+export function resetLayoutPrefetchForTests(): void {
+	state.routes.clear();
+	state.common = null;
 }

@@ -2,10 +2,11 @@ import type { Kysely } from "kysely";
 
 import { widgetAreaTag } from "../cache/chrome-tags.js";
 import type { Database } from "../database/types.js";
+import { noteLayoutRead } from "../layout-reads.js";
 import { getDb } from "../loader.js";
 import { cachedQuery, CacheNamespace } from "../object-cache/index.js";
 import type { CacheHint } from "../query.js";
-import { peekRequestCache, requestCached } from "../request-cache.js";
+import { requestCached } from "../request-cache.js";
 import { getWidgetComponents as getComponentRegistry } from "./components.js";
 import type { Widget, WidgetArea, WidgetRow, WidgetComponentDef } from "./types.js";
 
@@ -26,17 +27,8 @@ export { invalidateWidgetObjectCache } from "../object-cache/index.js";
  * Get a widget area by name, with all its widgets.
  */
 export async function getWidgetArea(name: string): Promise<WidgetArea | null> {
+	noteLayoutRead(`widget-area:${name}`, () => getWidgetArea(name));
 	return requestCached(`widget-area:${name}`, async () => {
-		const prefetched = peekRequestCache<WidgetArea[]>("widget-areas");
-		if (prefetched) {
-			try {
-				const areas = await prefetched;
-				return areas.find((area) => area.name === name) ?? null;
-			} catch {
-				// Optional prefetch failure must still allow the scoped read.
-			}
-		}
-
 		return cachedQuery({
 			namespace: CacheNamespace.WIDGETS,
 			key: `area:${name}`,

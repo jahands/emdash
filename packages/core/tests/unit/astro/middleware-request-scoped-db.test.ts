@@ -64,7 +64,12 @@ vi.mock("../../../src/emdash-runtime.js", () => ({
 	},
 }));
 
-vi.mock("../../../src/astro/prefetch.js", () => ({ prefetchLayoutData: async () => undefined }));
+vi.mock("../../../src/astro/prefetch.js", () => ({
+	startLayoutPrefetch: () => ({
+		settled: Promise.resolve(),
+		trackResponse: (response: Response) => response,
+	}),
+}));
 
 import onRequest from "../../../src/astro/middleware.js";
 import { getDb } from "../../../src/loader.js";

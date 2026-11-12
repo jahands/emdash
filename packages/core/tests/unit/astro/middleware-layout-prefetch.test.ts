@@ -13,11 +13,14 @@ vi.mock("astro:middleware", () => ({
 	defineMiddleware: (handler: unknown) => handler,
 }));
 
-const { MOCK_RUNTIME, createRequestScopedDb, prefetchLayoutData } = vi.hoisted(() => {
+const { MOCK_RUNTIME, createRequestScopedDb, startLayoutPrefetch } = vi.hoisted(() => {
 	const ok = async () => ({ success: true });
 	return {
 		createRequestScopedDb: vi.fn(),
-		prefetchLayoutData: vi.fn(async () => undefined),
+		startLayoutPrefetch: vi.fn(() => ({
+			settled: Promise.resolve(),
+			trackResponse: (response: Response) => response,
+		})),
 		MOCK_RUNTIME: {
 			storage: { getPublicUrl: vi.fn((key: string) => `https://media.example.com/${key}`) },
 			db: {},
@@ -73,7 +76,7 @@ vi.mock("../../../src/loader.js", () => ({
 	})),
 }));
 
-vi.mock("../../../src/astro/prefetch.js", () => ({ prefetchLayoutData }));
+vi.mock("../../../src/astro/prefetch.js", () => ({ startLayoutPrefetch }));
 
 import onRequest from "../../../src/astro/middleware.js";
 
@@ -94,6 +97,7 @@ function htmlNavigation() {
 			headers: { accept: "text/html,application/xhtml+xml" },
 		}),
 		url: new URL("https://example.com/posts/hello"),
+		routePattern: "/posts/[slug]",
 		cookies: { get: vi.fn(() => undefined), set: vi.fn() },
 		locals: {} as Record<string, unknown>,
 		redirect: vi.fn(),
@@ -128,7 +132,8 @@ describe("layout prefetch on anonymous HTML navigations", () => {
 
 		await navigate();
 
-		expect(prefetchLayoutData).toHaveBeenCalledOnce();
+		expect(startLayoutPrefetch).toHaveBeenCalledOnce();
+		expect(startLayoutPrefetch).toHaveBeenCalledWith(expect.anything(), "/posts/[slug]");
 	});
 
 	it("skips the prefetch when the request-scoped db runs one query at a time", async () => {
@@ -137,6 +142,6 @@ describe("layout prefetch on anonymous HTML navigations", () => {
 		await navigate();
 
 		expect(createRequestScopedDb).toHaveBeenCalled();
-		expect(prefetchLayoutData).not.toHaveBeenCalled();
+		expect(startLayoutPrefetch).not.toHaveBeenCalled();
 	});
 });

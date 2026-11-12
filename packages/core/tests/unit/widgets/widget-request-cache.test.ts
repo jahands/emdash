@@ -1,4 +1,4 @@
-import type { KyselyPlugin, QueryId } from "kysely";
+import type { KyselyPlugin } from "kysely";
 import { afterAll, afterEach, beforeEach, expect, it, vi } from "vitest";
 
 import {
@@ -12,7 +12,7 @@ import {
 vi.mock("../../../src/loader.js", () => ({ getDb: vi.fn() }));
 vi.mock("virtual:emdash/object-cache", () => ({ createObjectCache: undefined }));
 
-import { prefetchLayoutData } from "../../../src/astro/prefetch.js";
+import { resetLayoutPrefetchForTests } from "../../../src/astro/prefetch.js";
 import { waitForDeferredTasks } from "../../../src/deferred-tasks.js";
 import { getDb } from "../../../src/loader.js";
 import { __setObjectCacheBackendForTests } from "../../../src/object-cache/index.js";
@@ -22,13 +22,13 @@ import {
 	getWidgetAreas,
 	invalidateWidgetObjectCache,
 } from "../../../src/widgets/index.js";
+import { prefetchLayoutReads, renderWithLayoutPrefetch } from "../../utils/layout-prefetch.js";
 
 afterAll(destroySharedPool);
 
 describeEachDialect("widget area request cache", (dialect) => {
 	let ctx: DialectTestContext;
 	let queries: string[];
-	let failBulkRead: boolean;
 
 	beforeEach(async () => {
 		ctx = await setupForDialect(dialect);
@@ -63,23 +63,18 @@ describeEachDialect("widget area request cache", (dialect) => {
 			.execute();
 
 		queries = [];
-		failBulkRead = false;
-		const bulkReads = new WeakSet<QueryId>();
 		const plugin: KyselyPlugin = {
 			transformQuery(args) {
 				const { sql } = ctx.db.getExecutor().compileQuery(args.node, args.queryId);
 				if (sql.includes("_emdash_widget")) queries.push(sql);
-				if (sql.includes('from "_emdash_widget_areas"') && !sql.includes(" where ")) {
-					bulkReads.add(args.queryId);
-				}
 				return args.node;
 			},
 			async transformResult(args) {
-				if (failBulkRead && bulkReads.has(args.queryId)) throw new Error("Bulk read failed");
 				return args.result;
 			},
 		};
 		vi.mocked(getDb).mockResolvedValue(ctx.db.withPlugin(plugin));
+		resetLayoutPrefetchForTests();
 	});
 
 	afterEach(async () => {
@@ -87,33 +82,29 @@ describeEachDialect("widget area request cache", (dialect) => {
 		vi.clearAllMocks();
 	});
 
-	it("shares in-flight prefetch with concurrent named reads, including missing areas", async () => {
+	it("shares in-flight prefetched reads with concurrent named reads, including missing areas", async () => {
 		const footer = await getWidgetArea("footer");
 		const sidebar = await getWidgetArea("sidebar");
 		expect(footer?.widgets.map((widget) => widget.id)).toEqual(["search", "links"]);
-		queries = [];
-
-		await runWithContext({ editMode: false }, async () => {
-			const [, actualFooter, actualSidebar, empty, missing] = await Promise.all([
-				prefetchLayoutData(),
+		const render = () =>
+			Promise.all([
 				getWidgetArea("footer"),
 				getWidgetArea("sidebar"),
 				getWidgetArea("empty"),
 				getWidgetArea("missing"),
 			]);
-			expect(actualFooter).toEqual(footer);
-			expect(actualSidebar).toEqual(sidebar);
-			expect(empty?.widgets).toEqual([]);
-			expect(missing).toBeNull();
-			expect(queries).toHaveLength(1);
-		});
-	});
+		await renderWithLayoutPrefetch("/", render);
+		queries = [];
 
-	it("shares the bulk load between repeated prefetch calls", async () => {
-		await runWithContext({ editMode: false }, async () => {
-			await Promise.all([prefetchLayoutData(), prefetchLayoutData()]);
-			expect(queries).toHaveLength(1);
-		});
+		const [actualFooter, actualSidebar, empty, missing] = await renderWithLayoutPrefetch(
+			"/",
+			render,
+		);
+		expect(actualFooter).toEqual(footer);
+		expect(actualSidebar).toEqual(sidebar);
+		expect(empty?.widgets).toEqual([]);
+		expect(missing).toBeNull();
+		expect(queries).toHaveLength(4);
 	});
 
 	it("loads every area in creation order with its ordered widgets in one query", async () => {
@@ -141,22 +132,16 @@ describeEachDialect("widget area request cache", (dialect) => {
 	});
 
 	it("serves completed prefetch results without further queries", async () => {
+		await renderWithLayoutPrefetch("/", async () => {
+			await getWidgetArea("footer");
+			await getWidgetArea("missing");
+		});
 		await runWithContext({ editMode: false }, async () => {
-			await prefetchLayoutData();
+			await prefetchLayoutReads("/");
 			queries = [];
 			expect((await getWidgetArea("footer"))?.widgets).toHaveLength(2);
 			expect(await getWidgetArea("missing")).toBeNull();
 			expect(queries).toHaveLength(0);
-		});
-	});
-
-	it("falls back to a named read when the optional bulk load fails", async () => {
-		failBulkRead = true;
-		await runWithContext({ editMode: false }, async () => {
-			const [, footer] = await Promise.all([prefetchLayoutData(), getWidgetArea("footer")]);
-			expect(footer?.widgets.map((widget) => widget.id)).toEqual(["search", "links"]);
-			expect(await getWidgetArea("footer")).toBe(footer);
-			expect(queries).toHaveLength(2);
 		});
 	});
 
@@ -170,7 +155,8 @@ describeEachDialect("widget area request cache", (dialect) => {
 	});
 
 	it("does not reuse prefetched data across requests", async () => {
-		await runWithContext({ editMode: false }, () => prefetchLayoutData());
+		await renderWithLayoutPrefetch("/", () => getWidgetArea("footer"));
+		await renderWithLayoutPrefetch("/", () => getWidgetArea("footer"));
 		await ctx.db
 			.updateTable("_emdash_widget_areas")
 			.set({ label: "Updated" })
@@ -200,11 +186,7 @@ describeEachDialect("widget area request cache", (dialect) => {
 		);
 		try {
 			const reads = [
-				() =>
-					runWithContext({ editMode: false }, async () => {
-						await prefetchLayoutData();
-						return getWidgetArea("footer");
-					}),
+				() => renderWithLayoutPrefetch("/", () => getWidgetArea("footer")),
 				() => runWithContext({ editMode: false }, () => getWidgetArea("footer")),
 			];
 			for (const read of reads) {

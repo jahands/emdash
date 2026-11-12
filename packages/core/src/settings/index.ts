@@ -14,6 +14,7 @@ import { MediaRepository } from "../database/repositories/media.js";
 import { OptionsRepository } from "../database/repositories/options.js";
 import { withTransaction } from "../database/transaction.js";
 import type { Database } from "../database/types.js";
+import { noteLayoutRead } from "../layout-reads.js";
 import { getDb } from "../loader.js";
 import { buildRenderMediaUrl } from "../media/url.js";
 import { cachedQuery, invalidateObjectCache } from "../object-cache/index.js";
@@ -382,6 +383,7 @@ async function loadCachedSiteSettings(): Promise<CachedSiteSettings> {
  * ```
  */
 export function getSiteSettings(): Promise<Partial<SiteSettings>> {
+	noteLayoutRead("siteSettings", getSiteSettings);
 	return requestCached("siteSettings", async () => {
 		const snapshot = await requestCached("siteSettingsSnapshot", async () => {
 			const ctx = getRequestContext();

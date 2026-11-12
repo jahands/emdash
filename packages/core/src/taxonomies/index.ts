@@ -27,6 +27,7 @@ import {
 	storedLocaleOrder,
 } from "../i18n/query.js";
 import { resolveLocale, resolveLocaleChain } from "../i18n/resolve.js";
+import { noteLayoutRead } from "../layout-reads.js";
 import { getDb, resetTaxonomyNamesCache } from "../loader.js";
 import {
 	cachedQuery,
@@ -288,6 +289,11 @@ export async function getTaxonomyTerms(
 	taxonomyName: string,
 	options: TaxonomyTermsOptions = {},
 ): Promise<TaxonomyTerm[]> {
+	const { locale: requestedLocale, includeCounts } = options;
+	noteLayoutRead(
+		`taxonomy-terms:${JSON.stringify([taxonomyName, requestedLocale, includeCounts])}`,
+		() => getTaxonomyTerms(taxonomyName, { locale: requestedLocale, includeCounts }),
+	);
 	const locale = resolveLocale(options.locale);
 	const def = await getTaxonomyDef(taxonomyName, options);
 	if (!def) return [];
@@ -315,7 +321,7 @@ export async function getTaxonomyTermsWithCacheHint(
 	return { data, cacheHint: { tags: [taxonomyTag(taxonomyName)] } };
 }
 
-/** Terms without counts, under the cache keys the layout prefetch warms. */
+/** Terms without counts, shared by callers that add counts. */
 function getTermList(def: TaxonomyDef, locale: string | undefined): Promise<TaxonomyTerm[]> {
 	const localeKey = locale ?? "*";
 	return requestCached(`taxonomy-terms:${def.name}:${localeKey}`, () =>

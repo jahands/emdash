@@ -87,7 +87,7 @@ import {
 	requestEndedAuthenticated,
 } from "./middleware/scoped-db.js";
 import { wrapBodyForStreamMetrics } from "./middleware/stream-end-metrics.js";
-import { prefetchLayoutData } from "./prefetch.js";
+import { startLayoutPrefetch } from "./prefetch.js";
 import {
 	createPublicPluginApiRouteHandler,
 	getPublicPluginRouteMeta,
@@ -933,38 +933,38 @@ export const onRequest = defineMiddleware(async (context, next) => {
 					const ctx = parent
 						? { ...parent, db: anonScoped.db, deferredTasks }
 						: { editMode: false, db: anonScoped.db, metrics, deferredTasks };
-					// Eagerly warm site-global layout data (menus, widget areas,
-					// taxonomy terms, settings) concurrently so the layout's
-					// per-component reads overlap into ~one wall-clock round trip and
-					// hit a warm cache instead of serializing. Four guards:
+					// Start the site-global layout reads this route is known to make
+					// (settings, menus, widget areas, term lists) concurrently, so they
+					// overlap instead of serializing. Guards:
 					//  - request-scoped (remote) backend only -- this branch implies it;
 					//    pointless on synchronous local SQLite.
 					//  - an adapter that can overlap queries -- without that, Kysely's
 					//    connection mutex (D1 sessions without `coalesce`) queues the
 					//    prefetch ahead of the page's own first query.
-					//  - HTML navigations only -- feeds/sitemaps/JSON don't render the
-					//    layout, so prefetching their chrome is pure waste.
-					//  - the work starts immediately, then after() keeps both it and the
-					//    request-scoped connection alive until the response also finishes.
-					// Gate on the CLIENT'S PREFERRED type (leading media range), not a
-					// substring -- browser navigations lead with `text/html`, while feed
-					// readers lead with `application/rss+xml` etc. and only list
-					// `text/html;q=0.8` later, so a substring match would leak onto feeds.
+					//  - HTML navigations only. Gate on the client's preferred type
+					//    (leading media range), not a substring: feed readers list
+					//    `text/html;q=0.8` after their feed type.
+					// after() keeps the reads and the request-scoped connection alive
+					// until the response also finishes.
 					const acceptsHtml = (request.headers.get("accept") ?? "")
 						.split(",", 1)[0]!
 						.trim()
 						.startsWith("text/html");
 					return runWithContext(ctx, async () => {
-						if (
+						const prefetch =
 							acceptsHtml &&
+							context.routePattern &&
 							anonScoped.db.getExecutor().adapter.supportsMultipleConnections !== false
-						) {
-							after(() => prefetchLayoutData());
-						}
+								? startLayoutPrefetch(ctx, context.routePattern)
+								: undefined;
+						if (prefetch) after(async () => void (await prefetch.settled));
 						// commit() persists per-request state (e.g. the D1 bookmark cookie)
 						// before the response is returned, even if render throws; close()
 						// waits for stream-end and request-owned deferred work. See finishScoped.
-						return finishScoped(lifecycle, runAnon);
+						return finishScoped(
+							lifecycle,
+							prefetch ? async () => prefetch.trackResponse(await runAnon()) : runAnon,
+						);
 					});
 				}
 				return runAnon();

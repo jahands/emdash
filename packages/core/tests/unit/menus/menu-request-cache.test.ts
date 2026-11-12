@@ -15,7 +15,7 @@ vi.mock("../../../src/loader.js", () => ({
 	getDb: vi.fn(),
 }));
 
-import { prefetchLayoutData } from "../../../src/astro/prefetch.js";
+import { resetLayoutPrefetchForTests } from "../../../src/astro/prefetch.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import { MenuRepository } from "../../../src/database/repositories/menu.js";
 import { TaxonomyRepository } from "../../../src/database/repositories/taxonomy.js";
@@ -26,6 +26,7 @@ import {
 	invalidateMenuObjectCache,
 } from "../../../src/object-cache/index.js";
 import { runWithContext } from "../../../src/request-context.js";
+import { prefetchLayoutReads, renderWithLayoutPrefetch } from "../../utils/layout-prefetch.js";
 
 /** SQL of every query executed against the test database. */
 let queries: string[] = [];
@@ -92,6 +93,7 @@ describe("getMenu collection-pattern request cache", () => {
 		}
 
 		vi.mocked(getDb).mockResolvedValue(db);
+		resetLayoutPrefetchForTests();
 	});
 
 	afterEach(async () => {
@@ -131,13 +133,15 @@ describe("getMenu collection-pattern request cache", () => {
 		expect(collectionPatternQueries()).toHaveLength(1);
 	});
 
-	it("prefetchLayoutData warms menus so layout getMenu calls hit the cache", async () => {
-		await runWithContext({ editMode: false }, async () => {
-			// Eager prefetch discovers every menu name and warms them up front.
-			await prefetchLayoutData();
+	it("the layout prefetch warms the menus the route read, so its getMenu calls hit the cache", async () => {
+		await renderWithLayoutPrefetch("/", async () => {
+			await getMenu("primary");
+			await getMenu("footer");
+		});
 
-			// Anything the layout reads afterwards must be served from the
-			// request cache the prefetch populated -- zero further queries.
+		await runWithContext({ editMode: false }, async () => {
+			await prefetchLayoutReads("/");
+
 			queries = [];
 			const primary = await getMenu("primary");
 			const footer = await getMenu("footer");
@@ -181,25 +185,6 @@ describe("getMenu collection-pattern request cache", () => {
 
 		afterEach(() => {
 			__setObjectCacheBackendForTests(null);
-		});
-
-		const menuNameQueries = () =>
-			queries.filter((q) => q.includes('"_emdash_menus"') && q.includes("distinct"));
-
-		it("serves discovered menu names from the object cache until a menu is created", async () => {
-			const prefetch = () => runWithContext({ editMode: false, db }, () => prefetchLayoutData());
-
-			await prefetch();
-			await flush();
-			queries = [];
-			await prefetch();
-			expect(menuNameQueries()).toHaveLength(0);
-
-			await new MenuRepository(db).create({ name: "social", label: "Social" });
-			await flush();
-			queries = [];
-			await prefetch();
-			expect(menuNameQueries()).toHaveLength(1);
 		});
 
 		async function insertMenuLinking(
