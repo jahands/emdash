@@ -93,7 +93,12 @@ export function buildTargets({
 	return targets;
 }
 
+/** Whether any `--only` text appears in one of `texts`. No `--only` selects everything. */
+export function matchesOnly(only, ...texts) {
+	if (!only || only.length === 0) return true;
+	return only.some((o) => texts.some((t) => typeof t === "string" && t.includes(o)));
+}
+
 export function filterTargets(targets, only) {
-	if (!only || only.length === 0) return targets;
-	return targets.filter((t) => only.some((o) => t.path.includes(o) || t.name.includes(o)));
+	return targets.filter((t) => matchesOnly(only, t.path, t.name));
 }

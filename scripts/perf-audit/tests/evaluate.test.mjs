@@ -175,6 +175,7 @@ void test("a candidate that does not hold up on medians is not reported", () => 
 	assert.deepEqual(plan.get("blog-workerd-d1"), {
 		pages: [{ viewport: "desktop", name: "admin media library" }],
 		coldStart: true,
+		writes: false,
 	});
 	const confirmed = confirmRegressions(
 		regressions,

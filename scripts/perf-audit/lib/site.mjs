@@ -258,6 +258,97 @@ export class Site {
 		}
 	}
 
+	/**
+	 * Run `statements` ({ text, params }) in one transaction, with `?`
+	 * placeholders for every dialect. Local D1 needs the server stopped.
+	 */
+	async sqlBatch(statements) {
+		const { database } = this.profile;
+		if (database === "postgres" || database === "hyperdrive") {
+			const { Client } = loadPg();
+			const client = new Client({ connectionString: this.directPostgresUrl });
+			await client.connect();
+			try {
+				await client.query("BEGIN");
+				for (const { text, params } of statements) {
+					let n = 0;
+					await client.query(
+						text.replace(PLACEHOLDER, () => `$${++n}`),
+						params,
+					);
+				}
+				await client.query("COMMIT");
+			} catch (error) {
+				await client.query("ROLLBACK").catch(() => {});
+				throw error;
+			} finally {
+				await client.end();
+			}
+			return;
+		}
+		if (database === "d1" && this.server) {
+			throw new Error("Stop the workerd server before writing to local D1");
+		}
+		const file = database === "d1" ? this.d1File() : join(this.siteDir, "data.db");
+		if (!file) throw new Error(`No local database for ${this.profile.id}`);
+		const db = new DatabaseSync(file);
+		try {
+			db.exec("BEGIN");
+			for (const { text, params } of statements) db.prepare(text).run(...params);
+			db.exec("COMMIT");
+		} catch (error) {
+			if (db.isTransaction) db.exec("ROLLBACK");
+			throw error;
+		} finally {
+			db.close();
+		}
+	}
+
+	/**
+	 * Watch the SQLite database for commits by the server, for spotting
+	 * writes made after a response. Reading never blocks the server's
+	 * writes only in WAL mode, so other databases return null.
+	 */
+	watchCommits() {
+		const { database } = this.profile;
+		const file =
+			database === "sqlite"
+				? join(this.siteDir, "data.db")
+				: database === "d1"
+					? this.d1File()
+					: null;
+		if (!file || !existsSync(`${file}-wal`)) return null;
+		let db;
+		try {
+			db = new DatabaseSync(file, { readOnly: true });
+		} catch {
+			return null;
+		}
+		const version = () => {
+			try {
+				return db.prepare("PRAGMA data_version").get().data_version;
+			} catch {
+				return null;
+			}
+		};
+		let last = version();
+		const commits = [];
+		const timer = setInterval(() => {
+			const now = version();
+			if (now !== null && now !== last) {
+				commits.push(performance.now());
+				last = now;
+			}
+		}, 2);
+		return {
+			commits,
+			stop() {
+				clearInterval(timer);
+				db.close();
+			},
+		};
+	}
+
 	stateEntries() {
 		return this.profile.runtime === "workerd"
 			? [".wrangler/state"]

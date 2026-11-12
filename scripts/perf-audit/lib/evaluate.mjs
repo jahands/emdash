@@ -2,9 +2,12 @@
  * Budgets and before/after comparison over profile results.
  */
 
+import { compositionDeltas } from "./bundle-composition.mjs";
+
 const KiB = 1024;
 const FRAME_BUDGET_MS = 50;
 const INPUT_TO_FRAME_PERCENT = 25;
+const WRITE_TTFB_FLOOR_MS = 10;
 
 export function serverGzipBytes(profile) {
 	return profile.build?.upload?.uploadGzipBytes ?? profile.build?.server?.gzipBytes ?? null;
@@ -172,12 +175,28 @@ export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 				ia,
 				ia > 50 * KiB && pct(ib, ia) > thresholds.imageBytesPercent,
 			);
+			if (pageA.lateDiscovered && pageB.lateDiscovered) {
+				add(
+					where,
+					"late-discovered JS/CSS",
+					pageB.lateDiscovered.length,
+					pageA.lateDiscovered.length,
+					pageA.lateDiscovered.length > pageB.lateDiscovered.length,
+				);
+			}
 			add(
 				where,
 				"oversized images",
 				pageB.oversizedImages.length,
 				pageA.oversizedImages.length,
 				pageA.oversizedImages.length > pageB.oversizedImages.length,
+			);
+		}
+		for (const wA of after.writes ?? []) {
+			const wB = (before.writes ?? []).find((w) => w.op === wA.op);
+			if (!wB) continue;
+			compareWrite(wB, wA, thresholds, (metric, b, a, regression) =>
+				add(`write ${wA.op}`, metric, b, a, regression),
 			);
 		}
 		for (const sA of after.scenarios ?? []) {
@@ -190,17 +209,93 @@ export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 			const b = sB.keyToFrameP95Ms;
 			const a = sA.keyToFrameP95Ms;
 			if (typeof a === "number" && typeof b === "number") {
-				add(
-					where,
-					"input-to-frame p95 ms",
-					b,
-					a,
-					a > FRAME_BUDGET_MS && pct(b, a) > INPUT_TO_FRAME_PERCENT,
-				);
+				add(where, "input-to-frame p95 ms", b, a, typingRegressed(sB, sA));
+				const loadB = sB.machineLoad?.cpuBusyPercent;
+				const loadA = sA.machineLoad?.cpuBusyPercent;
+				if (typeof loadB === "number" && typeof loadA === "number") {
+					rows.at(-1).note = `machine CPU busy ${loadB}% -> ${loadA}%`;
+				}
 			}
 		}
 	}
-	return { rows, regressions: rows.filter((r) => r.regression) };
+	return {
+		rows,
+		regressions: rows.filter((r) => r.regression),
+		bundleDeltas: bundleDeltas(beforeProfiles, afterProfiles),
+	};
+}
+
+/** Per profile and bundle, the packages that grew or shrank by 2 KiB or more. */
+export function bundleDeltas(beforeProfiles, afterProfiles) {
+	const out = [];
+	for (const after of afterProfiles) {
+		const before = beforeProfiles.find((p) => p.profile === after.profile);
+		for (const bundle of ["adminInitialJs", "server"]) {
+			const b = before?.bundleComposition?.[bundle];
+			const a = after.bundleComposition?.[bundle];
+			if (!b || !a) continue;
+			const deltas = compositionDeltas(b, a);
+			if (deltas.length > 0) out.push({ profile: after.profile, bundle, deltas });
+		}
+	}
+	return out;
+}
+
+/**
+ * Typing regressed when every run in this workspace has an input-to-frame
+ * p95 over the frame budget and more than 25% above the other workspace's
+ * best run. A single slow run is machine load, not the code.
+ */
+export function typingRegressed(before, after) {
+	const best = before.keyToFrameP95Ms;
+	if (typeof best !== "number") return false;
+	const runs = (after.samples ?? [after])
+		.map((s) => s.keyToFrameP95Ms)
+		.filter((v) => typeof v === "number");
+	return (
+		runs.length > 0 &&
+		runs.every((v) => v > FRAME_BUDGET_MS && pct(best, v) > INPUT_TO_FRAME_PERCENT)
+	);
+}
+
+/**
+ * Compare rows for one write: queries, DB waves, TTFB, and round trips after
+ * the response. Moving work into `after()` is how a write gets faster, so
+ * round trips after the response are only shown; what is flagged is a rise
+ * in all of the write's round trips, during and after the response.
+ */
+export function compareWrite(before, after, thresholds, add) {
+	add(
+		"queries",
+		before.queries,
+		after.queries,
+		after.queries - before.queries >= thresholds.writeQueries,
+	);
+	if (typeof before.dbWaves === "number" && typeof after.dbWaves === "number") {
+		add(
+			"DB waves",
+			before.dbWaves,
+			after.dbWaves,
+			after.dbWaves - before.dbWaves >= thresholds.writeWaves,
+		);
+	}
+	add(
+		"TTFB ms",
+		before.ttfbMs,
+		after.ttfbMs,
+		pct(before.ttfbMs, after.ttfbMs) > thresholds.writeTtfbPercent &&
+			after.ttfbMs - before.ttfbMs > WRITE_TTFB_FLOOR_MS,
+	);
+	const tripsB = before.afterResponse?.roundTrips;
+	const tripsA = after.afterResponse?.roundTrips;
+	if (typeof tripsB === "number" && typeof tripsA === "number") {
+		add("round trips after the response", tripsB, tripsA, false);
+		if (typeof before.dbRoundTrips === "number" && typeof after.dbRoundTrips === "number") {
+			const totalB = before.dbRoundTrips + tripsB;
+			const totalA = after.dbRoundTrips + tripsA;
+			add("total round trips", totalB, totalA, totalA - totalB >= thresholds.writeQueries);
+		}
+	}
 }
 
 const rowKey = (r) => `${r.profile}|${r.where}|${r.metric}`;
@@ -248,15 +343,38 @@ export function withSamples(profile, extra) {
 			]),
 		);
 	}
-	return { ...profile, pages, coldStart };
+	let writes = profile.writes;
+	if (writes && extra.writes?.length > 0) {
+		writes = writes.map((w) => {
+			const all = [w, ...extra.writes.map((ops) => ops.find((o) => o.op === w.op)).filter(Boolean)];
+			const mid = (pick) => median(all.map(pick));
+			return {
+				...w,
+				queries: mid((o) => o.queries),
+				ttfbMs: mid((o) => o.ttfbMs),
+				...(typeof w.dbWaves === "number" ? { dbWaves: mid((o) => o.dbWaves) } : {}),
+				...(typeof w.dbRoundTrips === "number" ? { dbRoundTrips: mid((o) => o.dbRoundTrips) } : {}),
+				...(w.afterResponse
+					? {
+							afterResponse: {
+								...w.afterResponse,
+								roundTrips: mid((o) => o.afterResponse?.roundTrips),
+							},
+						}
+					: {}),
+			};
+		});
+	}
+	return { ...profile, pages, coldStart, writes };
 }
 
 /** What to measure again for a set of candidate regressions, per profile. */
 export function confirmationPlan(regressions) {
 	const plan = new Map();
 	for (const r of regressions) {
-		const entry = plan.get(r.profile) ?? { pages: [], coldStart: false };
+		const entry = plan.get(r.profile) ?? { pages: [], coldStart: false, writes: false };
 		if (r.where === "cold start") entry.coldStart = true;
+		else if (r.where.startsWith("write ")) entry.writes = true;
 		else if (r.where !== "build" && !r.where.startsWith("scenario ")) {
 			const [viewport, ...rest] = r.where.split(" ");
 			const name = rest.join(" ");
@@ -324,6 +442,7 @@ export function failedResponses(profile, origin) {
 	for (const sample of Object.values(profile.coldStart ?? {})) {
 		add("cold start", sample.path, sample.status);
 	}
+	for (const w of profile.writes ?? []) add(`write ${w.op}`, w.path, w.status);
 	return [...counts.values()];
 }
 

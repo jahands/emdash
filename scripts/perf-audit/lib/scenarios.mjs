@@ -11,7 +11,9 @@ import { computeCls } from "./metrics.mjs";
 import { openContext, recordNetwork, waitForSettle } from "./page-run.mjs";
 import { finishGeometry, installProbe, snapshotGeometry } from "./probe.mjs";
 import { sleep } from "./proc.mjs";
+import { bestOfSamples, sampleMachineLoad } from "./samples.mjs";
 import { apiClient } from "./seed.mjs";
+import { matchesOnly } from "./targets.mjs";
 
 const ADMIN = "/_emdash/admin";
 const EDITOR_SELECTOR = ".ProseMirror";
@@ -140,6 +142,7 @@ const SCENARIOS = [
 		name: "editor typing",
 		viewports: ["desktop", "mobile"],
 		writes: true,
+		samples: 2,
 		async run({ page, network }) {
 			await focusEditorEnd(page);
 			await page.evaluate(() => {
@@ -496,7 +499,7 @@ const SCENARIOS = [
 					await page.keyboard.press("Escape");
 					return { uploadStatus: response.status() };
 				},
-				{ grows: "main .grid" },
+				{ appends: "main .grid" },
 			);
 			return { ...r, summary: `upload ${r.uploadStatus}` };
 		},
@@ -610,67 +613,82 @@ export async function runScenarios({
 	};
 	const results = [];
 	mkdirSync(screenshotDir, { recursive: true });
-	for (const scenario of SCENARIOS) {
+	const pathOf = (scenario) => {
+		try {
+			return scenario.path?.({ heaviest, longText, collection }) ?? null;
+		} catch {
+			return null;
+		}
+	};
+	const runOnce = async (scenario, viewport, name, sample) => {
+		try {
+			await ensureClean(name);
+		} catch (error) {
+			return { name, viewport, passed: null, error: String(error).split("\n")[0] };
+		}
+		const phase = `scenario:${name.replace(NON_SLUG, "-")}${sample > 0 ? `-run${sample + 1}` : ""}`;
+		const ctx = await openAdmin(browser, { site, cookies, options, viewport, phase });
+		const shotBase = join(screenshotDir, phase.slice("scenario:".length));
+		const screenshots = [];
+		const shot = async (label) => {
+			const path = `${shotBase}-${label}.png`;
+			await ctx.page.screenshot({ path }).catch(() => {});
+			screenshots.push(path);
+		};
+		const args = {
+			...ctx,
+			site,
+			cookies,
+			heaviest,
+			longText,
+			collection,
+			mediaFile,
+			viewport,
+			strings,
+			shot,
+		};
+		try {
+			await scenario.before?.(args);
+			if (scenario.path) {
+				await ctx.page.goto(`${site.origin}${scenario.path({ heaviest, longText, collection })}`, {
+					waitUntil: "load",
+				});
+				await waitForSettle(ctx.page, ctx.network);
+			}
+			const load = sampleMachineLoad();
+			const result = await scenario.run(args);
+			const machineLoad = load();
+			const screenshot = `${shotBase}.png`;
+			await ctx.page.screenshot({ path: screenshot }).catch(() => {});
+			return { name, viewport, screenshot, screenshots, machineLoad, ...result };
+		} catch (error) {
+			return { name, viewport, passed: null, error: String(error).split("\n")[0].slice(0, 300) };
+		} finally {
+			await ctx.context.close();
+			const sql = site.queryEvents.filter((e) => e.phase === phase).map((e) => e.sql);
+			ledger.record(name, { declaredWrites: scenario.writes, observedSql: sql });
+		}
+	};
+	const selected = SCENARIOS.filter((s) => matchesOnly(options.only, s.name, pathOf(s)));
+	for (const scenario of selected) {
 		for (const viewport of scenario.viewports.filter((v) => options.viewports.includes(v))) {
 			const name = `${scenario.name} (${viewport})`;
 			if (scenario.name.startsWith("editor") && !heaviest) {
 				results.push({ name, passed: null, summary: "no image-heavy entry in this template" });
 				continue;
 			}
-			try {
-				await ensureClean(name);
-			} catch (error) {
-				results.push({ name, viewport, passed: null, error: String(error).split("\n")[0] });
-				continue;
+			const runs = [];
+			for (let sample = 0; sample < (scenario.samples ?? 1); sample++) {
+				runs.push(await runOnce(scenario, viewport, name, sample));
 			}
-			const phase = `scenario:${name.replace(NON_SLUG, "-")}`;
-			const ctx = await openAdmin(browser, { site, cookies, options, viewport, phase });
-			const shotBase = join(screenshotDir, phase.slice("scenario:".length));
-			const screenshots = [];
-			const shot = async (label) => {
-				const path = `${shotBase}-${label}.png`;
-				await ctx.page.screenshot({ path }).catch(() => {});
-				screenshots.push(path);
-			};
-			const args = {
-				...ctx,
-				site,
-				cookies,
-				heaviest,
-				longText,
-				collection,
-				mediaFile,
-				viewport,
-				strings,
-				shot,
-			};
-			try {
-				await scenario.before?.(args);
-				if (scenario.path) {
-					await ctx.page.goto(`${site.origin}${scenario.path({ heaviest, longText, collection })}`, {
-						waitUntil: "load",
-					});
-					await waitForSettle(ctx.page, ctx.network);
-				}
-				const result = await scenario.run(args);
-				const screenshot = `${shotBase}.png`;
-				await ctx.page.screenshot({ path: screenshot }).catch(() => {});
-				results.push({ name, viewport, screenshot, screenshots, ...result });
+			const result = runs.length === 1 ? runs[0] : bestOfSamples(runs);
+			results.push(result);
+			if (result.error && result.passed === null) {
+				log(`  scenario ${name}: error: ${result.error.slice(0, 200)}`);
+			} else {
 				log(
 					`  scenario ${name.padEnd(46)} ${result.passed === false ? "MOVED" : result.passed ? "ok" : "-"}  ${result.summary ?? ""}`,
 				);
-			} catch (error) {
-				results.push({
-					name,
-					viewport,
-					passed: null,
-					error: String(error).split("\n")[0].slice(0, 300),
-				});
-				log(`  scenario ${name}: error: ${String(error).split("\n")[0].slice(0, 200)}`);
-			} finally {
-				await ctx.context.close();
-				const sql = site.queryEvents.filter((e) => e.phase === phase).map((e) => e.sql);
-				ledger.record(name, { declaredWrites: scenario.writes, observedSql: sql });
 			}
 		}
 	}

@@ -90,7 +90,16 @@ function startPostgresFor(profiles, dirs) {
 }
 
 /** Re-measure candidate regressions on one workspace's prepared sites. */
-async function remeasureWorkspace({ label, workspace, plan, options, browser, resultsDir, slot }) {
+async function remeasureWorkspace({
+	label,
+	workspace,
+	plan,
+	options,
+	browser,
+	resultsDir,
+	slot,
+	scenarioUpload,
+}) {
 	const dirs = workspaceDirs({ ...slot, label, resultsDir });
 	const profiles = Array.from(plan.keys(), resolveProfile);
 	const pg = await startPostgresFor(profiles, dirs);
@@ -99,7 +108,7 @@ async function remeasureWorkspace({ label, workspace, plan, options, browser, re
 		for (const profile of profiles) {
 			console.log(`  confirming ${profile.id} (${label})`);
 			out[profile.id] = await remeasureProfile(
-				{ browser, profile, workspace, dirs, pg, options, log: () => {}, label },
+				{ browser, profile, workspace, dirs, pg, options, log: () => {}, label, scenarioUpload },
 				{ ...plan.get(profile.id), samples: options.confirmSamples },
 			);
 		}
@@ -264,7 +273,7 @@ async function main() {
 			if (candidates.length > 0 && options.confirmSamples > 0) {
 				console.log(`\nConfirming ${candidates.length} candidate regression(s)`);
 				const plan = confirmationPlan(candidates);
-				const shared = { plan, options, browser, resultsDir, slot };
+				const shared = { plan, options, browser, resultsDir, slot, scenarioUpload };
 				const extraBefore = await remeasureWorkspace({
 					...shared,
 					label: "compare",

@@ -106,5 +106,6 @@ export async function httpClosure(entryUrls, { headers = {} } = {}) {
 		bytes: files.reduce((sum, f) => sum + f.bytes, 0),
 		gzipBytes: files.reduce((sum, f) => sum + f.gzipBytes, 0),
 		largest: files.toSorted((a, b) => b.gzipBytes - a.gzipBytes).slice(0, 5),
+		urls: files.map((f) => f.url),
 	};
 }

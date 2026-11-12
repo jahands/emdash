@@ -8,16 +8,19 @@ import { join, resolve } from "node:path";
 import { performance } from "node:perf_hooks";
 
 import { measureBuildOutput, measureInitialAdminJs } from "./build-output.mjs";
+import { adminComposition, serverComposition } from "./bundle-composition.mjs";
 import { burstPlan, measureColdBursts } from "./cold-burst.mjs";
 import { measureColdStarts } from "./cold-start.mjs";
 import { failedResponses } from "./evaluate.mjs";
 import { RestoreLedger } from "./ledger.mjs";
 import { measurePage } from "./page-run.mjs";
 import { prepareProfile, SEEDED } from "./prepare.mjs";
+import { explainQueries, planRequests } from "./query-plans.mjs";
 import { runScenarios } from "./scenarios.mjs";
 import { planOwnerEdits } from "./seed.mjs";
 import { eventsForPhase, serverPass } from "./server-pass.mjs";
 import { buildTargets, filterTargets } from "./targets.mjs";
+import { measureWrites } from "./writes.mjs";
 
 function slug(text) {
 	return text
@@ -72,6 +75,20 @@ function discoverTargets(site, prepared) {
 	});
 }
 
+/**
+ * Whether `--only` leaves a profile-level pass in: no `--only`, or one
+ * starting with `prefix` ("write" for the write pass, "plan" for query plans).
+ */
+export function passSelected(only, prefix) {
+	return !only || only.length === 0 || only.some((o) => o.startsWith(prefix));
+}
+
+function writeTarget(site, prepared) {
+	const plan = planOwnerEdits(readSeed(site));
+	const heaviest = prepared.seed.edits?.heaviestEntry;
+	return plan && heaviest ? { plan, heaviest } : null;
+}
+
 function coldBurstPlan(site, prepared) {
 	const seed = readSeed(site);
 	return burstPlan({
@@ -82,8 +99,14 @@ function coldBurstPlan(site, prepared) {
 	});
 }
 
+/** Screenshots of the --compare workspace go to their own folder so they don't overwrite this one's. */
+export function screenshotRoot(resultsDir, label, profileId) {
+	return join(resultsDir, label === "compare" ? "screenshots-compare" : "screenshots", profileId);
+}
+
 export async function runProfile(ctx) {
 	const { browser, profile, workspace, options, log, resultsDir } = ctx;
+	const shots = screenshotRoot(resultsDir, ctx.label, profile.id);
 	const { site, cookies, prepared, reused } = await prepareProfile(ctx);
 	const ledger = new RestoreLedger(SEEDED);
 	const startedAt = Date.now();
@@ -103,6 +126,7 @@ export async function runProfile(ctx) {
 			revision: prepared.revision,
 			changedFiles: prepared.changedFiles,
 			buildMs: prepared.build.buildMs,
+			seedSize: prepared.seedSize ?? "default",
 			seed: prepared.seed,
 		},
 		asShipped: prepared.asShipped ?? [],
@@ -138,6 +162,14 @@ export async function runProfile(ctx) {
 		log(
 			`  build: server ${(result.build.server.gzipBytes / 1024).toFixed(0)} KiB gzip, admin initial JS ${(result.initialAdminJs.gzipBytes / 1024).toFixed(0)} KiB gzip`,
 		);
+		try {
+			result.bundleComposition = {
+				adminInitialJs: adminComposition(site, result.initialAdminJs.urls ?? [], workspace),
+				server: serverComposition(site, workspace),
+			};
+		} catch (error) {
+			result.errors.push({ measurement: "bundle composition", error: String(error).slice(0, 800) });
+		}
 
 		const targets = filterTargets(discoverTargets(site, prepared), options.only);
 		const passCache = new Map();
@@ -146,7 +178,7 @@ export async function runProfile(ctx) {
 			for (const target of targets) {
 				const name = `${viewport} ${target.name}`;
 				const phase = `page:${viewport}:${slug(target.name)}`;
-				const shotBase = join(resultsDir, "screenshots", profile.id, viewport, slug(target.name));
+				const shotBase = join(shots, viewport, slug(target.name));
 				try {
 					await ensureClean(name);
 					const page = await measurePage({
@@ -171,7 +203,6 @@ export async function runProfile(ctx) {
 					ledger.record(`${name} (server pass)`, {
 						observedSql: page.serverPass.flatMap((r) => r.sql),
 					});
-					for (const r of page.serverPass) delete r.sql;
 					result.pages.push({ name: target.name, kind: target.kind, viewport, ...page });
 					log(
 						`  ${viewport.padEnd(7)} ${target.name.padEnd(34)} CLS ${page.cls.toFixed(3)}  LCP ${page.lcpMs ?? "-"} ms  API ${page.api.count}  oversized ${page.oversizedImages.length}`,
@@ -200,8 +231,49 @@ export async function runProfile(ctx) {
 				ensureClean,
 				log,
 				mediaFile: ctx.scenarioUpload,
-				screenshotDir: join(resultsDir, "screenshots", profile.id, "scenarios"),
+				screenshotDir: join(shots, "scenarios"),
 			});
+		}
+
+		const writeArgs = writeTarget(site, prepared);
+		if (!options.skipWrites && passSelected(options.only, "write") && writeArgs) {
+			try {
+				await ensureClean("writes");
+				const pass = await measureWrites(site, {
+					cookies,
+					...writeArgs,
+					mediaFile: ctx.scenarioUpload,
+				});
+				result.writes = pass.ops;
+				if (pass.error) result.errors.push({ measurement: "writes", error: pass.error });
+				for (const w of pass.ops) {
+					log(
+						`  write ${w.op.padEnd(13)} ${w.status}  TTFB ${w.ttfbMs} ms  queries ${w.queries}${w.dbWaves === undefined ? "" : `  waves ${w.dbWaves}`}${w.afterResponse ? `  after response ${w.afterResponse.ms} ms` : ""}`,
+					);
+				}
+			} catch (error) {
+				result.errors.push({ measurement: "writes", error: String(error).slice(0, 800) });
+			} finally {
+				ledger.record("writes", { declaredWrites: true });
+			}
+		}
+
+		if (profile.usesPostgres && passSelected(options.only, "plan")) {
+			try {
+				await ensureClean("query plans");
+				const seed = readSeed(site);
+				result.queryPlans = await explainQueries(site, {
+					cookies,
+					requests: planRequests({
+						collection: planOwnerEdits(seed)?.collection ?? seed.collections?.[0]?.slug ?? null,
+						publicTargets: discoverTargets(site, prepared).filter((t) => t.kind === "public"),
+					}),
+				});
+				const flagged = result.queryPlans.filter((q) => q.flags?.length > 0).length;
+				log(`  query plans: ${result.queryPlans.length} queries explained, ${flagged} flagged`);
+			} catch (error) {
+				result.errors.push({ measurement: "query plans", error: String(error).slice(0, 800) });
+			}
 		}
 
 		if (!options.skipColdStart) {
@@ -256,14 +328,14 @@ export async function runProfile(ctx) {
  * before reporting it, because layout races and cold starts vary between
  * runs of the same code.
  */
-export async function remeasureProfile(ctx, { pages, coldStart, samples }) {
+export async function remeasureProfile(ctx, { pages, coldStart, writes, samples }) {
 	const { browser, options } = ctx;
 	const { site, cookies, prepared } = await prepareProfile({
 		...ctx,
 		options: { ...options, reuse: true },
 	});
 	const ledger = new RestoreLedger(SEEDED);
-	const out = { pages: {}, coldStart: [] };
+	const out = { pages: {}, coldStart: [], writes: [] };
 	const warm = () =>
 		fetch(`${site.origin}/`, { headers: { "x-perf-phase": "warm-up" } }).then((r) =>
 			r.arrayBuffer(),
@@ -311,6 +383,18 @@ export async function remeasureProfile(ctx, { pages, coldStart, samples }) {
 		if (coldStart) {
 			await ensureClean("cold start");
 			out.coldStart.push(await measureColdStarts(site, cookies, samples));
+		}
+		const writeArgs = writes ? writeTarget(site, prepared) : null;
+		for (let i = 0; i < (writeArgs ? samples : 0); i++) {
+			await ensureClean("writes");
+			const pass = await measureWrites(site, {
+				cookies,
+				...writeArgs,
+				mediaFile: ctx.scenarioUpload,
+				phasePrefix: "confirm-write",
+			});
+			ledger.record("writes", { declaredWrites: true });
+			out.writes.push(pass.ops);
 		}
 	} finally {
 		await site.close();

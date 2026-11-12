@@ -60,6 +60,44 @@ function imageRows(profile, state) {
 	return [...seen.values()].toSorted((a, b) => (b.bytes ?? 0) - (a.bytes ?? 0));
 }
 
+const shortSql = (sql) => (sql.length > 140 ? `${sql.slice(0, 137)}...` : sql);
+
+function afterResponseCell(w) {
+	const a = w.afterResponse;
+	if (!a) return "-";
+	const parts = [];
+	if (a.roundTrips !== undefined) parts.push(`${a.roundTrips} round trips`);
+	if (a.commits !== undefined) parts.push(`${a.commits} commits`);
+	return parts.length > 0 ? `${a.ms} ms, ${parts.join(", ")}` : `${a.ms} ms`;
+}
+
+/** Requests with repeated statements: the server pass and the writes, once per request. */
+function duplicateRows(profile) {
+	const requests = new Map();
+	for (const page of profile.pages ?? []) {
+		for (const r of page.serverPass ?? []) requests.set(r.path, r);
+	}
+	const rows = [...requests.values()].flatMap((r) =>
+		(r.duplicates ?? []).map((d) => ({ request: shortUrl(r.path, ""), ...d })),
+	);
+	for (const w of profile.writes ?? []) {
+		for (const d of w.duplicates ?? []) rows.push({ request: `write ${w.op}`, ...d });
+	}
+	return rows;
+}
+
+function compareCell(rows, where, metric) {
+	const r = rows.find((x) => x.where === where && x.metric === metric);
+	if (!r) return "-";
+	const text = r.before === r.after ? String(r.after) : `${r.before} -> ${r.after}`;
+	return r.regression ? `**${text}**` : text;
+}
+
+const describePlanFlag = (f) =>
+	f.kind === "seq scan"
+		? `seq scan on ${f.relation} (${f.tableRows} rows)`
+		: `sort over ${f.rows} rows${f.method ? ` (${f.method})` : ""}`;
+
 const pixelsCell = (img) =>
 	img.pixelsFrom === "naturalWidth" ? `${img.pixels} (naturalWidth)` : img.pixels;
 
@@ -78,6 +116,12 @@ export function renderSummary(run) {
 	lines.push(
 		`- Viewports: ${run.options.viewports.join(", ")}; DB latency for Postgres: ${run.options.dbLatency} ms`,
 	);
+	if (run.options.seedSize === "large") {
+		const large = run.profiles.find((p) => p.prepared?.seed?.large)?.prepared.seed.large;
+		lines.push(
+			`- Large seed: ${large ? `${large.entries} extra entries in ${large.collection}` : "on"}, written through SQL`,
+		);
+	}
 	if (run.otherRuns?.length > 0) {
 		lines.push(
 			`- **${run.otherRuns.length} other perf-audit run(s) shared this machine.** Their results are separate, but timings and cold starts shared the CPU.`,
@@ -155,7 +199,7 @@ export function renderSummary(run) {
 		}
 		lines.push(
 			table(
-				["Profile", "Metric", "Before", "After"],
+				["Profile", "Metric", "Before", "After", "Note"],
 				run.comparison.rows
 					.filter(
 						(r) =>
@@ -170,7 +214,64 @@ export function renderSummary(run) {
 							: r.metric,
 						r.before,
 						r.after,
+						r.note ?? "",
 					]),
+			),
+		);
+	}
+
+	const deltas = run.comparison?.bundleDeltas ?? [];
+	if (deltas.length > 0) {
+		lines.push(
+			"Bundle composition changes, packages that grew or shrank by 2 KiB or more (raw bytes, from source maps):\n",
+		);
+		lines.push(
+			table(
+				["Profile", "Bundle", "Package", "Before", "After", "Change"],
+				deltas.flatMap((d) =>
+					d.deltas
+						.slice(0, 8)
+						.map((x) => [
+							d.profile,
+							d.bundle === "server" ? "server" : "admin initial JS",
+							x.package,
+							kib(x.before),
+							kib(x.after),
+							`${x.delta > 0 ? "+" : "-"}${kib(Math.abs(x.delta))}`,
+						]),
+				),
+			),
+		);
+	}
+
+	const writeCompare = (run.comparison?.rows ?? []).filter((r) => r.where.startsWith("write "));
+	if (writeCompare.length > 0) {
+		lines.push("Writes, this workspace against the other (flagged values in bold):\n");
+		const keys = [...new Set(writeCompare.map((r) => `${r.profile}\u0000${r.where}`))];
+		lines.push(
+			table(
+				[
+					"Profile",
+					"Write",
+					"Queries",
+					"DB waves",
+					"TTFB ms",
+					"Round trips after the response",
+					"Total round trips",
+				],
+				keys.map((key) => {
+					const [profile, where] = key.split("\u0000");
+					const rows = writeCompare.filter((r) => r.profile === profile);
+					return [
+						profile,
+						where.slice("write ".length),
+						compareCell(rows, where, "queries"),
+						compareCell(rows, where, "DB waves"),
+						compareCell(rows, where, "TTFB ms"),
+						compareCell(rows, where, "round trips after the response"),
+						compareCell(rows, where, "total round trips"),
+					];
+				}),
 			),
 		);
 	}
@@ -260,6 +361,51 @@ export function renderSummary(run) {
 				]),
 		),
 	);
+
+	const late = new Map();
+	for (const { profile, page } of allPages) {
+		for (const d of page.lateDiscovered ?? []) {
+			const file = shortUrl(d.url, profile.origin);
+			const key = `${profile.profile}\u0000${file}`;
+			const entry = late.get(key) ?? {
+				profile: profile.profile,
+				file,
+				via: shortUrl(d.discoveredBy, profile.origin),
+				depth: d.chain.length,
+				start: d.start,
+				screens: new Set(),
+			};
+			entry.screens.add(`${page.viewport} ${page.name}`);
+			entry.start = Math.min(entry.start, d.start);
+			late.set(key, entry);
+		}
+	}
+	if (late.size > 0) {
+		lines.push("## Late-discovered scripts and styles", "");
+		lines.push(
+			"Scripts and stylesheets on the critical path (requested before the screen's first API call, or before `load` on public pages) that the browser only found by parsing another script. A preload or a static import from the document would let them load in parallel. Depth counts the requests in the chain, the document included.\n",
+		);
+		const rows = [...late.values()].toSorted(
+			(a, b) => b.screens.size - a.screens.size || b.depth - a.depth,
+		);
+		lines.push(
+			table(
+				["Profile", "File", "Found by parsing", "Depth", "Earliest start", "Screens"],
+				rows.slice(0, 25).map((r) => {
+					const screens = [...r.screens];
+					return [
+						r.profile,
+						r.file,
+						r.via,
+						r.depth,
+						ms(Math.round(r.start)),
+						`${screens.length}: ${screens.slice(0, 2).join("; ")}${screens.length > 2 ? "; ..." : ""}`,
+					];
+				}),
+			),
+		);
+		if (rows.length > 25) lines.push(`_${rows.length - 25} more in results.json._\n`);
+	}
 
 	lines.push("## Oversized images", "");
 	lines.push(
@@ -375,6 +521,40 @@ export function renderSummary(run) {
 		),
 	);
 
+	const composed = profiles.filter((p) => p.bundleComposition);
+	if (composed.length > 0) {
+		lines.push("## Bundle composition", "");
+		lines.push(
+			"Bytes attributed to packages and modules through the build's source maps. The sites are built with hidden source maps, which leave the emitted code unchanged. Gzip is each package's code compressed on its own.\n",
+		);
+		const BUNDLES = { adminInitialJs: "admin initial JS", server: "server" };
+		lines.push(
+			table(
+				["Profile", "Bundle", "Files (mapped)", "Largest packages", "Largest modules"],
+				composed.flatMap((p) =>
+					Object.entries(BUNDLES)
+						.filter(([key]) => p.bundleComposition[key])
+						.map(([key, label]) => {
+							const c = p.bundleComposition[key];
+							return [
+								p.profile,
+								label,
+								`${c.files} (${c.mappedFiles})`,
+								c.packages
+									.slice(0, 6)
+									.map((x) => `${x.package} ${kib(x.bytes)} (${kib(x.gzipBytes)} gz)`)
+									.join(", "),
+								c.modules
+									.slice(0, 4)
+									.map((m) => `${m.module} ${kib(m.bytes)}`)
+									.join(", "),
+							];
+						}),
+				),
+			),
+		);
+	}
+
 	lines.push("## Cold starts", "");
 	lines.push(
 		table(
@@ -473,6 +653,91 @@ export function renderSummary(run) {
 			passRows,
 		),
 	);
+
+	const writeProfiles = profiles.filter((p) => p.writes?.length > 0);
+	if (writeProfiles.length > 0) {
+		lines.push("## Writes", "");
+		lines.push(
+			"Each write is sent once with the owner's session. Waves and round trips come from the Postgres latency proxy. After the response is the work the server did once it had answered, such as `after()` callbacks: round trips on Postgres, commits seen in the database file on SQLite and D1.\n",
+		);
+		lines.push(
+			table(
+				[
+					"Profile",
+					"Write",
+					"Status",
+					"TTFB",
+					"Queries",
+					"Round trips",
+					"Waves",
+					"After the response",
+					"Repeated statements",
+				],
+				writeProfiles.flatMap((p) =>
+					p.writes.map((w) => [
+						p.profile,
+						w.op,
+						w.status,
+						ms(w.ttfbMs),
+						w.queries,
+						w.dbRoundTrips ?? "-",
+						w.dbWaves ?? "-",
+						afterResponseCell(w),
+						(w.duplicates ?? []).reduce((sum, d) => sum + d.count - 1, 0),
+					]),
+				),
+			),
+		);
+	}
+
+	const duplicates = profiles.flatMap((p) => duplicateRows(p).map((d) => ({ p, d })));
+	if (duplicates.length > 0) {
+		lines.push("## Duplicate queries", "");
+		lines.push(
+			"Statements one request ran more than once, by normalized text. Same params counts the runs that also had identical parameters, which repeated the same work; the rest read the same shape for different rows.\n",
+		);
+		lines.push(
+			table(
+				["Profile", "Request", "Statement", "Times", "Same params"],
+				duplicates
+					.toSorted((a, b) => b.d.count - a.d.count || b.d.sameParams - a.d.sameParams)
+					.slice(0, 30)
+					.map(({ p, d }) => [p.profile, d.request, shortSql(d.sql), d.count, d.sameParams || "-"]),
+			),
+		);
+		if (duplicates.length > 30) lines.push(`_${duplicates.length - 30} more in results.json._\n`);
+	}
+
+	const planProfiles = profiles.filter((p) => p.queryPlans?.length > 0);
+	if (planProfiles.length > 0) {
+		lines.push("## Query plans", "");
+		lines.push(
+			`List, count, archive and sitemap queries captured from real requests and run again under \`EXPLAIN ANALYZE\` on Postgres. Flagged: a sequential scan of a table with at least 10,000 rows, or a sort over at least 10,000 rows. Small seeds rarely reach that; use \`--seed-size large\`.\n`,
+		);
+		lines.push(
+			table(
+				["Profile", "Kind", "Request", "Time", "Flags", "Statement"],
+				planProfiles.flatMap((p) =>
+					p.queryPlans
+						.toSorted(
+							(a, b) =>
+								(b.flags?.length ?? 0) - (a.flags?.length ?? 0) ||
+								(b.executionMs ?? 0) - (a.executionMs ?? 0),
+						)
+						.slice(0, 12)
+						.map((q) => [
+							p.profile,
+							q.kind,
+							shortUrl(q.request, ""),
+							q.error ? "error" : `${q.executionMs} ms`,
+							q.error ??
+								(q.flags.length > 0 ? `**${q.flags.map(describePlanFlag).join("; ")}**` : "-"),
+							shortSql(q.sql),
+						]),
+				),
+			),
+		);
+	}
 
 	const restoreRows = profiles.flatMap((p) =>
 		(p.restores?.restores ?? []).map((r) => [p.profile, r.after, r.before, ms(r.ms)]),

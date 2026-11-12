@@ -153,16 +153,29 @@ export function collectProbe() {
  * samples can be compared.
  *
  * - `exclude`: a CSS selector for regions allowed to change.
- * - `grows`: a CSS selector for regions that grow by design, such as the
- *   paragraph being typed into or a grid that gains an item. They are
- *   tracked themselves, their contents reflow freely, and their growth is
+ * - `grows`: a CSS selector for regions that grow by design and whose
+ *   contents reflow, such as the paragraph being typed into. They are
+ *   tracked themselves, their contents are not, and their growth is
  *   subtracted from the movement of elements below them and from the size
  *   of their ancestors.
+ * - `appends`: a CSS selector for regions that gain items at their end,
+ *   such as a grid that gains an upload. Their growth is allowed for in the
+ *   same way, but the items already inside them are tracked and must not
+ *   move.
+ *
+ * Only growth is allowed for: a region that shrinks moves what is below it.
  * - `within`: only track elements inside this element, such as an open
  *   dialog.
  * - `key`: names this sampler, so one can run inside another.
  */
-export function snapshotGeometry({ exclude, grows, within, key = "default", limit = 1500 } = {}) {
+export function snapshotGeometry({
+	exclude,
+	grows,
+	appends,
+	within,
+	key = "default",
+	limit = 1500,
+} = {}) {
 	// Position in scrolled content, so scrolling a container is not movement.
 	const layoutRect = (el) => {
 		const r = el.getBoundingClientRect();
@@ -184,11 +197,15 @@ export function snapshotGeometry({ exclude, grows, within, key = "default", limi
 	const vh = window.innerHeight;
 	const scope = within ? document.querySelector(within) : document.body;
 	const excluded = exclude ? [...document.querySelectorAll(exclude)] : [];
-	const growing = (grows ? [...document.querySelectorAll(grows)] : []).map((el, index) => ({
-		el,
-		index,
-		rect: layoutRect(el),
-	}));
+	const regions = (selector, reflows) =>
+		(selector ? [...document.querySelectorAll(selector)] : []).map((el, index) => ({
+			el,
+			index,
+			selector,
+			reflows,
+			rect: layoutRect(el),
+		}));
+	const growing = [...regions(grows, true), ...regions(appends, false)];
 	const isTrackable = (el, r) => {
 		if (r.width < 24 || r.height < 12) return false;
 		if (r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw) return false;
@@ -200,7 +217,7 @@ export function snapshotGeometry({ exclude, grows, within, key = "default", limi
 	let truncated = false;
 	for (const el of scope ? scope.querySelectorAll("*") : []) {
 		if (excluded.some((ex) => ex === el || ex.contains(el))) continue;
-		if (growing.some((g) => g.el !== el && g.el.contains(el))) continue;
+		if (growing.some((g) => g.reflows && g.el !== el && g.el.contains(el))) continue;
 		if (!isTrackable(el, el.getBoundingClientRect())) continue;
 		if (tracked.length >= limit) {
 			truncated = true;
@@ -235,8 +252,8 @@ export function snapshotGeometry({ exclude, grows, within, key = "default", limi
 	window.__perfGeometry[key] = state;
 	// An editor can re-render the block being typed into; find it again.
 	const growth = (g) => {
-		if (!g.el.isConnected) g.el = document.querySelectorAll(grows)[g.index] ?? g.el;
-		return g.el.isConnected ? g.el.getBoundingClientRect().height - g.rect.height : 0;
+		if (!g.el.isConnected) g.el = document.querySelectorAll(g.selector)[g.index] ?? g.el;
+		return g.el.isConnected ? Math.max(0, g.el.getBoundingClientRect().height - g.rect.height) : 0;
 	};
 	const sample = () => {
 		if (!state.running) return;

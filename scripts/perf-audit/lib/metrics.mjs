@@ -289,6 +289,37 @@ export function summarizeRequests(requests) {
 	};
 }
 
+const CRITICAL_TYPES = new Set(["Script", "Stylesheet"]);
+
+/**
+ * Scripts and stylesheets on the critical path (started before `cutoffMs`)
+ * that the browser only found by parsing another script: a request chain
+ * that a preload or a static import from the document would remove. Each
+ * comes with the chain that led to it, document first.
+ */
+export function lateDiscoveries(waterfall, cutoffMs) {
+	const byUrl = new Map();
+	for (const r of waterfall) if (!byUrl.has(r.url)) byUrl.set(r.url, r);
+	const out = [];
+	for (const r of waterfall) {
+		if (!CRITICAL_TYPES.has(r.type)) continue;
+		if (r.status === null || r.status >= 400) continue;
+		if (cutoffMs !== null && cutoffMs !== undefined && r.start >= cutoffMs) continue;
+		const parent = r.waitedOn ? byUrl.get(r.waitedOn) : null;
+		if (!parent || parent.type !== "Script" || parent === r) continue;
+		const chain = [r.url];
+		for (
+			let p = parent;
+			p && !chain.includes(p.url);
+			p = p.waitedOn ? byUrl.get(p.waitedOn) : null
+		) {
+			chain.unshift(p.url);
+		}
+		out.push({ url: r.url, type: r.type, start: r.start, discoveredBy: parent.url, chain });
+	}
+	return out;
+}
+
 /** Parse a Server-Timing header into { name: dur }. */
 export function parseServerTiming(header) {
 	const out = {};

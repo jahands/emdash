@@ -117,7 +117,7 @@ async function uploadThroughAdmin(browser, site, cookies, files) {
 	return uploaded;
 }
 
-function mediaValue(item, alt) {
+export function mediaValue(item, alt) {
 	return {
 		provider: "local",
 		id: item.id,
@@ -284,7 +284,7 @@ async function publish(api, collection, id) {
 	await api("POST", `/content/${collection}/${id}/publish`, {});
 }
 
-function newEntryData(plan, { title, excerpt, image, body }) {
+export function newEntryData(plan, { title, excerpt, image, body }) {
 	return {
 		...(plan.titleField ? { [plan.titleField]: title } : {}),
 		...(plan.excerptField ? { [plan.excerptField]: excerpt } : {}),

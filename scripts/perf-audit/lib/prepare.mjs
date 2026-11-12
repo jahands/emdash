@@ -8,13 +8,14 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { checkAsShipped } from "./as-shipped.mjs";
+import { insertLargeSeed } from "./large-seed.mjs";
 import { materializeSite, resolvePackageDir } from "./materialize.mjs";
 import { withPorts } from "./profiles.mjs";
-import { seedSite, signIn } from "./seed.mjs";
+import { apiClient, planOwnerEdits, seedSite, signIn } from "./seed.mjs";
 import { Site } from "./site.mjs";
 
 export const SEEDED = "seeded";
-const PREPARED_VERSION = 3;
+const PREPARED_VERSION = 4;
 
 function workspaceRevision(workspace) {
 	try {
@@ -96,7 +97,8 @@ async function prepareProfileInner(
 		options.reuse &&
 		marker?.version === PREPARED_VERSION &&
 		marker.workspace === workspace &&
-		marker.revision.head === revision.head;
+		marker.revision.head === revision.head &&
+		(marker.seedSize ?? "default") === (options.seedSize ?? "default");
 	const { leased, kept } = await leaseSitePorts(
 		dirs.ports,
 		baseProfile,
@@ -152,7 +154,14 @@ async function prepareProfileInner(
 	const seed = await seedSite({ browser, site, mediaFiles, log });
 	// The measurement session is part of the snapshot, so restores keep it valid.
 	const cookies = await signIn(site);
+	let largeMedia = null;
+	const plan = planOwnerEdits(JSON.parse(readFileSync(join(siteDir, "seed/seed.json"), "utf8")));
+	if (options.seedSize === "large") {
+		if (!plan) throw new Error(`${profile.id} has no collection to fill for --seed-size large`);
+		largeMedia = (await apiClient(site.origin, cookies)("GET", "/media?limit=100")).items;
+	}
 	await site.stop();
+	if (largeMedia) seed.large = await insertLargeSeed(site, { plan, media: largeMedia, log });
 	await site.snapshot(SEEDED);
 	site.proxy?.setLatency(options.dbLatency);
 	await site.start();
@@ -161,6 +170,7 @@ async function prepareProfileInner(
 		workspace,
 		ports: leased,
 		revision,
+		seedSize: options.seedSize ?? "default",
 		changedFiles: changed,
 		build,
 		asShipped,

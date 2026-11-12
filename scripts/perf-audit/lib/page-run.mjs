@@ -15,6 +15,7 @@ import {
 	computeTbt,
 	isApiRequest,
 	isCompressibleMime,
+	lateDiscoveries,
 	parseServerTiming,
 	summarizeRequests,
 } from "./metrics.mjs";
@@ -240,17 +241,38 @@ export async function waitForSettle(page, network, { quietMs = 1000, maxMs = 25_
 	return { settled: false, ms: Date.now() - started };
 }
 
+/** Requests the admin waits for before it renders a screen. */
+export const ADMIN_BOOT_REQUESTS = ["/_emdash/api/manifest", "/_emdash/api/auth/me"];
+
+/** What `--hold-after` and `--hold-after-boot` wait for on this screen. */
+export function holdTriggers(options, target) {
+	const signedInAdmin = target.kind === "admin" && !target.signedOut;
+	return [
+		...(options.holdAfter ?? []),
+		...(options.holdAfterBoot && signedInAdmin ? ADMIN_BOOT_REQUESTS : []),
+	];
+}
+
 /**
  * Hold requests whose URL contains `substring` until a screenshot of the
- * loading state is taken, then release them.
+ * loading state is taken, then release them. With `after`, only requests
+ * made once a response matching each of those texts has arrived are held,
+ * so the screenshot shows the screen loading rather than the app booting.
  */
-async function installHold(context, page, substring, screenshotPath, notes) {
+async function installHold(context, page, substring, screenshotPath, notes, after = []) {
 	const held = [];
 	let done = false;
+	const waiting = new Set(after);
+	if (waiting.size > 0) {
+		page.on("response", (response) => {
+			for (const text of waiting) if (response.url().includes(text)) waiting.delete(text);
+		});
+		notes.push(`holding only after responses for ${after.join(", ")}`);
+	}
 	await context.route(
 		(url) => !done && url.toString().includes(substring),
 		async (route) => {
-			if (done) return route.fallback();
+			if (done || waiting.size > 0) return route.fallback();
 			held.push(route);
 			if (held.length === 1) {
 				await sleep(1500);
@@ -286,7 +308,16 @@ export async function measurePage({
 		await cdp.send("Network.setCacheDisabled", { cacheDisabled: false });
 		await applyThrottling(cdp, options);
 		const network = recordNetwork(cdp, { sizeCompressed: true });
-		if (options.hold) await installHold(context, page, options.hold, paths.hold, notes);
+		if (options.hold) {
+			await installHold(
+				context,
+				page,
+				options.hold,
+				paths.hold,
+				notes,
+				holdTriggers(options, target),
+			);
+		}
 
 		const consoleErrors = [];
 		page.on("pageerror", (err) => consoleErrors.push(String(err).slice(0, 300)));
@@ -357,6 +388,10 @@ export async function measurePage({
 			compressedTransferBytes: summary.compressedBytes,
 			bytesByType: summary.bytesByType,
 			criticalChain: summary.criticalChain,
+			lateDiscovered: lateDiscoveries(
+				summary.waterfall,
+				summary.api.firstRequestMs ?? (probe.load ? Math.round(probe.load) : null),
+			),
 			inferredLinks: summary.inferredLinks,
 			maxDepth: summary.maxDepth,
 			waterfall: summary.waterfall,

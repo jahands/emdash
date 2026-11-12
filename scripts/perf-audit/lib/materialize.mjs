@@ -222,6 +222,24 @@ export function resolvePackageDir(fromDir, name) {
 	throw new Error(`Cannot find the package directory of ${name} from ${fromDir}`);
 }
 
+export const SOURCE_CONFIG = "perf-audit.astro.config.mjs";
+
+/**
+ * The site's astro.config.mjs: the profile's config with hidden source
+ * maps turned on. Hidden maps leave the emitted code unchanged, without
+ * even a `sourceMappingURL` comment, and let the harness attribute bundle
+ * bytes to packages and modules.
+ */
+export function sourceMapConfig(sourceFile = SOURCE_CONFIG) {
+	return `import config from "./${sourceFile}";
+
+export default {
+	...config,
+	vite: { ...config.vite, build: { ...config.vite?.build, sourcemap: "hidden" } },
+};
+`;
+}
+
 /**
  * Copy the template into `siteDir` and apply the profile's platform changes.
  * Returns the list of files that differ from the template.
@@ -237,12 +255,13 @@ export function materializeSite({ workspace, profile, siteDir, postgresUrl, extr
 		cpSync(join(templateDir, entry), join(siteDir, entry), { recursive: true });
 	}
 
-	const changed = ["astro.config.mjs"];
+	const changed = ["astro.config.mjs", SOURCE_CONFIG];
 	const configPath = join(siteDir, "astro.config.mjs");
 	writeFileSync(
-		configPath,
+		join(siteDir, SOURCE_CONFIG),
 		transformAstroConfig(readFileSync(configPath, "utf8"), profile, { postgresUrl }),
 	);
+	writeFileSync(configPath, sourceMapConfig());
 
 	const wranglerPath = join(siteDir, "wrangler.jsonc");
 	if (profile.runtime === "workerd") {
