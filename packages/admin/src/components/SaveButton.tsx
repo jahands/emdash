@@ -1,7 +1,7 @@
 import { Button, Loader } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Check, CloudSlash, CloudWarning, FloppyDisk } from "@phosphor-icons/react";
-import { forwardRef, isValidElement, useEffect, useRef, useState } from "react";
+import { forwardRef, isValidElement } from "react";
 import type { ComponentProps } from "react";
 
 import { cn } from "../lib/utils";
@@ -9,8 +9,6 @@ import type { SyncProblem } from "./co-editing/SyncStatus";
 
 type SyncKind = SyncProblem["kind"];
 type SaveState = "save" | "saving" | "saved" | SyncKind;
-
-const TEXT_SWAP_DURATION_MS = 150;
 
 export interface SaveButtonProps extends Omit<ComponentProps<typeof Button>, "children" | "shape"> {
 	isDirty: boolean;
@@ -64,60 +62,23 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 		sync === undefined
 			? ["save", "saving", "saved"]
 			: ["save", "saving", "saved", "joining", "offline", "not-saved", "not-kept"];
-	const states = stateIds.map((id) => ({ id, label: labels[id] }));
-	const [displayedState, setDisplayedState] = useState<SaveState>(activeState);
-	const [swapPhase, setSwapPhase] = useState<"idle" | "exit" | "enter-start">("idle");
-	const displayedStateRef = useRef(displayedState);
-	const textRef = useRef<HTMLSpanElement>(null);
-	const displayedLabel = labels[displayedState];
-	const displayedIcon =
-		displayedState === "save" ? (
+	const stateIcon = (state: SaveState) =>
+		state === "save" ? (
 			isValidElement(icon) ? (
 				icon
 			) : (
 				<FloppyDisk />
 			)
-		) : displayedState === "saving" || displayedState === "joining" ? (
+		) : state === "saving" || state === "joining" ? (
 			<Loader size="sm" />
-		) : displayedState === "offline" ? (
+		) : state === "offline" ? (
 			<CloudSlash />
-		) : displayedState === "not-saved" || displayedState === "not-kept" ? (
+		) : state === "not-saved" || state === "not-kept" ? (
 			<CloudWarning />
 		) : (
 			<Check />
 		);
-
-	useEffect(() => {
-		let animationFrame = 0;
-
-		if (activeState === displayedStateRef.current) {
-			setSwapPhase("idle");
-			return;
-		}
-
-		if (inert || window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
-			displayedStateRef.current = activeState;
-			setDisplayedState(activeState);
-			setSwapPhase("idle");
-			return;
-		}
-
-		setSwapPhase("exit");
-		const timeout = window.setTimeout(() => {
-			displayedStateRef.current = activeState;
-			setDisplayedState(activeState);
-			setSwapPhase("enter-start");
-			animationFrame = window.requestAnimationFrame(() => {
-				void textRef.current?.offsetWidth;
-				setSwapPhase("idle");
-			});
-		}, TEXT_SWAP_DURATION_MS);
-
-		return () => {
-			window.clearTimeout(timeout);
-			window.cancelAnimationFrame(animationFrame);
-		};
-	}, [activeState, inert]);
+	const states = stateIds.map((id) => ({ id, label: labels[id], icon: stateIcon(id) }));
 
 	return (
 		<Button
@@ -132,38 +93,26 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 		>
 			<span
 				data-save-button-labels=""
-				className="overflow-hidden"
-				style={{ display: "inline-grid", alignItems: "center", justifyItems: "center" }}
+				className="inline-grid items-center justify-items-center"
 				aria-hidden="true"
 			>
 				{states.map((state) => (
 					<span
 						key={state.id}
 						data-save-button-state={state.id}
-						style={{ gridArea: "1 / 1", visibility: "hidden" }}
-						className="inline-flex items-center justify-center gap-1.5"
+						style={{ gridArea: "1 / 1" }}
+						className={cn(
+							"inline-flex items-center justify-center gap-1.5 leading-none",
+							!inert &&
+								"transition-[opacity,visibility] duration-150 ease-in-out motion-reduce:transition-none",
+							state.id === activeState ? "visible opacity-100" : "invisible opacity-0",
+							(state.id === "not-saved" || state.id === "not-kept") && "text-kumo-warning",
+						)}
 					>
-						<span style={{ width: 16, height: 16 }} />
+						{state.icon}
 						<span className={labelClassName}>{state.label}</span>
 					</span>
 				))}
-				<span
-					ref={textRef}
-					data-save-button-visible-state={displayedState}
-					style={{ gridArea: "1 / 1", justifySelf: "stretch" }}
-					className={cn(
-						"t-text-swap",
-						swapPhase === "exit" && "is-exit",
-						swapPhase === "enter-start" && "is-enter-start",
-						(displayedState === "not-saved" || displayedState === "not-kept") &&
-							"text-kumo-warning",
-					)}
-				>
-					<span className="flex items-center justify-center gap-1.5 leading-none">
-						{displayedIcon}
-						<span className={labelClassName}>{displayedLabel}</span>
-					</span>
-				</span>
 			</span>
 			<span
 				className="sr-only"

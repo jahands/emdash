@@ -630,7 +630,10 @@ export function PublishActions({
 				aria-label={compact ? t`Unpublish ${itemLabel}` : undefined}
 				className={
 					compact
-						? cn(compactBarButtonClassName, "max-sm:col-span-2 max-sm:-order-1 max-sm:min-w-0")
+						? cn(
+								compactBarButtonClassName,
+								"gap-1.5 max-sm:col-span-2 max-sm:-order-1 max-sm:min-w-0",
+							)
 						: undefined
 				}
 			>

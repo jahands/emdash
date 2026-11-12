@@ -906,7 +906,7 @@ describe("ContentEditor's notices in a room", () => {
 				const screen = await render(<ContentEditor {...props} />);
 				unmounts.push(() => screen.unmount());
 				await expect.element(screen.getByRole("button", { name: "Offline" })).toBeVisible();
-				const label = saveButton().querySelector("[data-save-button-visible-state] span")!;
+				const label = saveButton().querySelector('[data-save-button-state="offline"]')!;
 				const [icon, text] = [label.firstElementChild!, label.lastElementChild!].map((element) =>
 					element.getBoundingClientRect(),
 				);
