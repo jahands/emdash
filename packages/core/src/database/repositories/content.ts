@@ -2264,26 +2264,35 @@ export class ContentRepository {
 		const tableName = getTableName(type);
 		const nowIso = now.toISOString();
 
-		const result = await this.db
-			.selectFrom(tableName as keyof Database)
-			.select((eb) => [
-				eb.fn.count("id").as("total"),
-				eb.fn.sum(eb.case().when("status", "=", "published").then(1).else(0).end()).as("published"),
-				eb.fn.sum(eb.case().when("status", "=", "draft").then(1).else(0).end()).as("draft"),
-				sql<number>`SUM(CASE WHEN scheduled_at IS NOT NULL THEN 1 ELSE 0 END)`.as("scheduled"),
-				sql<number>`SUM(CASE WHEN scheduled_at IS NOT NULL AND scheduled_at <= ${nowIso} THEN 1 ELSE 0 END)`.as(
-					"overdue_scheduled",
-				),
-			])
-			.where("deleted_at" as never, "is", null)
-			.executeTakeFirst();
+		// Counting per status reads only the (deleted_at, status) index, and the
+		// scheduled counts only the partial (deleted_at, scheduled_at) index; one
+		// aggregate over every live row reads the table.
+		const table = sql.ref(tableName);
+		const { rows } = await sql<{
+			status: string;
+			count: number | string;
+			scheduled: number | string;
+			overdue_scheduled: number | string;
+		}>`
+			SELECT status, COUNT(*) AS count,
+				(SELECT COUNT(*) FROM ${table}
+					WHERE deleted_at IS NULL AND scheduled_at IS NOT NULL) AS scheduled,
+				(SELECT COUNT(*) FROM ${table}
+					WHERE deleted_at IS NULL AND scheduled_at IS NOT NULL AND scheduled_at <= ${nowIso}
+				) AS overdue_scheduled
+			FROM ${table}
+			WHERE deleted_at IS NULL
+			GROUP BY status
+		`.execute(this.db);
 
+		const countOf = (status: string) =>
+			Number(rows.find((row) => row.status === status)?.count ?? 0);
 		return {
-			total: Number(result?.total || 0),
-			published: Number(result?.published || 0),
-			draft: Number(result?.draft || 0),
-			scheduled: Number(result?.scheduled || 0),
-			overdueScheduled: Number(result?.overdue_scheduled || 0),
+			total: rows.reduce((sum, row) => sum + Number(row.count), 0),
+			published: countOf("published"),
+			draft: countOf("draft"),
+			scheduled: Number(rows[0]?.scheduled ?? 0),
+			overdueScheduled: Number(rows[0]?.overdue_scheduled ?? 0),
 		};
 	}
 
