@@ -132,8 +132,10 @@ function reachable(
 }
 
 /**
- * The modules statically reachable from the admin island or the plugin admin
- * entry, minus any the public site's entries also reach.
+ * The modules statically reachable from the admin island, minus any the public
+ * site's entries also reach. The plugin admin entry is not a root: it is an
+ * emitted chunk loaded by file URL, and moving its module into a group leaves
+ * that URL with an unresolved hash. It is not a public entry either.
  */
 export function adminBootModules(
 	graph: ModuleGraph,
@@ -142,11 +144,10 @@ export function adminBootModules(
 	const ids = [...graph.getModuleIds()];
 	const island = ids.find((id) => ADMIN_ISLAND_RE.test(id));
 	if (!island) return undefined;
-	const roots = [island, ...ids.filter((id) => id === pluginAdminEntryId)];
-	const rootSet = new Set(roots);
-	const publicEntries = ids.filter((id) => !rootSet.has(id) && graph.getModuleInfo(id)?.isEntry);
-	const shared = reachable(graph, publicEntries, { dynamic: true, stop: rootSet });
-	const boot = reachable(graph, roots, { dynamic: false });
+	const admin = new Set([island, pluginAdminEntryId]);
+	const publicEntries = ids.filter((id) => !admin.has(id) && graph.getModuleInfo(id)?.isEntry);
+	const shared = reachable(graph, publicEntries, { dynamic: true, stop: admin });
+	const boot = reachable(graph, [island], { dynamic: false, stop: new Set([pluginAdminEntryId]) });
 	for (const id of shared) boot.delete(id);
 	return boot;
 }

@@ -131,6 +131,20 @@ describe("adminBootModules", () => {
 
 		expect([...(boot ?? [])].toSorted()).toEqual([ISLAND, "admin"].toSorted());
 	});
+
+	it("keeps the plugin admin entry out, without treating it as the public site", () => {
+		const boot = adminBootModules(
+			graph({
+				[ISLAND]: { entry: true, imports: ["admin"] },
+				admin: {},
+				[PLUGIN_ADMIN_ENTRY]: { entry: true, imports: ["plugin", "admin"] },
+				plugin: {},
+			}),
+			PLUGIN_ADMIN_ENTRY,
+		);
+
+		expect([...(boot ?? [])].toSorted()).toEqual([ISLAND, "admin"].toSorted());
+	});
 });
 
 describe("clientFileHref", () => {
