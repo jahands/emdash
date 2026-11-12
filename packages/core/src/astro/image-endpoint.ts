@@ -17,10 +17,11 @@ import { getConfiguredImageService, imageConfig } from "astro:assets";
 import {
 	getMediaVersion,
 	getTransformFingerprint,
-	lookupMediaVersion,
 	matchInternalMediaKey,
 	mediaCacheControl,
+	MUTABLE_MEDIA_CACHE_CONTROL,
 	originalMediaHeaders,
+	resolveOriginalBody,
 	validatorHeaders,
 	isNotModified,
 } from "../media/image-endpoint.js";
@@ -50,33 +51,18 @@ interface StoredSource {
 	lastModified?: Date;
 }
 
-function streamOriginal(source: StoredSource, cacheControl: string): Response {
-	return new Response(source.body, {
-		status: 200,
-		headers: originalMediaHeaders(
-			source.contentType,
-			source.size,
-			source.lastModified,
-			cacheControl,
-		),
-	});
-}
-
 /**
- * A 304 carries the validators and cache policy of the 200 it revalidates. A
- * derivative's 304 omits Content-Type: the stored response's type (the output
- * format) must survive revalidation, and only the transform knows it.
+ * A 304 carries the validators of the 200 it revalidates. It always revalidates
+ * because it is sent without reading the bytes, so it can't verify a pinned
+ * version. A derivative's 304 omits Content-Type: the stored response's type
+ * (the output format) must survive revalidation, and only the transform knows it.
  */
-function notModifiedResponse(
-	source: StoredSource,
-	cacheControl: string,
-	suffix?: string,
-): Response {
+function notModifiedResponse(source: StoredSource, suffix?: string): Response {
 	return new Response(null, {
 		status: 304,
 		headers: {
 			...(suffix === undefined ? { "Content-Type": source.contentType } : {}),
-			"Cache-Control": cacheControl,
+			"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
 			"X-Content-Type-Options": "nosniff",
 			...validatorHeaders(source.size, source.lastModified, suffix),
 		},
@@ -99,34 +85,39 @@ export const GET: APIRoute = async (ctx) => {
 	// An unread download retains its storage connection even for a bodyless response.
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
 	const version = getMediaVersion(url.searchParams.get("href"));
-	const stored = version ? lookupMediaVersion(emdash.db, key) : undefined;
 	try {
 		const source = await storage.download(key);
 		unusedBody = source.body;
-		const cacheControl = mediaCacheControl(version, await stored, source.size);
 
-		const serveOriginal = (): Response => {
+		const serveOriginal = async (): Promise<Response> => {
 			if (isNotModified(ctx.request, source.size, source.lastModified)) {
-				return notModifiedResponse(source, cacheControl);
+				return notModifiedResponse(source);
 			}
-			const response = streamOriginal(source, cacheControl);
-			if (ctx.request.method === "HEAD") return new Response(null, response);
+			const original = await resolveOriginalBody(version, source.body, source.size);
+			const headers = originalMediaHeaders(
+				source.contentType,
+				source.size,
+				source.lastModified,
+				original.cacheControl,
+			);
+			if (ctx.request.method === "HEAD") return new Response(null, { status: 200, headers });
 			unusedBody = undefined;
-			return response;
+			return new Response(original.body, { status: 200, headers });
 		};
 
 		// Only raster images are transformable; serve anything else unchanged.
-		if (!source.contentType.startsWith("image/")) return serveOriginal();
+		if (!source.contentType.startsWith("image/")) return await serveOriginal();
 
 		const transform = await service.parseURL(url, imageConfig);
-		if (!transform) return serveOriginal();
+		if (!transform) return await serveOriginal();
 
 		const fingerprint = getTransformFingerprint(url.searchParams);
 		if (isNotModified(ctx.request, source.size, source.lastModified, fingerprint)) {
-			return notModifiedResponse(source, cacheControl, fingerprint);
+			return notModifiedResponse(source, fingerprint);
 		}
 
 		const inputBuffer = new Uint8Array(await new Response(source.body).arrayBuffer());
+		const cacheControl = await mediaCacheControl(version, inputBuffer);
 		const { data, format } = await service.transform(inputBuffer, transform, imageConfig);
 
 		return new Response(data, {

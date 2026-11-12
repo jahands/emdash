@@ -14,21 +14,22 @@
 import { GET as adapterGET } from "@astrojs/cloudflare/image-transform-endpoint";
 import type { APIRoute } from "astro";
 import { env } from "cloudflare:workers";
-import type { Database, Storage } from "emdash";
+import type { Storage } from "emdash";
 import {
 	getMediaVersion,
 	getTransformFingerprint,
-	lookupMediaVersion,
 	matchInternalMediaKey,
 	mediaCacheControl,
+	MUTABLE_MEDIA_CACHE_CONTROL,
 	originalMediaHeaders,
 	parseTransformParams,
+	resolveOriginalBody,
 	resolveTransformQuality,
+	shouldVerifyMedia,
 	validatorHeaders,
 	isNotModified,
 	type ImageTransformFormat,
 } from "emdash/media/image-endpoint";
-import type { Kysely } from "kysely";
 
 export const prerender = false;
 
@@ -57,20 +58,17 @@ interface StoredSource {
 }
 
 /**
- * A 304 carries the validators and cache policy of the 200 it revalidates. A
- * derivative's 304 omits Content-Type so the stored response keeps its output
- * format's type.
+ * A 304 carries the validators of the 200 it revalidates. It always revalidates
+ * because it is sent without reading the bytes, so it can't verify a pinned
+ * version. A derivative's 304 omits Content-Type so the stored response keeps
+ * its output format's type.
  */
-function notModifiedResponse(
-	source: StoredSource,
-	cacheControl: string,
-	suffix?: string,
-): Response {
+function notModifiedResponse(source: StoredSource, suffix?: string): Response {
 	return new Response(null, {
 		status: 304,
 		headers: {
 			...(suffix === undefined ? { "Content-Type": source.contentType } : {}),
-			"Cache-Control": cacheControl,
+			"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
 			"X-Content-Type-Options": "nosniff",
 			...validatorHeaders(source.size, source.lastModified, suffix),
 		},
@@ -91,8 +89,7 @@ export const GET: APIRoute = async (ctx) => {
 	// App.Locals.emdash is augmented by `emdash/locals`, not loaded in this
 	// package's compilation; narrow to the fields we need.
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- App.Locals augmentation lives in the emdash package
-	const emdash = (ctx.locals as { emdash?: { storage?: Storage | null; db?: Kysely<Database> } })
-		.emdash;
+	const emdash = (ctx.locals as { emdash?: { storage?: Storage | null } }).emdash;
 	const storage = emdash?.storage;
 
 	// Not EmDash media, or storage unavailable: let the adapter's endpoint handle
@@ -102,40 +99,39 @@ export const GET: APIRoute = async (ctx) => {
 	// An unread download keeps its storage read open even for a bodyless response.
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
 	const version = getMediaVersion(href);
-	const stored = version && emdash.db ? lookupMediaVersion(emdash.db, key) : undefined;
 
 	try {
 		const source = await storage.download(key);
 		unusedBody = source.body;
-		const cacheControl = mediaCacheControl(version, await stored, source.size);
 
-		const serveOriginal = (): Response => {
+		const serveOriginal = async (): Promise<Response> => {
 			if (isNotModified(ctx.request, source.size, source.lastModified)) {
-				return notModifiedResponse(source, cacheControl);
+				return notModifiedResponse(source);
 			}
+			const original = await resolveOriginalBody(version, source.body, source.size);
 			const headers = originalMediaHeaders(
 				source.contentType,
 				source.size,
 				source.lastModified,
-				cacheControl,
+				original.cacheControl,
 			);
 			if (ctx.request.method === "HEAD") return new Response(null, { status: 200, headers });
 			unusedBody = undefined;
-			return new Response(source.body, { status: 200, headers });
+			return new Response(original.body, { status: 200, headers });
 		};
 
 		// Only raster images are transformable; serve anything else unchanged.
-		if (!source.contentType.startsWith("image/")) return serveOriginal();
+		if (!source.contentType.startsWith("image/")) return await serveOriginal();
 
 		const images = resolveImagesBinding();
 		const parsed = parseTransformParams(url.searchParams);
 
 		// No binding or unparseable params: serve the original so the URL resolves.
-		if (!images || !parsed.ok) return serveOriginal();
+		if (!images || !parsed.ok) return await serveOriginal();
 
 		const fingerprint = getTransformFingerprint(url.searchParams);
 		if (isNotModified(ctx.request, source.size, source.lastModified, fingerprint)) {
-			return notModifiedResponse(source, cacheControl, fingerprint);
+			return notModifiedResponse(source, fingerprint);
 		}
 
 		const { width, height, format, quality } = parsed.options;
@@ -152,7 +148,14 @@ export const GET: APIRoute = async (ctx) => {
 		const effectiveQuality = resolveTransformQuality(format, quality);
 		if (effectiveQuality !== undefined) output.quality = effectiveQuality;
 
-		const result = await images.input(source.body).transform(transform).output(output);
+		let input = source.body;
+		let cacheControl = MUTABLE_MEDIA_CACHE_CONTROL;
+		if (shouldVerifyMedia(version, source.size)) {
+			const bytes = new Uint8Array(await new Response(source.body).arrayBuffer());
+			cacheControl = await mediaCacheControl(version, bytes);
+			input = new Blob([bytes]).stream();
+		}
+		const result = await images.input(input).transform(transform).output(output);
 		unusedBody = undefined;
 		const response = result.response();
 		if (!response.body) return new Response(null, { status: 500 });

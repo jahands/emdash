@@ -20,6 +20,7 @@ import {
 	isNotModified,
 	validatorHeaders,
 } from "../../../src/media/image-endpoint.js";
+import { computeContentHash } from "../../../src/utils/hash.js";
 
 describe("matchInternalMediaKey", () => {
 	it("extracts the key from a relative internal media URL", () => {
@@ -415,28 +416,19 @@ describe("getMediaVersion", () => {
 });
 
 describe("mediaCacheControl", () => {
-	const stored = { contentHash: "sha1:aa", size: 10 };
+	const bytes = new Uint8Array([1, 2, 3]);
 
-	it("makes a URL pinned to the stored version immutable", () => {
-		expect(mediaCacheControl("sha1:aa", stored, 10)).toBe(IMMUTABLE_IMAGE_CACHE);
-		expect(mediaCacheControl("sha1:aa", { contentHash: "sha1:aa", size: null }, 10)).toBe(
+	it("makes bytes that hash to the pinned version immutable", async () => {
+		expect(await mediaCacheControl(await computeContentHash(bytes), bytes)).toBe(
 			IMMUTABLE_IMAGE_CACHE,
 		);
 	});
 
-	it("revalidates unversioned URLs", () => {
-		expect(mediaCacheControl(null, stored, 10)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
-	});
-
-	it("revalidates a version that isn't the stored one", () => {
-		expect(mediaCacheControl("sha1:bb", stored, 10)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
-		expect(mediaCacheControl("sha1:aa", undefined, 10)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
-		expect(mediaCacheControl("sha1:aa", { contentHash: null, size: 10 }, 10)).toBe(
+	it("revalidates unversioned URLs and bytes of another version, even of the same size", async () => {
+		expect(await mediaCacheControl(null, bytes)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		const sameSize = new Uint8Array([3, 2, 1]);
+		expect(await mediaCacheControl(await computeContentHash(bytes), sameSize)).toBe(
 			MUTABLE_MEDIA_CACHE_CONTROL,
 		);
-	});
-
-	it("revalidates when storage holds bytes of a different size than the row", () => {
-		expect(mediaCacheControl("sha1:aa", stored, 11)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
 	});
 });

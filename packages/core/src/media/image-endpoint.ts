@@ -12,9 +12,7 @@
  * precompiled package and can be unit-tested directly.
  */
 
-import type { Kysely } from "kysely";
-
-import type { Database } from "../database/types.js";
+import { computeContentHash } from "../utils/hash.js";
 import { INTERNAL_MEDIA_PREFIX } from "./normalize.js";
 
 /** Output formats the wrapped endpoint can produce on Cloudflare. */
@@ -80,51 +78,50 @@ export const IMMUTABLE_IMAGE_CACHE = "public, max-age=31536000, immutable";
 /** Cache policy for media keys that Replace original may overwrite. */
 export const MUTABLE_MEDIA_CACHE_CONTROL = "public, max-age=0, must-revalidate";
 
-/** The parts of a media row that identify the stored file's version. */
-export interface StoredMediaVersion {
-	contentHash: string | null;
-	size: number | null;
-}
+/**
+ * Largest file read into memory just to check it against the version its URL
+ * is pinned to. A larger file streams and revalidates instead.
+ */
+export const MAX_VERIFIED_MEDIA_BYTES = 2 * 1024 * 1024;
 
 /**
- * Read the version of the media file stored under `key`. Resolves `undefined`
- * when there is no row or the lookup fails, so callers can start it alongside
- * the storage download without risking an unhandled rejection.
+ * Cache policy for media bytes served under a URL pinned to `version`. The
+ * response is immutable only when the bytes themselves hash to `version`.
+ * Neither the media row nor the file size proves what storage holds: Replace
+ * original writes storage before the row, and a replacement can be the same
+ * size. Anything else must revalidate.
  */
-export function lookupMediaVersion(
-	db: Kysely<Database>,
-	key: string,
-): Promise<StoredMediaVersion | undefined> {
-	return db
-		.selectFrom("media")
-		.select(["content_hash", "size"])
-		.where("storage_key", "=", key)
-		.executeTakeFirst()
-		.then((row) => (row ? { contentHash: row.content_hash, size: row.size } : undefined))
-		.catch(() => undefined);
-}
-
-/**
- * Cache policy for a media representation. A URL pinned to a version is
- * immutable only when that version is the stored file: the hash must match the
- * row, and the row's size must match the bytes storage returned. The size check
- * covers the moment during Replace original when storage holds the new bytes
- * but the row still has the old hash. Anything else must revalidate.
- */
-export function mediaCacheControl(
+export async function mediaCacheControl(
 	version: string | null,
-	stored: StoredMediaVersion | undefined,
-	size: number,
-): string {
-	if (
-		version &&
-		stored?.contentHash &&
-		stored.contentHash === version &&
-		(stored.size === null || stored.size === size)
-	) {
-		return IMMUTABLE_IMAGE_CACHE;
-	}
+	bytes: Uint8Array,
+): Promise<string> {
+	if (version && (await computeContentHash(bytes)) === version) return IMMUTABLE_IMAGE_CACHE;
 	return MUTABLE_MEDIA_CACHE_CONTROL;
+}
+
+/**
+ * Whether a stored file of `size` bytes, requested under a URL pinned to
+ * `version`, is read into memory to verify it. A size of 0 may be unknown.
+ */
+export function shouldVerifyMedia(version: string | null, size: number): boolean {
+	return !!version && size > 0 && size <= MAX_VERIFIED_MEDIA_BYTES;
+}
+
+/**
+ * The body and cache policy for an original file. A file pinned to a version
+ * and small enough to verify is read into memory and checked; any other file
+ * streams unchanged and revalidates.
+ */
+export async function resolveOriginalBody(
+	version: string | null,
+	body: ReadableStream<Uint8Array>,
+	size: number,
+): Promise<{ body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>; cacheControl: string }> {
+	if (!shouldVerifyMedia(version, size)) {
+		return { body, cacheControl: MUTABLE_MEDIA_CACHE_CONTROL };
+	}
+	const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+	return { body: bytes, cacheControl: await mediaCacheControl(version, bytes) };
 }
 
 /**
