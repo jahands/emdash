@@ -4,7 +4,7 @@
  * Defines all admin routes and their components.
  */
 
-import { Banner, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Loader, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { msg, plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type { QueryClient } from "@tanstack/react-query";
@@ -896,7 +896,7 @@ function ContentListPage() {
 	// guard (e.g. `error`) must run the same number of hooks as a full render,
 	// or React throws #300 "Rendered fewer hooks than expected" (#1415).
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <RouteLoading />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -983,6 +983,7 @@ const contentNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/new",
 	component: withRouteModules(ContentNewPage, ContentEditor),
+	pendingComponent: EditorSkeleton,
 	staticData: { fullBleed: true, pageTitle: msg`New content` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
@@ -1085,7 +1086,7 @@ function ContentNewPage() {
 	);
 
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <EditorSkeleton />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -1135,6 +1136,7 @@ const contentEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/$id",
 	component: withRouteModules(ContentEditPage, ContentEditor),
+	pendingComponent: EditorSkeleton,
 	staticData: { fullBleed: true, pageTitle: msg`Edit content` },
 	validateSearch: (search) => ({
 		...(typeof search.field === "string" && { field: search.field }),
@@ -2544,7 +2546,7 @@ function ContentEditPage() {
 	}, [collection, id, queryClient]);
 
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <EditorSkeleton />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -2554,7 +2556,7 @@ function ContentEditPage() {
 	}
 
 	if (isLoading) {
-		return <LoadingScreen />;
+		return <EditorSkeleton />;
 	}
 
 	if (itemError && !rawItem) {
@@ -3947,7 +3949,7 @@ function ContentTypesEditPage() {
 	}
 
 	if (isLoading) {
-		return <LoadingScreen />;
+		return <RouteLoading />;
 	}
 
 	return (
@@ -4089,6 +4091,9 @@ export function createAdminRouter(queryClient: QueryClient) {
 		context: { queryClient },
 		basepath: "/_emdash/admin",
 		defaultPreload: "intent",
+		defaultPendingComponent: RouteLoading,
+		defaultPendingMs: 150,
+		defaultPendingMinMs: 300,
 	});
 }
 
@@ -4110,13 +4115,45 @@ export function ConfigurationLoadingScreen() {
 	);
 }
 
-function LoadingScreen() {
+/** Fills the page area while a screen or its data loads, inside the admin's frame. */
+function RouteLoading() {
 	const { t } = useLingui();
 	return (
-		<div className="flex items-center justify-center min-h-screen">
-			<div className="text-center">
-				<Loader />
-				<p className="mt-4 text-kumo-subtle">{t`Loading configuration...`}</p>
+		<div
+			className="flex items-center justify-center min-h-[50vh]"
+			role="status"
+			aria-label={t`Loading`}
+		>
+			<Loader />
+		</div>
+	);
+}
+
+/** The editor's frame, shown while its code or the entry loads. */
+function EditorSkeleton() {
+	const { t } = useLingui();
+	return (
+		<div
+			className="flex h-full flex-col bg-kumo-elevated"
+			role="status"
+			aria-label={t`Loading entry`}
+		>
+			<div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-kumo-line px-3 py-2 sm:px-4">
+				<div className="size-8 shrink-0" />
+				<div className="w-48">
+					<SkeletonLine blockHeight={16} minWidth={60} maxWidth={100} />
+				</div>
+			</div>
+			<div className="flex min-h-0 flex-1">
+				<div className="min-w-0 flex-1">
+					<div className="emdash-editor-page mx-auto w-full max-w-[52rem] space-y-4 pt-8 sm:pt-12">
+						<SkeletonLine blockHeight={36} minWidth={40} maxWidth={70} />
+						{Array.from({ length: 6 }, (_, i) => (
+							<SkeletonLine key={i} blockHeight={16} minWidth={70} maxWidth={100} />
+						))}
+					</div>
+				</div>
+				<div className="hidden w-92 shrink-0 border-s border-kumo-line lg:block" />
 			</div>
 		</div>
 	);
