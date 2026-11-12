@@ -16,6 +16,10 @@ import { computeWaves } from "./waves.mjs";
 
 let counter = 0;
 
+/** What Chromium sends for a navigation; the server serves HTML documents differently. */
+export const DOCUMENT_ACCEPT =
+	"text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8";
+
 export function eventsForPhase(site, phase) {
 	return site.queryEvents.filter((e) => e.phase === phase);
 }
@@ -138,6 +142,7 @@ export async function replayRequest(site, path, { cookies, accept = "*/*" } = {}
 /** Replay the unique GET document and API requests a page load made. */
 export async function serverPass(site, pageResult, { cookies, cache }) {
 	const paths = [];
+	const documents = new Set();
 	for (const r of pageResult.waterfall) {
 		if (r.status === null || r.status >= 300 || r.method === "POST") continue;
 		let url;
@@ -150,12 +155,14 @@ export async function serverPass(site, pageResult, { cookies, cache }) {
 		const path = url.pathname + url.search;
 		const isApi = url.pathname.startsWith("/_emdash/api/");
 		if (r.type !== "Document" && !isApi) continue;
+		if (r.type === "Document") documents.add(path);
 		if (!paths.includes(path)) paths.push(path);
 	}
 	const results = [];
 	for (const path of paths) {
 		const key = `${cookies ? "auth" : "anon"} ${path}`;
-		if (!cache.has(key)) cache.set(key, await replayRequest(site, path, { cookies }));
+		const accept = documents.has(path) ? DOCUMENT_ACCEPT : undefined;
+		if (!cache.has(key)) cache.set(key, await replayRequest(site, path, { cookies, accept }));
 		results.push(cache.get(key));
 	}
 	return results;
