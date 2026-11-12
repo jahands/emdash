@@ -1091,10 +1091,10 @@ function sortCursorCondition(
 			? sql`(${sort} IS NOT NULL OR ${id} ${cmp} ${cursorId})`
 			: sql`(${sort} IS NULL AND ${id} ${cmp} ${cursorId})`;
 	}
-	const past = sql`${sort} ${cmp} ${value} OR (${sort} = ${value} AND ${id} ${cmp} ${cursorId})`;
-	return nullsFirst || NON_NULL_SORT_COLUMNS.has(column)
-		? sql`(${past})`
-		: sql`(${past} OR ${sort} IS NULL)`;
+	// The row value, unlike the equivalent OR, is an index bound on Postgres.
+	// A NULL sort makes it NULL, which excludes the row as the OR form did.
+	const past = sql`(${sort}, ${id}) ${cmp} (${value}, ${cursorId})`;
+	return nullsFirst || NON_NULL_SORT_COLUMNS.has(column) ? past : sql`(${past} OR ${sort} IS NULL)`;
 }
 
 /**

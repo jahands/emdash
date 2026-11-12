@@ -13,6 +13,8 @@ import { afterAll, afterEach, beforeEach, expect, it } from "vitest";
 import * as migration098 from "../../../src/database/migrations/098_content_live_list_indexes.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import type { Database } from "../../../src/database/types.js";
+import { emdashLoader } from "../../../src/loader.js";
+import { runWithContext } from "../../../src/request-context.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 import {
 	type DialectTestContext,
@@ -84,6 +86,35 @@ describeEachDialect("content live list indexes", (dialect) => {
 			expect(plan).toMatch(
 				/INDEX idx_ec_post_deleted_created_id \(deleted_at=\? AND \(created_at,id\)<\(\?,\?\)\)/,
 			);
+		}
+	});
+
+	it("starts a later public page at its cursor instead of filtering from the first row", async () => {
+		const loadPage = async (cursor?: string) => {
+			captured = [];
+			const result = await runWithContext({ editMode: false, db }, () =>
+				emdashLoader().loadCollection!({
+					collection: "_emdash",
+					filter: { type: "post", limit: 20, cursor, orderBy: { published_at: "desc" } },
+				}),
+			);
+			if ("error" in result) throw result.error;
+			return result as typeof result & { nextCursor?: string };
+		};
+		const first = await loadPage();
+		const second = await loadPage(first.nextCursor);
+		const page = captured.find((query) => /order by/i.test(query.sql) && /limit/i.test(query.sql));
+		if (!page) throw new Error("the loader ran no ordered page query");
+		const plan = await planOf(page);
+
+		expect(second.entries[0]!.id < first.entries.at(-1)!.id).toBe(true);
+		if (dialect === "postgres") {
+			expect(plan).toMatch(/Index Cond: .*ROW\(published_at, id\) </);
+		} else {
+			// Undated entries sort last on SQLite, so the condition keeps an OR
+			// for them and the index is read in order from its start.
+			expect(plan).toMatch(/SEARCH ec_post USING INDEX idx_ec_post_deleted_published_id/);
+			expect(plan).not.toMatch(/TEMP B-TREE/);
 		}
 	});
 
