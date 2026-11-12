@@ -1255,6 +1255,13 @@ describe("ContentListPage – numbered pages", () => {
 		).toBe(true);
 	});
 
+	it("asks only for the entry fields the list shows", async () => {
+		await renderPosts();
+
+		const listRequest = requests.find((url) => url.startsWith("/_emdash/api/content/posts?"));
+		expect(new URL(listRequest!, location.origin).searchParams.get("fields")).toBe("title,name");
+	});
+
 	it("starts a changed search at page 1 without requesting the old page for it", async () => {
 		const { screen } = await renderPosts();
 		await screen.getByRole("button", { name: "Next page" }).click();

@@ -178,6 +178,7 @@ import {
 	type RoomEditing,
 	type RoomEvent,
 } from "./lib/co-editing/types.js";
+import { useContentListFields } from "./lib/content-list-fields";
 import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/content-permissions";
 import { describeContentValidationError } from "./lib/content-validation-errors";
 import { usePluginPage } from "./lib/plugin-context";
@@ -681,6 +682,7 @@ function ContentListPage() {
 		enabled: !!manifest,
 	});
 
+	const listFields = useContentListFields(collection, manifest);
 	const contentList = usePagedQuery({
 		scope: ["content", collection],
 		queryKey: [
@@ -692,10 +694,12 @@ function ContentListPage() {
 				author: authorFilter,
 				date: dateApiParams,
 				byline: bylineApiParams,
+				fields: listFields,
 			},
 		],
 		queryFn: ({ page, perPage }) =>
 			fetchContentList(collection, {
+				fields: listFields,
 				locale: activeLocale,
 				page,
 				limit: perPage,

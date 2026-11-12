@@ -205,6 +205,8 @@ export async function fetchContentList(
 		 * explicit credit. Off by default: the filter matches real credits.
 		 */
 		includeInferredBylines?: boolean;
+		/** Return only these fields in each item's `data`; omit for whole entries. */
+		fields?: string[];
 	},
 ): Promise<FindManyResult<ContentItem>> {
 	const params = new URLSearchParams();
@@ -234,6 +236,7 @@ export async function fetchContentList(
 	if (options?.includeInferredBylines && (options.bylinesNone || options.bylines?.length)) {
 		params.set("includeInferredBylines", "1");
 	}
+	if (options?.fields) params.set("fields", options.fields.join(","));
 
 	const url = `${API_BASE}/content/${collection}${params.toString() ? `?${params}` : ""}`;
 	const response = await apiFetch(url);
