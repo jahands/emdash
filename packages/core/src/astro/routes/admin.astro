@@ -113,7 +113,11 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 	</head>
 	<body class="isolate">
 		<div id="admin-root" class="min-h-screen">
-			<div id="emdash-boot-loader">
+			<div
+				id="emdash-boot-loader"
+				data-error-title={bootLabels.error.title}
+				data-error-retry={bootLabels.error.retry}
+			>
 				<style>
 					#emdash-boot-loader {
 						display: flex;
@@ -135,9 +139,53 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 							transform: rotate(360deg);
 						}
 					}
+					:global(.emdash-boot-error) {
+						display: flex;
+						flex-direction: column;
+						align-items: center;
+						gap: 1rem;
+						padding: 1rem;
+						text-align: center;
+						color: var(--text-color-kumo-default);
+					}
+					:global(.emdash-boot-error h1) {
+						margin: 0;
+						font-size: 1.5rem;
+						font-weight: 600;
+					}
+					:global(.emdash-boot-error button) {
+						padding: 0.5rem 1rem;
+						border: 1px solid var(--color-kumo-line);
+						border-radius: 0.5rem;
+						background: var(--color-kumo-base);
+						color: inherit;
+						font: inherit;
+						cursor: pointer;
+					}
 				</style>
 				<div class="spinner" role="status" aria-label={bootLabels.loading}></div>
 			</div>
+			<script is:inline>
+				document.addEventListener(
+					"astro:hydration-error",
+					() => {
+						const loader = document.getElementById("emdash-boot-loader");
+						if (!loader) return;
+						const alert = document.createElement("div");
+						alert.className = "emdash-boot-error";
+						alert.setAttribute("role", "alert");
+						const title = document.createElement("h1");
+						title.textContent = loader.dataset.errorTitle;
+						const retry = document.createElement("button");
+						retry.type = "button";
+						retry.textContent = loader.dataset.errorRetry;
+						retry.addEventListener("click", () => location.reload());
+						alert.append(title, retry);
+						loader.replaceChildren(alert);
+					},
+					{ once: true },
+				);
+			</script>
 			<AdminWrapper
 				client:only="react"
 				locale={resolvedLocale}
