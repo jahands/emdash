@@ -1,7 +1,7 @@
 import { QueryClient } from "@tanstack/react-query";
 import { describe, expect, it } from "vitest";
 
-import type { RouteModulePreload } from "../src/lib/route-module.js";
+import { routeLoadsEditor, type RouteModulePreload } from "../src/lib/route-module.js";
 import { ROUTE_MODULE_LOADERS } from "../src/route-module-loaders.js";
 import {
 	ADMIN_ROUTE_MODULES,
@@ -66,5 +66,18 @@ describe("admin route modules", () => {
 			"components/settings/GeneralSettings",
 		]);
 		expect(adminRouteModules("/no/such/screen")).toEqual([]);
+	});
+
+	it("treats only the editing screens as editor routes", () => {
+		const editorRoutes = routes
+			.map((route) => route.fullPath)
+			.filter((path) => routeLoadsEditor(path))
+			.toSorted();
+		expect(editorRoutes).toEqual([
+			"/content/$collection/$id",
+			"/content/$collection/new",
+			"/sections/$slug",
+			"/widgets",
+		]);
 	});
 });

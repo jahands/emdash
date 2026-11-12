@@ -149,7 +149,12 @@ import {
 	lastAutosavedDrafts,
 	withAutosavedDraft,
 } from "./lib/revision-list-cache.js";
-import { lazyRouteModule, prefetchRouteModules, withRouteModules } from "./lib/route-module.js";
+import {
+	lazyRouteModule,
+	prefetchRouteModules,
+	routeLoadsEditor,
+	withRouteModules,
+} from "./lib/route-module.js";
 import { sanitizeRedirectUrl } from "./lib/url";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
@@ -588,12 +593,14 @@ function RootComponent() {
 	const dateLocaleReady = useDateLocaleReady(i18n.locale);
 	const ready = !isLoading && userSettled && dateLocaleReady;
 	const fetching = useIsFetching();
+	// Loading modules runs them on the main thread, which delays keystrokes in the editor.
+	const editing = useMatches({ select: (matches) => routeLoadsEditor(matches.at(-1)?.fullPath) });
 
 	React.useEffect(() => {
-		if (!ready || fetching > 0) return;
+		if (!ready || editing || fetching > 0) return;
 		const handle = window.requestIdleCallback(prefetchRouteModules);
 		return () => window.cancelIdleCallback(handle);
-	}, [ready, fetching]);
+	}, [ready, editing, fetching]);
 
 	if (!ready) {
 		return <ConfigurationLoadingScreen />;

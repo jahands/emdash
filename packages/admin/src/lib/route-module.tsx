@@ -3,7 +3,11 @@ import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
 import { ROUTE_MODULE_LOADERS, type RouteModuleExports } from "../route-module-loaders.js";
-import { ADMIN_EDITOR_MODULES, type AdminRouteModule } from "../route-modules.js";
+import {
+	ADMIN_EDITOR_MODULES,
+	adminRouteModules,
+	type AdminRouteModule,
+} from "../route-modules.js";
 
 /** What a route component needs loaded before the router renders it. */
 export interface RouteModulePreload {
@@ -78,6 +82,13 @@ export function withRouteModules<Page extends (props: never) => React.ReactNode>
 }
 
 let prefetched = false;
+
+/** Whether the route at `path` (a route path or URL path below the admin base) shows the editor. */
+export function routeLoadsEditor(path: string | undefined): boolean {
+	return (
+		path !== undefined && adminRouteModules(path).some((module) => ADMIN_EDITOR_MODULES.has(module))
+	);
+}
 
 /** Loads every route module except the editor's, for screens not yet visited. */
 export function prefetchRouteModules(): void {
