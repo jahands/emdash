@@ -376,17 +376,11 @@ function buildRouter() {
 }
 
 describe("ConfigurationLoadingScreen", () => {
-	it("matches the centered EmDash boot loading view", async () => {
+	it("shows only a spinner named Loading, as the page's boot loader does", async () => {
 		const screen = await render(<ConfigurationLoadingScreen />);
-		const loader = screen.getByRole("status", { name: "Loading" });
-		const label = screen.getByText("Loading configuration...");
-		const loadingView = label.element().parentElement?.parentElement;
 
-		expect(loadingView).toHaveClass("emdash-configuration-loader");
-		expect(loader.element().tagName).toBe("DIV");
-		await expect.element(loader).toHaveClass("emdash-configuration-spinner");
-		await expect.element(label).toHaveClass("emdash-configuration-label");
-		expect(label.element().parentElement).toHaveClass("loader-inner");
+		await expect.element(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+		expect(screen.container.textContent).toBe("");
 	});
 });
 

@@ -34,6 +34,24 @@ describe("admin shell", () => {
 		expect(new TextEncoder().encode(html).length).toBeLessThan(30 * 1024);
 	});
 
+	it.each([
+		["en", "Loading"],
+		["ar", "جارٍ التحميل"],
+	])(
+		"shows the %s boot loader as a spinner named in that language, with no text to reflow",
+		async (locale, label) => {
+			const html = await renderAdmin(locale);
+			const loader = html.match(
+				/<div id="emdash-boot-loader"[^>]*>([\s\S]*?)<\/div>\s*(?:<style|<script|<astro-island)/,
+			)?.[1];
+
+			expect(loader).toBeDefined();
+			expect(loader).toContain(`role="status" aria-label="${label}"`);
+			const visibleText = loader!.replace(/<[^>]*>/g, "").trim();
+			expect(visibleText).toBe("");
+		},
+	);
+
 	it("preloads the requested screen's modules with the admin's", async () => {
 		const editor = await renderAdmin("en", "/_emdash/admin/content/posts/01ABC");
 		expect(editor).toContain('<link rel="modulepreload" href="/_astro/PluginRegistry.js">');

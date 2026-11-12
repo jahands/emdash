@@ -128,6 +128,13 @@ export function translateVisualEditingToolbarLabels(
 	};
 }
 
+const ADMIN_BOOT_LABEL = msg`Loading`;
+
+/** The accessible name of the spinner the admin page shows until the admin loads. */
+export async function loadAdminBootLabel(locale: string): Promise<string> {
+	return resolveToolbarMessage(await loadServerMessages(locale), ADMIN_BOOT_LABEL);
+}
+
 export async function loadVisualEditingToolbarLabels(
 	request: Request,
 ): Promise<VisualEditingToolbarLabels> {

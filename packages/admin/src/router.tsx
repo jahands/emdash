@@ -4100,14 +4100,7 @@ export function ConfigurationLoadingScreen() {
 	const { t } = useLingui();
 	return (
 		<div className="emdash-configuration-loader">
-			<div className="loader-inner">
-				<div
-					className="spinner emdash-configuration-spinner"
-					role="status"
-					aria-label={t`Loading`}
-				/>
-				<p className="emdash-configuration-label">{t`Loading configuration...`}</p>
-			</div>
+			<div className="spinner emdash-configuration-spinner" role="status" aria-label={t`Loading`} />
 		</div>
 	);
 }

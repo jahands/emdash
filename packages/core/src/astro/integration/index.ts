@@ -357,7 +357,7 @@ export function imageEndpointRoutePattern(route: string | undefined): string {
  *
  * The admin SPA is a React app hydrated via `client:only="react"`. Without the
  * React integration the build succeeds and the admin route returns 200, but the
- * bundle never hydrates -- the page sits on "Loading EmDash..." forever with no
+ * bundle never hydrates -- the page shows its loading spinner forever with no
  * error anywhere (#962). Checked in `astro:config:done` so integrations added
  * by other integrations are visible too.
  *
@@ -371,7 +371,7 @@ export function missingReactIntegrationWarning(
 	}
 	return (
 		`@astrojs/react is not registered in your Astro config. The EmDash admin UI ` +
-		`will not hydrate without it (the page stays on "Loading EmDash..."). ` +
+		`will not hydrate without it (the page keeps showing its loading spinner). ` +
 		`Add it to your integrations:\n\n` +
 		`  import react from "@astrojs/react";\n` +
 		`  export default defineConfig({\n` +

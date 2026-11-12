@@ -35,8 +35,8 @@ An EmDash site needs server rendering because the admin, API routes, and current
 at runtime. Configure Astro with `output: "server"` and an adapter for the deployment platform.
 
 Register both React and EmDash in the Astro integrations array. React hydrates the admin panel; if
-`@astrojs/react` is installed but `react()` is missing from the array, the admin page remains on
-**Loading EmDash...**.
+`@astrojs/react` is installed but `react()` is missing from the array, the admin page keeps
+showing its loading spinner.
 
 The following Node.js example supplies a SQLite database and local media storage:
 
