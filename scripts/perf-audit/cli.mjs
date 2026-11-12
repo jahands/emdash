@@ -99,6 +99,7 @@ async function remeasureWorkspace({
 	resultsDir,
 	slot,
 	scenarioUpload,
+	mediaFiles,
 }) {
 	const dirs = workspaceDirs({ ...slot, label, resultsDir });
 	const profiles = Array.from(plan.keys(), resolveProfile);
@@ -108,7 +109,18 @@ async function remeasureWorkspace({
 		for (const profile of profiles) {
 			console.log(`  confirming ${profile.id} (${label})`);
 			out[profile.id] = await remeasureProfile(
-				{ browser, profile, workspace, dirs, pg, options, log: () => {}, label, scenarioUpload },
+				{
+					browser,
+					profile,
+					workspace,
+					dirs,
+					pg,
+					options,
+					mediaFiles,
+					log: () => {},
+					label,
+					scenarioUpload,
+				},
 				{ ...plan.get(profile.id), samples: options.confirmSamples },
 			);
 		}
@@ -273,7 +285,7 @@ async function main() {
 			if (candidates.length > 0 && options.confirmSamples > 0) {
 				console.log(`\nConfirming ${candidates.length} candidate regression(s)`);
 				const plan = confirmationPlan(candidates);
-				const shared = { plan, options, browser, resultsDir, slot, scenarioUpload };
+				const shared = { plan, options, browser, resultsDir, slot, scenarioUpload, mediaFiles };
 				const extraBefore = await remeasureWorkspace({
 					...shared,
 					label: "compare",
