@@ -8,6 +8,7 @@ import {
 	adminRouteModules,
 	type AdminRouteModule,
 } from "../route-modules.js";
+import { reloadPage } from "./reload-page.js";
 
 /** What a route component needs loaded before the router renders it. */
 export interface RouteModulePreload {
@@ -42,6 +43,7 @@ export function lazyRouteModule<
 			const exports = await ROUTE_MODULE_LOADERS[module]();
 			Component = (exports as Record<K, unknown>)[exportName] as React.ComponentType<Props>;
 			failed = false;
+			forgetReload(module);
 		} catch {
 			failed = true;
 			pending = undefined;
@@ -107,7 +109,7 @@ export function prefetchRouteModules(): void {
 function RouteModuleError({ module, onRetry }: { module: AdminRouteModule; onRetry: () => void }) {
 	const { t } = useLingui();
 	React.useEffect(() => {
-		if (shouldReload(module)) window.location.reload();
+		if (shouldReload(module)) reloadPage();
 	}, [module]);
 	return (
 		<div className="flex items-center justify-center min-h-[50vh]">
@@ -131,5 +133,14 @@ function shouldReload(module: AdminRouteModule): boolean {
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+/** Lets the next deploy that removes `module`'s files reload the page again. */
+function forgetReload(module: AdminRouteModule): void {
+	try {
+		sessionStorage.removeItem(`${RELOADED_KEY}:${module}`);
+	} catch {
+		// Without storage the page never reloads, so there is nothing to reset.
 	}
 }
