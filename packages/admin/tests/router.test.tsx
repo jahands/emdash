@@ -1115,7 +1115,7 @@ describe("ContentListPage – hook order is stable when a refetch errors (#1415)
 		mockFetch.restore();
 	});
 
-	it("renders the ErrorScreen instead of crashing when a content refetch fails", async () => {
+	it("shows the list error instead of crashing when a content refetch fails", async () => {
 		const { router, queryClient, TestApp } = buildRouter();
 
 		await router.navigate({
@@ -1129,16 +1129,59 @@ describe("ContentListPage – hook order is stable when a refetch errors (#1415)
 		const addNewLink = screen.getByRole("link", { name: /add new/i });
 		await expect.element(addNewLink).toBeInTheDocument();
 
-		// Make the next content fetch fail, then force a refetch. The component
-		// re-renders with `error` truthy and takes the ErrorScreen early return,
-		// which sits ABOVE the onLoadMore useCallback. If that callback hook is
-		// below the guards, this render runs one fewer hook and React throws #300
-		// — so the ErrorScreen (and its Retry button) never appears.
+		// Make the next content fetch fail, then force a refetch. If a hook sits
+		// below the page's early returns, the error render runs a different number
+		// of hooks and React throws #300, so the error never appears.
 		mockFetch.on("GET", "/_emdash/api/content/posts", { error: { message: "Boom" } }, 500);
 		await queryClient.refetchQueries({ queryKey: ["content", "posts"] });
 
-		const retryButton = screen.getByRole("button", { name: /retry/i });
+		const retryButton = screen.getByRole("button", { name: "Try again" });
 		await expect.element(retryButton).toBeInTheDocument();
+	});
+
+	it("keeps the page and announces the error in the list when the entries fail to load", async () => {
+		mockFetch.on(
+			"GET",
+			"/_emdash/api/content/posts",
+			{ error: { code: "INTERNAL_ERROR", message: "SQLITE_BUSY: database is locked" } },
+			500,
+		);
+		const { router, TestApp } = buildRouter();
+		await router.navigate({ to: "/content/$collection", params: { collection: "posts" } });
+		const screen = await render(<TestApp />);
+
+		await expect
+			.element(screen.getByRole("alert"))
+			.toHaveTextContent("The entries couldn't be loaded.");
+		await expect.element(screen.getByRole("heading", { name: "Posts" })).toBeVisible();
+		await expect.element(screen.getByRole("link", { name: /add new/i })).toBeVisible();
+		expect(document.body.textContent).not.toContain("SQLITE_BUSY");
+
+		mockFetch.on("GET", "/_emdash/api/content/posts", {
+			data: {
+				items: [
+					{
+						id: "post_1",
+						type: "posts",
+						slug: "back-again",
+						status: "draft",
+						locale: "fr",
+						data: { title: "Back again" },
+						authorId: null,
+						createdAt: "2025-01-01T00:00:00Z",
+						updatedAt: "2025-01-01T00:00:00Z",
+						publishedAt: null,
+						scheduledAt: null,
+						liveRevisionId: null,
+						draftRevisionId: null,
+					},
+				],
+				total: 1,
+			},
+		});
+		await screen.getByRole("button", { name: "Try again" }).click();
+		await expect.element(screen.getByText("Back again")).toBeVisible();
+		expect(screen.getByRole("alert").query()).toBeNull();
 	});
 });
 

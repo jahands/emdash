@@ -905,10 +905,6 @@ function ContentListPage() {
 		return <NotFoundPage message={t`Collection "${collection}" not found`} />;
 	}
 
-	if (contentList.query.error) {
-		return <ErrorScreen error={contentList.query.error.message} />;
-	}
-
 	const listColumns = (collectionConfig.listColumns ?? []).flatMap((slug) => {
 		const field = collectionConfig.fields[slug];
 		if (!field) return [];
@@ -941,6 +937,8 @@ function ContentListPage() {
 			trashedItems={trash.items}
 			trashPagination={trash.pagination}
 			isLoading={contentList.query.isLoading}
+			loadFailed={contentList.query.isError && contentList.items.length === 0}
+			onRetry={() => void contentList.query.refetch()}
 			isTrashedLoading={trash.query.isLoading}
 			trashedCount={trash.pagination.totalCount}
 			onDelete={(id) => deleteMutation.mutateAsync(id)}

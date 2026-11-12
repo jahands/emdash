@@ -130,6 +130,9 @@ export interface ContentListProps {
 	listColumns?: ContentListColumn[];
 	trashedItems?: TrashedContentItem[];
 	isLoading?: boolean;
+	/** No entries could be loaded. The list shows an error with a retry that calls `onRetry`. */
+	loadFailed?: boolean;
+	onRetry?: () => void;
 	isTrashedLoading?: boolean;
 	/** Return the request's promise to keep the confirmation open until it lands. */
 	onDelete?: RowRequest;
@@ -278,6 +281,8 @@ export function ContentList({
 	listColumns = [],
 	trashedItems = [],
 	isLoading,
+	loadFailed,
+	onRetry,
 	isTrashedLoading,
 	onDelete,
 	onDuplicate,
@@ -803,8 +808,17 @@ export function ContentList({
 								</th>
 							</tr>
 						</thead>
-						<tbody inert={pagination?.isPending || undefined}>
-							{items.length === 0 && (isLoading || pagination?.isPending) ? (
+						<tbody inert={(pagination?.isPending && !loadFailed) || undefined}>
+							{loadFailed ? (
+								<DataTableMessage colSpan={colSpan}>
+									<div role="alert" className="flex flex-col items-center gap-3">
+										{t`The entries couldn't be loaded.`}
+										<Button variant="secondary" size="sm" onClick={onRetry}>
+											{t`Try again`}
+										</Button>
+									</div>
+								</DataTableMessage>
+							) : items.length === 0 && (isLoading || pagination?.isPending) ? (
 								<DataTableMessage colSpan={colSpan}>
 									<span className="inline-flex items-center gap-2">
 										<Loader size="sm" />
