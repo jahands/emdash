@@ -7,14 +7,6 @@
  */
 
 import { Role, type RoleLevel } from "@emdash-cms/auth";
-import type {
-	KyselyPlugin,
-	PluginTransformQueryArgs,
-	PluginTransformResultArgs,
-	QueryResult,
-	RootOperationNode,
-	UnknownRow,
-} from "kysely";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const deferred = vi.hoisted(() => ({ tasks: [] as Array<() => void | Promise<void>> }));
@@ -33,6 +25,7 @@ import {
 import { runWithContext } from "../../../src/request-context.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 import { createTestRuntime, handlersFromRuntime } from "../../utils/mcp-runtime.js";
+import { QuerySpans, sequentialWaves, type QuerySpan } from "../../utils/query-spans.js";
 import {
 	describeEachDialect,
 	setupForDialect,
@@ -42,57 +35,6 @@ import {
 
 const AUTOSAVE_MAX_WAVES = 10;
 const PUBLISH_MAX_WAVES = 9;
-
-interface QuerySpan {
-	start: number;
-	end: number;
-	tables: string[];
-}
-
-/** Records when each query starts and finishes, on a logical clock. */
-class QuerySpans implements KyselyPlugin {
-	#clock = 0;
-	#open = new Map<unknown, Omit<QuerySpan, "end">>();
-	spans: QuerySpan[] = [];
-
-	transformQuery(args: PluginTransformQueryArgs): RootOperationNode {
-		const tables = new Set<string>();
-		JSON.stringify(args.node, (_key, value: unknown) => {
-			if (isTableNode(value)) tables.add(value.table.identifier.name);
-			return value;
-		});
-		this.#open.set(args.queryId, { start: ++this.#clock, tables: [...tables] });
-		return args.node;
-	}
-
-	transformResult(args: PluginTransformResultArgs): Promise<QueryResult<UnknownRow>> {
-		const open = this.#open.get(args.queryId);
-		if (open) this.spans.push({ ...open, end: ++this.#clock });
-		return Promise.resolve(args.result);
-	}
-}
-
-function isTableNode(value: unknown): value is { table: { identifier: { name: string } } } {
-	return (
-		typeof value === "object" &&
-		value !== null &&
-		"kind" in value &&
-		value.kind === "TableNode" &&
-		"table" in value
-	);
-}
-
-/** The longest chain of queries where each one starts after the previous ended. */
-function sequentialWaves(spans: QuerySpan[]): number {
-	const sorted = spans.toSorted((a, b) => a.start - b.start);
-	const waves = sorted.map(() => 1);
-	for (let i = 0; i < sorted.length; i++) {
-		for (let j = 0; j < i; j++) {
-			if (sorted[j]!.end <= sorted[i]!.start) waves[i] = Math.max(waves[i]!, waves[j]! + 1);
-		}
-	}
-	return Math.max(0, ...waves);
-}
 
 const touchesMediaUsage = (span: QuerySpan) =>
 	span.tables.some((table) => table.startsWith("_emdash_media_usage"));
