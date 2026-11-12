@@ -9,13 +9,13 @@ const fakeReactRenderer = {
 	renderToStaticMarkup: () => ({ html: "" }),
 };
 
-async function renderAdmin(acceptLanguage: string) {
+async function renderAdmin(acceptLanguage: string, path = "/_emdash/admin") {
 	const container = await AstroContainer.create();
 	container.addServerRenderer({ name: "@astrojs/react", renderer: fakeReactRenderer });
 	container.addClientRenderer({ name: "@astrojs/react", entrypoint: "@astrojs/react/client.js" });
 	return container.renderToString(AdminPage, {
 		locals: {},
-		request: new Request("http://localhost/_emdash/admin", {
+		request: new Request(`http://localhost${path}`, {
 			headers: { "accept-language": acceptLanguage },
 		}),
 	});
@@ -32,5 +32,16 @@ describe("admin shell", () => {
 		expect(html).toContain(`<link rel="modulepreload" href="${catalogUrl}">`);
 		expect(html).toContain(`&quot;messagesUrl&quot;:[0,&quot;${catalogUrl}&quot;]`);
 		expect(new TextEncoder().encode(html).length).toBeLessThan(30 * 1024);
+	});
+
+	it("preloads the requested screen's modules with the admin's", async () => {
+		const editor = await renderAdmin("en", "/_emdash/admin/content/posts/01ABC");
+		expect(editor).toContain('<link rel="modulepreload" href="/_astro/PluginRegistry.js">');
+		expect(editor).toContain('<link rel="modulepreload" href="/_astro/ContentEditor.js">');
+		expect(editor).not.toContain("/_astro/Settings.js");
+
+		const settings = await renderAdmin("en", "/_emdash/admin/settings");
+		expect(settings).toContain('<link rel="modulepreload" href="/_astro/Settings.js">');
+		expect(settings).not.toContain("/_astro/ContentEditor.js");
 	});
 });

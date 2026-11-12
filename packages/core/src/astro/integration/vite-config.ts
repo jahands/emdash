@@ -20,6 +20,7 @@ import {
 	generateAdminMessagesModule,
 	readAdminLocaleManifest,
 } from "./admin-locales.js";
+import { createAdminPreloadsPlugin } from "./admin-preloads.js";
 import type { EmDashConfig, PluginDescriptor } from "./runtime.js";
 import {
 	VIRTUAL_CONFIG_ID,
@@ -635,6 +636,11 @@ export function createViteConfig(
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Monorepo has both vite 6 (docs) and vite 7 (core). tsgo resolves correctly.
 		plugins: [
 			createVirtualModulesPlugin(options),
+			createAdminPreloadsPlugin({
+				adminDistPath,
+				pluginAdminEntryId: RESOLVED_ADMIN_ENTRY_ID,
+				astroConfig: options.astroConfig,
+			}),
 			...(isDev && !cloudflare
 				? [{ name: "emdash-runtime-shutdown", apply: "serve", closeBundle: shutdownRuntime }]
 				: []),

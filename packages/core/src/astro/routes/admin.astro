@@ -17,15 +17,19 @@ import { Font } from "astro:assets";
 import { componentDataByCssVariable } from "virtual:astro:assets/fonts/internal";
 // @ts-ignore - virtual module
 import { adminMessageUrls } from "virtual:emdash/admin-messages";
+// @ts-ignore - virtual module
+import { adminPreloadsJson } from "virtual:emdash/admin-preloads";
 
 export const prerender = false;
 
 import { resolveLocale, getLocaleDir, DEFAULT_LOCALE } from "@emdash-cms/admin/locales/config";
 import { getSiteSettingsWithDb } from "#settings/index.js";
+import { adminPreloadHrefs } from "#utils/admin-preloads.js";
 
 const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
 const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls[DEFAULT_LOCALE];
+const modulePreloads = adminPreloadHrefs(adminPreloadsJson, Astro.url.pathname);
 
 const adminConfig = Astro.locals.emdash?.config?.admin;
 const pageTitle = adminConfig?.siteName ? `${adminConfig.siteName} Admin` : "EmDash Admin";
@@ -88,6 +92,7 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 			})();
 		</script>
 		<link rel="modulepreload" href={messagesUrl} />
+		{modulePreloads.map((href) => <link rel="modulepreload" href={href} />)}
 		<link rel="stylesheet" href={adminStylesUrl} />
 		{componentDataByCssVariable.has("--font-emdash") ? <Font cssVariable="--font-emdash" /> : null}
 		{favicon ? (

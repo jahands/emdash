@@ -12,7 +12,7 @@ vi.mock("virtual:emdash/admin-loader", () => ({
 
 vi.mock("virtual:emdash/auth-providers", () => ({ authProviders: {} }));
 
-vi.mock("@emdash-cms/admin", () => ({
+vi.mock("@emdash-cms/admin/app", () => ({
 	AdminApp: (props: Record<string, unknown>) => {
 		rendered.push(props);
 		return createElement("p", null, "admin");

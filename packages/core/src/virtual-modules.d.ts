@@ -236,6 +236,11 @@ declare module "virtual:emdash/admin-messages" {
 	export const adminMessageUrls: Record<string, string>;
 }
 
+declare module "virtual:emdash/admin-preloads" {
+	/** The admin's JavaScript files, as JSON for `adminPreloadHrefs()`. Empty in dev. */
+	export const adminPreloadsJson: string;
+}
+
 declare module "virtual:emdash/admin-loader" {
 	export function loadPluginAdmins(): Promise<typeof import("virtual:emdash/admin-registry")>;
 }
