@@ -505,7 +505,7 @@ emdash({
 
 When `siteUrl` is not set in config, EmDash checks environment variables in order: `EMDASH_SITE_URL`, then `SITE_URL`. This is useful for container deployments where the public URL is set at runtime.
 
-Image optimization does not need a site URL. Prerendered pages are the exception: Astro fetches their images during `astro build`, so locally stored media on a prerendered page is optimized only when `siteUrl`, `EMDASH_SITE_URL`, or `SITE_URL` is set in the build environment.
+Image optimization with Astro's built-in image services or the Cloudflare adapter's does not need a site URL. A custom `image.service` receives the public URL of each image, so it needs whatever origin setup that service expects. Prerendered pages are the exception for every service: Astro fetches their images during `astro build`, so locally stored media on a prerendered page is optimized only when `siteUrl`, `EMDASH_SITE_URL`, or `SITE_URL` is set in the build environment.
 
 Setup fails with `SITE_URL_REQUIRED` on a non-loopback host when neither source is set. This prevents the first unauthenticated setup request from choosing the origin used in later authentication emails. A production build deployed to Cloudflare Workers is the exception: Cloudflare only routes requests for hostnames bound to the Worker, so setup records `https://` and the hostname it runs on. The same build served by `wrangler dev`, `astro preview`, or self-hosted workerd on a reachable address gets no such guarantee; set `siteUrl` or `EMDASH_SITE_URL` there first.
 

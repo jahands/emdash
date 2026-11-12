@@ -81,32 +81,45 @@ describe("buildImageRemotePatterns", () => {
 });
 
 describe("internal media origin", () => {
+	const build = {
+		siteUrl: undefined,
+		command: "build" as const,
+		ownImageEndpoint: true,
+		imageServiceEntrypoint: undefined,
+	};
+
 	it("is used for builds that don't know the site origin and serve media through EmDash's endpoint", () => {
-		expect(
-			resolveInternalMediaOrigin({ siteUrl: undefined, command: "build", ownImageEndpoint: true }),
-		).toBe(INTERNAL_MEDIA_IMAGE_ORIGIN);
-		expect(
-			resolveInternalMediaOrigin({
-				siteUrl: "https://*.example.com",
-				command: "build",
-				ownImageEndpoint: true,
-			}),
-		).toBe(INTERNAL_MEDIA_IMAGE_ORIGIN);
+		expect(resolveInternalMediaOrigin(build)).toBe(INTERNAL_MEDIA_IMAGE_ORIGIN);
+		expect(resolveInternalMediaOrigin({ ...build, siteUrl: "https://*.example.com" })).toBe(
+			INTERNAL_MEDIA_IMAGE_ORIGIN,
+		);
+	});
+
+	it.each([
+		"astro/assets/services/sharp",
+		"astro/assets/services/noop",
+		"@astrojs/cloudflare/image-service-workerd",
+		"@astrojs/cloudflare/image-service",
+	])("is used with the %s image service", (imageServiceEntrypoint) => {
+		expect(resolveInternalMediaOrigin({ ...build, imageServiceEntrypoint })).toBe(
+			INTERNAL_MEDIA_IMAGE_ORIGIN,
+		);
 	});
 
 	it("is not used when the site origin is known, in dev, or with another endpoint", () => {
 		expect(
+			resolveInternalMediaOrigin({ ...build, siteUrl: "https://example.com" }),
+		).toBeUndefined();
+		expect(resolveInternalMediaOrigin({ ...build, command: "dev" })).toBeUndefined();
+		expect(resolveInternalMediaOrigin({ ...build, ownImageEndpoint: false })).toBeUndefined();
+	});
+
+	it("is not used with an image service that builds its own URLs", () => {
+		expect(
 			resolveInternalMediaOrigin({
-				siteUrl: "https://example.com",
-				command: "build",
-				ownImageEndpoint: true,
+				...build,
+				imageServiceEntrypoint: "./src/cdn-image-service.ts",
 			}),
-		).toBeUndefined();
-		expect(
-			resolveInternalMediaOrigin({ siteUrl: undefined, command: "dev", ownImageEndpoint: true }),
-		).toBeUndefined();
-		expect(
-			resolveInternalMediaOrigin({ siteUrl: undefined, command: "build", ownImageEndpoint: false }),
 		).toBeUndefined();
 	});
 

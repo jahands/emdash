@@ -231,12 +231,38 @@ function siteMediaHostname(siteUrl: string | undefined): string | undefined {
 }
 
 /**
+ * The image service `@astrojs/cloudflare` installs for `imageService: "cloudflare"`
+ * at build time: URL-based transformations through `/cdn-cgi/image/`, with no
+ * `IMAGES` binding.
+ */
+const CLOUDFLARE_URL_IMAGE_SERVICE = "@astrojs/cloudflare/image-service";
+
+/** The image service Astro uses when `image.service` is not configured. */
+const DEFAULT_IMAGE_SERVICE = "astro/assets/services/sharp";
+
+/**
+ * Image services whose transform URLs never hand the source to another
+ * fetcher. Astro's own services and the Cloudflare adapter's workerd service
+ * keep Astro's default `getURL`, which sends every transform to the configured
+ * image endpoint. The Cloudflare URL service embeds the source in a
+ * `/cdn-cgi/image/` path, which `stripInternalMediaOrigin` makes site-relative.
+ * Any other service may build URLs for a CDN that fetches the source itself.
+ */
+const INTERNAL_ORIGIN_IMAGE_SERVICES = new Set([
+	DEFAULT_IMAGE_SERVICE,
+	"astro/assets/services/noop",
+	"@astrojs/cloudflare/image-service-workerd",
+	CLOUDFLARE_URL_IMAGE_SERVICE,
+]);
+
+/**
  * The origin same-origin media is absolutized against for Astro's image
  * service when the build doesn't know the site origin, or `undefined` when the
  * site origin (or, in dev, the host-agnostic pattern) already covers it.
  *
- * Only used with EmDash's own image endpoint, which serves the media route
- * from storage by path. Another endpoint would try to fetch the URL.
+ * Only used when the source can reach nothing but EmDash's own image endpoint,
+ * which serves the media route from storage by path. Anything else would try
+ * to fetch the URL.
  *
  * @internal Exported for unit testing.
  */
@@ -244,8 +270,12 @@ export function resolveInternalMediaOrigin(opts: {
 	siteUrl: string | undefined;
 	command: "dev" | "build" | "preview" | "sync";
 	ownImageEndpoint: boolean;
+	imageServiceEntrypoint: string | undefined;
 }): string | undefined {
 	if (opts.command === "dev" || !opts.ownImageEndpoint) return undefined;
+	if (!INTERNAL_ORIGIN_IMAGE_SERVICES.has(opts.imageServiceEntrypoint ?? DEFAULT_IMAGE_SERVICE)) {
+		return undefined;
+	}
 	return siteMediaHostname(opts.siteUrl) ? undefined : INTERNAL_MEDIA_IMAGE_ORIGIN;
 }
 
@@ -296,13 +326,6 @@ const OVERRIDABLE_IMAGE_ENDPOINTS = new Set([
  * images through a transformer the passthrough setup doesn't provide.
  */
 const PASSTHROUGH_IMAGE_ENDPOINTS = new Set(["@astrojs/cloudflare/image-passthrough-endpoint"]);
-
-/**
- * The image service `@astrojs/cloudflare` installs for `imageService: "cloudflare"`
- * at build time: URL-based transformations through `/cdn-cgi/image/`, with no
- * `IMAGES` binding.
- */
-const CLOUDFLARE_URL_IMAGE_SERVICE = "@astrojs/cloudflare/image-service";
 
 /**
  * Decide which image endpoint to install (if any). EmDash wraps Astro's image
@@ -795,6 +818,7 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					siteUrl: buildTimeSiteUrl,
 					command,
 					ownImageEndpoint: Boolean(imageEndpoint),
+					imageServiceEntrypoint: astroConfig.image?.service?.entrypoint,
 				});
 				if (internalMediaOrigin) serializableConfig.internalMediaOrigin = internalMediaOrigin;
 				const imageRemotePatterns = buildImageRemotePatterns(
