@@ -43,6 +43,8 @@ beforeAll(async () => {
 			// eslint-disable-next-line typescript/no-unsafe-type-assertion -- createViteConfig reads only these fields.
 			astroConfig: {
 				root: pathToFileURL(`${projectRoot}/`),
+				base: "/",
+				build: { assetsPrefix: undefined },
 				adapter: { name: "@astrojs/node" },
 			} as AstroConfig,
 		},
