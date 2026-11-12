@@ -416,6 +416,12 @@ const SCENARIOS = [
 		path: () => `${ADMIN}/`,
 		async run({ page, network, shot }) {
 			const trigger = page.locator("header button").first();
+			const link = page.locator(`a[href$="${ADMIN}/media"]`).first();
+			const linkOnScreen = () =>
+				link.evaluate((a) => {
+					const box = a.getBoundingClientRect();
+					return box.width > 0 && box.right > 0 && box.left < innerWidth;
+				});
 			const r = await watch(
 				page,
 				network,
@@ -423,16 +429,29 @@ const SCENARIOS = [
 					await trigger.click();
 					await sleep(600);
 					await shot("menu-open");
-					const link = page.locator(`a[href$="${ADMIN}/media"]`).first();
+					const expandedWhenOpen = await trigger.getAttribute("aria-expanded");
 					const found = (await link.count()) > 0 && (await link.isVisible());
 					if (found) await link.click();
-					return { linkFound: found };
+					return { linkFound: found, expandedWhenOpen };
 				},
 				{ exclude: "main" },
 			);
+			await sleep(600);
+			const arrived = new URL(page.url()).pathname.endsWith("/media");
+			const closed = r.linkFound && !(await linkOnScreen());
+			const expandedWhenClosed = await trigger.getAttribute("aria-expanded");
+			const toggleTracksMenu = r.expandedWhenOpen === "true" && expandedWhenClosed === "false";
+			const problems = [
+				!r.linkFound && "menu link not visible",
+				r.linkFound && !arrived && "link not followed",
+				r.linkFound && !closed && "menu still open after navigating",
+				!toggleTracksMenu &&
+					`toggle aria-expanded ${r.expandedWhenOpen} when open, ${expandedWhenClosed} when closed`,
+			].filter(Boolean);
 			return {
 				...r,
-				summary: `menu link ${r.linkFound ? "followed" : "not visible"}; now at ${new URL(page.url()).pathname}`,
+				passed: r.passed && problems.length === 0,
+				summary: `${problems.length ? problems.join("; ") : "menu closed after navigating"}; now at ${new URL(page.url()).pathname}`,
 			};
 		},
 	},
