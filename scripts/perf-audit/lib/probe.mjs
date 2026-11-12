@@ -176,9 +176,23 @@ export function snapshotGeometry({
 	key = "default",
 	limit = 1500,
 } = {}) {
-	// Position in scrolled content, so scrolling a container is not movement.
-	const layoutRect = (el) => {
+	// Position in scrolled content, so scrolling a container is not movement. A sticky or
+	// fixed box stays put on screen while its container scrolls, so it is measured on screen.
+	const pinnedBoxes = new Map();
+	const isPinned = (el) => {
+		if (!el || el === document.documentElement) return false;
+		if (!pinnedBoxes.has(el)) {
+			const { position } = getComputedStyle(el);
+			pinnedBoxes.set(
+				el,
+				position === "sticky" || position === "fixed" || isPinned(el.parentElement),
+			);
+		}
+		return pinnedBoxes.get(el);
+	};
+	const layoutRect = (el, pinned = false) => {
 		const r = el.getBoundingClientRect();
+		if (pinned) return { x: r.x, y: r.y, width: r.width, height: r.height };
 		let x = r.x + window.scrollX;
 		let y = r.y + window.scrollY;
 		for (let p = el.parentElement; p; p = p.parentElement) {
@@ -223,13 +237,16 @@ export function snapshotGeometry({
 			truncated = true;
 			break;
 		}
-		const rect = layoutRect(el);
+		const pinned = isPinned(el);
+		const rect = layoutRect(el, pinned);
 		tracked.push({
 			el,
 			rect,
+			pinned,
 			rtl: getComputedStyle(el).direction === "rtl",
 			below: growing.filter(
 				(g) =>
+					!pinned &&
 					!el.contains(g.el) &&
 					rect.y >= g.rect.y + g.rect.height - 1 &&
 					rect.x < g.rect.x + g.rect.width &&
@@ -261,11 +278,12 @@ export function snapshotGeometry({
 		for (const item of state.tracked) {
 			const { el } = item;
 			if (state.removed.has(el)) continue;
-			const r = el.isConnected ? layoutRect(el) : null;
+			const r = el.isConnected ? layoutRect(el, item.pinned) : null;
 			if (!r || (r.width === 0 && r.height === 0)) {
 				state.removed.set(el, {
 					at: now,
 					rect: item.rect,
+					pinned: item.pinned,
 					rtl: item.rtl,
 					detached: !el.isConnected,
 				});
@@ -366,15 +384,20 @@ export function finishGeometry(key = "default") {
 		const r = el.getBoundingClientRect();
 		if (r.width < 24 || r.height < 12) continue;
 		if (r.bottom <= 0 || r.top >= vh || r.right <= 0 || r.left >= vw) continue;
-		fresh.push({ el, rect: layoutRect(el) });
+		fresh.push({
+			el,
+			rect: layoutRect(el),
+			screenRect: { x: r.x, y: r.y, width: r.width, height: r.height },
+		});
 	}
 	const replaced = [];
 	const removed = [];
 	for (const gone of outerRemoved) {
 		let best = null;
 		for (const candidate of fresh) {
-			const score = overlap(gone.rect, candidate.rect);
-			if (score > 0.3 && (!best || score > best.score)) best = { ...candidate, score };
+			const rect = gone.pinned ? candidate.screenRect : candidate.rect;
+			const score = overlap(gone.rect, rect);
+			if (score > 0.3 && (!best || score > best.score)) best = { el: candidate.el, rect, score };
 		}
 		if (!best) {
 			removed.push({
