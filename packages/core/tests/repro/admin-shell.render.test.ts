@@ -52,6 +52,17 @@ describe("admin shell", () => {
 		},
 	);
 
+	it.each([
+		["en", "Failed to load admin", "Try again"],
+		["ar", "فشل تحميل لوحة الإدارة", "حاول مجددًا"],
+	])("gives the admin the %s text to show if it fails to load", async (locale, title, retry) => {
+		const html = await renderAdmin(locale);
+
+		expect(html).toContain(
+			`&quot;bootErrorLabels&quot;:[0,{&quot;title&quot;:[0,&quot;${title}&quot;],&quot;retry&quot;:[0,&quot;${retry}&quot;]}]`,
+		);
+	});
+
 	it("preloads the requested screen's modules with the admin's", async () => {
 		const editor = await renderAdmin("en", "/_emdash/admin/content/posts/01ABC");
 		expect(editor).toContain('<link rel="modulepreload" href="/_astro/PluginRegistry.js">');

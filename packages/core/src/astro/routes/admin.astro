@@ -23,7 +23,7 @@ import { adminPreloadsJson } from "virtual:emdash/admin-preloads";
 export const prerender = false;
 
 import { resolveLocale, getLocaleDir, DEFAULT_LOCALE } from "@emdash-cms/admin/locales/config";
-import { loadAdminBootLabel } from "@emdash-cms/admin/locales/server";
+import { loadAdminBootLabels } from "@emdash-cms/admin/locales/server";
 import { getSiteSettingsWithDb } from "#settings/index.js";
 import { adminPreloadHrefs } from "#utils/admin-preloads.js";
 
@@ -31,7 +31,7 @@ const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
 const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls[DEFAULT_LOCALE];
 const modulePreloads = adminPreloadHrefs(adminPreloadsJson, Astro.url.pathname);
-const bootLabel = await loadAdminBootLabel(resolvedLocale);
+const bootLabels = await loadAdminBootLabels(resolvedLocale);
 
 const adminConfig = Astro.locals.emdash?.config?.admin;
 const pageTitle = adminConfig?.siteName ? `${adminConfig.siteName} Admin` : "EmDash Admin";
@@ -136,13 +136,14 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 						}
 					}
 				</style>
-				<div class="spinner" role="status" aria-label={bootLabel}></div>
+				<div class="spinner" role="status" aria-label={bootLabels.loading}></div>
 			</div>
 			<AdminWrapper
 				client:only="react"
 				locale={resolvedLocale}
 				messagesUrl={messagesUrl}
 				adminBranding={{ logo: adminConfig?.logo, siteName: adminConfig?.siteName }}
+				bootErrorLabels={bootLabels.error}
 			/>
 		</div>
 	</body>

@@ -128,11 +128,37 @@ export function translateVisualEditingToolbarLabels(
 	};
 }
 
-const ADMIN_BOOT_LABEL = msg`Loading`;
+export interface AdminBootLabels {
+	/** The accessible name of the spinner the admin page shows until the admin loads. */
+	loading: string;
+	/** Shown in place of the admin when its code or translations fail to load. */
+	error: AdminBootErrorLabels;
+}
 
-/** The accessible name of the spinner the admin page shows until the admin loads. */
-export async function loadAdminBootLabel(locale: string): Promise<string> {
-	return resolveToolbarMessage(await loadServerMessages(locale), ADMIN_BOOT_LABEL);
+export interface AdminBootErrorLabels {
+	title: string;
+	retry: string;
+}
+
+const ADMIN_BOOT_MESSAGES = {
+	loading: msg`Loading`,
+	title: msg`Failed to load admin`,
+	retry: msg`Try again`,
+};
+
+/**
+ * Labels for the admin page before the admin loads. They come from the server
+ * catalog because the admin's own catalog may be what failed to load.
+ */
+export async function loadAdminBootLabels(locale: string): Promise<AdminBootLabels> {
+	const messages = await loadServerMessages(locale);
+	return {
+		loading: resolveToolbarMessage(messages, ADMIN_BOOT_MESSAGES.loading),
+		error: {
+			title: resolveToolbarMessage(messages, ADMIN_BOOT_MESSAGES.title),
+			retry: resolveToolbarMessage(messages, ADMIN_BOOT_MESSAGES.retry),
+		},
+	};
 }
 
 export async function loadVisualEditingToolbarLabels(

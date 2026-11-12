@@ -13,7 +13,7 @@ import {
 } from "../../src/locales/emails.js";
 import { loadMessages } from "../../src/locales/loadMessages.js";
 import { loadServerMessages } from "../../src/locales/loadServerMessages.js";
-import { loadAdminBootLabel, loadVisualEditingToolbarLabels } from "../../src/locales/server.js";
+import { loadAdminBootLabels, loadVisualEditingToolbarLabels } from "../../src/locales/server.js";
 
 vi.mock("../../src/locales/loadServerMessages.js", async (importOriginal) => {
 	const original = await importOriginal<typeof import("../../src/locales/loadServerMessages.js")>();
@@ -26,7 +26,7 @@ async function serverStrings(code: string) {
 	});
 	return {
 		toolbar: await loadVisualEditingToolbarLabels(request),
-		bootLabel: await loadAdminBootLabel(code),
+		boot: await loadAdminBootLabels(code),
 		invite: await getInviteEmailStrings(code, "Acme"),
 		magicLink: await getMagicLinkEmailStrings(code, "Acme"),
 		domainMove: await getDomainMoveEmailStrings(code, "Acme", "new.example.com"),
@@ -52,9 +52,11 @@ describe("server catalogs", () => {
 	);
 
 	test("carry translations, not only the English source", async () => {
-		const { toolbar, bootLabel } = await serverStrings("ar");
+		const { toolbar, boot } = await serverStrings("ar");
 
 		expect(toolbar.publish).not.toBe("Publish");
-		expect(bootLabel).not.toBe("Loading");
+		expect(boot.loading).not.toBe("Loading");
+		expect(boot.error.title).not.toBe("Failed to load admin");
+		expect(boot.error.retry).not.toBe("Try again");
 	});
 });
