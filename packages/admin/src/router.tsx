@@ -1967,7 +1967,10 @@ function ContentEditPage() {
 				locale: rawItem?.locale ?? activeLocale,
 				_rev: revision,
 			}),
-		onSuccess: (publishedItem, { savedReferences }) => {
+		onSuccess: async (publishedItem, { savedReferences }) => {
+			// The preceding save's refetch can still be on its way with the entry as it was
+			// before publishing, and would land over the published item.
+			await queryClient.cancelQueries({ queryKey: ["content", collection, id] });
 			recordWriteRevision(id, publishedItem);
 			// A selection the preceding save sent is in no cached page yet, so the
 			// entry is read again instead of keeping the pages from before it.
