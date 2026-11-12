@@ -115,6 +115,31 @@ export function screenshotRoot(resultsDir, label, profileId) {
 	return join(resultsDir, label === "compare" ? "screenshots-compare" : "screenshots", profileId);
 }
 
+/**
+ * Build output and bundle composition. They are seconds of synchronous work,
+ * so they run once the server is closed: blocking the event loop that long
+ * while keep-alive connections to the server are pooled lets the server close
+ * them unnoticed, and the next request fails with "other side closed".
+ */
+function measureBuild(ctx, site, result) {
+	try {
+		result.build = measureBuildOutput(site, ctx.dirs.scratch);
+		ctx.log(
+			`  build: server ${(result.build.server.gzipBytes / 1024).toFixed(0)} KiB gzip${result.initialAdminJs ? `, admin initial JS ${(result.initialAdminJs.gzipBytes / 1024).toFixed(0)} KiB gzip` : ""}`,
+		);
+	} catch (error) {
+		result.errors.push({ measurement: "build output", error: describeError(error) });
+	}
+	try {
+		result.bundleComposition = {
+			adminInitialJs: adminComposition(site, result.initialAdminJs?.urls ?? [], ctx.workspace),
+			server: serverComposition(site, ctx.workspace),
+		};
+	} catch (error) {
+		result.errors.push({ measurement: "bundle composition", error: describeError(error) });
+	}
+}
+
 export async function runProfile(ctx) {
 	const { browser, profile, workspace, options, log, resultsDir } = ctx;
 	const shots = screenshotRoot(resultsDir, ctx.label, profile.id);
@@ -169,20 +194,7 @@ export async function runProfile(ctx) {
 	};
 
 	try {
-		result.build = measureBuildOutput(site, ctx.dirs.scratch);
 		result.initialAdminJs = await measureInitialAdminJs(site, cookies);
-		log(
-			`  build: server ${(result.build.server.gzipBytes / 1024).toFixed(0)} KiB gzip, admin initial JS ${(result.initialAdminJs.gzipBytes / 1024).toFixed(0)} KiB gzip`,
-		);
-		try {
-			result.bundleComposition = {
-				adminInitialJs: adminComposition(site, result.initialAdminJs.urls ?? [], workspace),
-				server: serverComposition(site, workspace),
-			};
-		} catch (error) {
-			result.errors.push({ measurement: "bundle composition", error: describeError(error) });
-		}
-
 		const targets = filterTargets(discoverTargets(site, prepared), options.only);
 		result.selected.screens = targets.length * options.viewports.length;
 		const passCache = new Map();
@@ -332,8 +344,9 @@ export async function runProfile(ctx) {
 			examples: [...new Set(site.serverErrors)].slice(0, 8),
 		};
 		result.failedResponses = failedResponses(result, site.origin);
-		result.seconds = Math.round((Date.now() - startedAt) / 1000);
 		await site.close();
+		measureBuild(ctx, site, result);
+		result.seconds = Math.round((Date.now() - startedAt) / 1000);
 	}
 	return result;
 }
