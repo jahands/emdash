@@ -7,39 +7,44 @@ export interface ArchiveGroup {
 }
 
 /**
- * Group published entry counts per UTC month (`YYYY-MM`, newest first) for
- * the Archives widget.
+ * Group published entry counts by month or year in the server's local time
+ * zone for the Archives widget. Groups keep the order of their first bucket,
+ * so buckets ordered newest first give the newest group first.
+ *
+ * Every entry counted in a bucket falls in the same local month as
+ * `new Date(bucket)`; see `getPublishedDateBuckets`.
  */
-export function groupPublishedMonths(
-	months: ReadonlyArray<{ month: string; count: number }>,
+export function groupPublishedDateBuckets(
+	buckets: ReadonlyArray<{ bucket: string; count: number }>,
 	options: { type?: ArchiveGroupType; limit?: number } = {},
 ): ArchiveGroup[] {
 	const type = options.type ?? "monthly";
 	const limit = options.limit ?? 12;
-	const archives = new Map<string, { year: string; month: string; count: number }>();
+	const archives = new Map<string, { date: Date; count: number; url: string }>();
 
-	for (const { month: key, count } of months) {
-		const year = key.slice(0, 4);
-		const month = key.slice(5, 7);
-		const groupKey = type === "yearly" ? year : key;
-		const existing = archives.get(groupKey);
+	for (const { bucket, count } of buckets) {
+		const date = new Date(bucket);
+		if (Number.isNaN(date.getTime())) continue;
+
+		const year = date.getFullYear();
+		const month = (date.getMonth() + 1).toString().padStart(2, "0");
+		const key = type === "yearly" ? `${year}` : `${year}-${month}`;
+		const url = type === "yearly" ? `/archives/${year}` : `/archives/${year}/${month}`;
+
+		const existing = archives.get(key);
 		if (existing) {
 			existing.count += count;
 		} else {
-			archives.set(groupKey, { year, month, count });
+			archives.set(key, { date, count, url });
 		}
 	}
 
-	return [...archives.values()].slice(0, limit).map(({ year, month, count }) =>
-		type === "yearly"
-			? { label: year, count, url: `/archives/${year}` }
-			: {
-					label: new Date(Date.UTC(Number(year), Number(month) - 1, 1)).toLocaleDateString(
-						"en-US",
-						{ year: "numeric", month: "long", timeZone: "UTC" },
-					),
-					count,
-					url: `/archives/${year}/${month}`,
-				},
-	);
+	return [...archives.values()].slice(0, limit).map(({ date, count, url }) => ({
+		label:
+			type === "yearly"
+				? `${date.getFullYear()}`
+				: date.toLocaleDateString("en-US", { year: "numeric", month: "long" }),
+		count,
+		url,
+	}));
 }

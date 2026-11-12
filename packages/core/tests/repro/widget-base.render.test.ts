@@ -12,7 +12,7 @@ vi.mock("../../src/taxonomies/index.js", () => ({
 }));
 
 vi.mock("../../src/query.js", () => ({
-	getPublishedMonths: async () => ({ months: [{ month: "2026-03", count: 1 }] }),
+	getPublishedDateBuckets: async () => ({ buckets: [{ bucket: "2026-03-15", count: 1 }] }),
 	getEmDashCollection: async () => ({
 		entries: [{ id: "hello-world", data: { title: "Hello World" } }],
 	}),

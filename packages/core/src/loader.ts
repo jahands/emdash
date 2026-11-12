@@ -1741,21 +1741,61 @@ export async function getDb(): Promise<Kysely<Database>> {
 	return dbInstance;
 }
 
+/** `MM-DD` of each month's last day, and February 28th, which ends most Februaries. */
+const MONTH_LAST_DAYS = [
+	"01-31",
+	"02-28",
+	"02-29",
+	"03-31",
+	"04-30",
+	"05-31",
+	"06-30",
+	"07-31",
+	"08-31",
+	"09-30",
+	"10-31",
+	"11-30",
+	"12-31",
+];
+
 /**
- * @internal Published entry counts per `YYYY-MM` prefix of `published_at`,
- * which stores canonical UTC timestamps, so each prefix is a UTC month.
+ * @internal Published entry counts in buckets of `published_at` that each lie
+ * within one calendar month in every time zone, ordered by each bucket's
+ * latest `published_at`, newest first.
+ *
+ * A canonical UTC timestamp (`YYYY-MM-DDTHH:MM:SS[.sss]Z`) is bucketed by its
+ * UTC day. Every UTC offset is under a day, so a day other than the first or
+ * last of its month is in the same local month everywhere. Those two days can
+ * hold a local month boundary, so they are bucketed by UTC second instead;
+ * offsets and their transitions fall on whole seconds. Any other value is its
+ * own bucket. Each bucket parses with `new Date()` to an instant in it. SQLite's
+ * `LIKE` ignores the case of `T` and `Z`, as `new Date()` does.
  */
-export async function loadPublishedMonths(type: string, locale?: string) {
+export async function loadPublishedDateBuckets(type: string, locale?: string) {
 	const tableName = getTableName(type);
 	const db = await getDb();
-	const result = await sql<{ month: string | null; count: number | string | bigint }>`
-		SELECT substr(published_at, 1, 7) AS month, COUNT(*) AS count
-		FROM ${sql.ref(tableName)}
-		WHERE deleted_at IS NULL
-		AND ${buildStatusCondition(db, "published")}
-		AND published_at IS NOT NULL
-		${locale ? sql`AND ${localeMatches("locale", locale)}` : sql``}
-		GROUP BY substr(published_at, 1, 7)
+	const result = await sql<{ bucket: string; count: number | string | bigint }>`
+		SELECT bucket, COUNT(*) AS count
+		FROM (
+			SELECT published_at, CASE
+				WHEN NOT (
+					published_at LIKE '____-__-__T__:__:__Z'
+					OR published_at LIKE '____-__-__T__:__:__.___Z'
+				) THEN published_at
+				WHEN substr(published_at, 9, 2) BETWEEN '02' AND '27' THEN substr(published_at, 1, 10)
+				WHEN substr(published_at, 9, 2) = '01'
+					OR substr(published_at, 6, 5) IN (${sql.join(MONTH_LAST_DAYS)})
+				THEN substr(published_at, 1, 19) || 'Z'
+				ELSE substr(published_at, 1, 10)
+			END AS bucket
+			FROM ${sql.ref(tableName)}
+			WHERE deleted_at IS NULL
+			AND ${buildStatusCondition(db, "published")}
+			AND published_at IS NOT NULL
+			${locale ? sql`AND ${localeMatches("locale", locale)}` : sql``}
+		) AS published
+		GROUP BY bucket
+		ORDER BY MAX(published_at) DESC
 	`.execute(db);
 	return result.rows;
 }

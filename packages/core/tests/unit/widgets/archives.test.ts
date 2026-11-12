@@ -1,53 +1,81 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { groupPublishedMonths } from "../../../src/widgets/archives.js";
+import { groupPublishedDateBuckets } from "../../../src/widgets/archives.js";
 
-const months = [
-	{ month: "2026-07", count: 3 },
-	{ month: "2026-01", count: 2 },
-	{ month: "2025-12", count: 4 },
+const buckets = [
+	{ bucket: "2026-07-15", count: 3 },
+	{ bucket: "2026-01-20", count: 1 },
+	{ bucket: "2026-01-01T00:30:00Z", count: 1 },
+	{ bucket: "2025-12-15", count: 4 },
 ];
 
-describe("groupPublishedMonths", () => {
-	afterEach(() => vi.restoreAllMocks());
+const originalTimeZone = process.env.TZ;
 
-	it("labels and links each month in order", () => {
-		expect(groupPublishedMonths(months)).toEqual([
+describe("groupPublishedDateBuckets", () => {
+	beforeEach(() => {
+		process.env.TZ = "UTC";
+	});
+
+	afterEach(() => {
+		vi.restoreAllMocks();
+		if (originalTimeZone === undefined) delete process.env.TZ;
+		else process.env.TZ = originalTimeZone;
+	});
+
+	it("labels and links each month in order, summing its buckets", () => {
+		expect(groupPublishedDateBuckets(buckets)).toEqual([
 			{ label: "July 2026", count: 3, url: "/archives/2026/07" },
 			{ label: "January 2026", count: 2, url: "/archives/2026/01" },
 			{ label: "December 2025", count: 4, url: "/archives/2025/12" },
 		]);
 	});
 
-	it("labels a month by UTC, whatever the server timezone", () => {
-		const format = vi.spyOn(Date.prototype, "toLocaleDateString");
-		expect(groupPublishedMonths([{ month: "2026-03", count: 1 }])[0]?.label).toBe("March 2026");
-		expect(format).toHaveBeenCalledWith("en-US", expect.objectContaining({ timeZone: "UTC" }));
+	it("groups by the server's local time zone", () => {
+		process.env.TZ = "America/New_York";
+		expect(groupPublishedDateBuckets(buckets)).toEqual([
+			{ label: "July 2026", count: 3, url: "/archives/2026/07" },
+			{ label: "January 2026", count: 1, url: "/archives/2026/01" },
+			{ label: "December 2025", count: 5, url: "/archives/2025/12" },
+		]);
+		expect(groupPublishedDateBuckets(buckets, { type: "yearly" })).toEqual([
+			{ label: "2026", count: 4, url: "/archives/2026" },
+			{ label: "2025", count: 5, url: "/archives/2025" },
+		]);
 	});
 
-	it("sums months into years when type is yearly", () => {
-		expect(groupPublishedMonths(months, { type: "yearly" })).toEqual([
+	it("sums buckets into years when type is yearly", () => {
+		expect(groupPublishedDateBuckets(buckets, { type: "yearly" })).toEqual([
 			{ label: "2026", count: 5, url: "/archives/2026" },
 			{ label: "2025", count: 4, url: "/archives/2025" },
 		]);
 	});
 
 	it("keeps the newest groups up to the limit", () => {
-		expect(groupPublishedMonths(months, { limit: 2 }).map((group) => group.url)).toEqual([
+		expect(groupPublishedDateBuckets(buckets, { limit: 2 }).map((group) => group.url)).toEqual([
 			"/archives/2026/07",
 			"/archives/2026/01",
 		]);
-		expect(groupPublishedMonths(months, { type: "yearly", limit: 1 })).toEqual([
+		expect(groupPublishedDateBuckets(buckets, { type: "yearly", limit: 1 })).toEqual([
 			{ label: "2026", count: 5, url: "/archives/2026" },
 		]);
 	});
 
+	it("skips buckets that aren't dates", () => {
+		expect(
+			groupPublishedDateBuckets([
+				{ bucket: "", count: 1 },
+				{ bucket: "not-a-date", count: 2 },
+				{ bucket: "2026-05-01T12:00:00Z", count: 1 },
+			]),
+		).toEqual([{ label: "May 2026", count: 1, url: "/archives/2026/05" }]);
+	});
+
 	it("formats only the displayed months", () => {
 		const format = vi.spyOn(Date.prototype, "toLocaleDateString");
-		groupPublishedMonths(months, { limit: 1 });
+		groupPublishedDateBuckets(buckets, { limit: 1 });
 		expect(format).toHaveBeenCalledTimes(1);
 		format.mockClear();
-		expect(groupPublishedMonths(months, { limit: 0 })).toEqual([]);
+		expect(groupPublishedDateBuckets(buckets, { limit: 0 })).toEqual([]);
 		expect(format).not.toHaveBeenCalled();
 	});
 });

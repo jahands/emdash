@@ -44,7 +44,7 @@ import {
 	FOLDED_BYLINES_EXIST,
 	FOLDED_BYLINE_FIELDS_VERSION,
 	FOLDED_TERMS,
-	loadPublishedMonths,
+	loadPublishedDateBuckets,
 	type WhereRange,
 	type WhereValue,
 } from "./loader.js";
@@ -309,56 +309,52 @@ export interface CacheHint {
 	lastModified?: Date;
 }
 
-/** Published entries in one UTC month. */
-interface PublishedMonth {
-	/** `YYYY-MM` */
-	month: string;
+/** Published entries whose `published_at` falls in one bucket. */
+interface PublishedDateBucket {
+	/** A `published_at` prefix or value; `new Date(bucket)` is an instant in it. */
+	bucket: string;
 	count: number;
 }
 
-interface PublishedMonthsResult {
-	months: PublishedMonth[];
+interface PublishedDateBucketsResult {
+	buckets: PublishedDateBucket[];
 	cacheHint: CacheHint;
 	error?: Error;
 }
 
-const PUBLISHED_MONTH_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])$/;
-
-/** @internal Published entry counts per UTC month for the Archives widget, newest first. */
-export async function getPublishedMonths(
+/**
+ * @internal Published entry counts for the Archives widget, in buckets that
+ * each lie within one calendar month in every time zone, newest first. See
+ * `loadPublishedDateBuckets`.
+ */
+export async function getPublishedDateBuckets(
 	type: string,
 	options?: { locale?: string },
-): Promise<PublishedMonthsResult> {
+): Promise<PublishedDateBucketsResult> {
 	const locale = effectiveLocaleKey(options) || undefined;
-	const key = `publishedMonths:${JSON.stringify([type, locale])}`;
+	const key = `publishedDateBuckets:${JSON.stringify([type, locale])}`;
 	try {
 		return await requestCached(key, () =>
-			cachedQuery<PublishedMonthsResult>({
+			cachedQuery<PublishedDateBucketsResult>({
 				namespace: contentCacheNamespaces(type),
 				key,
 				load: async () => {
-					const rows = await loadPublishedMonths(type, locale);
-					const months: PublishedMonth[] = [];
-					for (const row of rows) {
-						if (typeof row.month === "string" && PUBLISHED_MONTH_PATTERN.test(row.month)) {
-							months.push({ month: row.month, count: Number(row.count) });
-						}
-					}
-					months.sort((a, b) => (a.month < b.month ? 1 : a.month > b.month ? -1 : 0));
-					return { months, cacheHint: { tags: [type] } };
+					const rows = await loadPublishedDateBuckets(type, locale);
+					const buckets = rows.map((row) => ({ bucket: row.bucket, count: Number(row.count) }));
+					return { buckets, cacheHint: { tags: [type] } };
 				},
 			}),
 		);
 	} catch (error) {
 		return {
-			months: [],
+			buckets: [],
 			cacheHint: {},
 			error:
 				isMissingTableError(error) || isMissingColumnError(error)
 					? undefined
 					: error instanceof Error
 						? error
-						: new Error("Failed to load publication months"),
+						: new Error("Failed to load publication dates"),
 		};
 	}
 }
