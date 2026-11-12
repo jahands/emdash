@@ -93,6 +93,10 @@ emdash({
 
 With `node({ mode: "middleware" })`, your own server sends the responses, so EmDash does not compress them. Add compression in that server, for example with Express's [`compression`](https://expressjs.com/en/resources/middleware/compression.html) middleware.
 
+## Page caching
+
+Without a route cache, every on-demand page renders again for each request. EmDash sends these pages without a `Cache-Control` header, so browsers and CDNs fetch them again on each visit. To serve repeat visits from memory, register Astro's `memoryCache()` provider and give each public route a rule. EmDash invalidates cached pages when content is published. [Route Caching](/deployment/route-caching/) covers the configuration and what stays stale until a page expires. Each Node.js process keeps its own cache, so read [Node.js with `memoryCache()`](/deployment/route-caching/#nodejs-with-memorycache) before you run several processes.
+
 ## Build and run
 
 1. Build the project:
