@@ -2,6 +2,8 @@ import react from "@vitejs/plugin-react";
 import { playwright } from "@vitest/browser-playwright";
 import { configDefaults, defineConfig } from "vitest/config";
 
+import { testMediaServer } from "./tests/media-server.js";
+
 // Pin a non-UTC timezone so timestamp-parsing tests catch local-vs-UTC bugs.
 const contextOptions = { timezoneId: "America/New_York" };
 const touchScreenTests = "tests/**/*.touch.test.{ts,tsx}";
@@ -37,6 +39,7 @@ export default defineConfig({
 		],
 	},
 	plugins: [
+		testMediaServer(),
 		react({
 			babel: {
 				plugins: [

@@ -16,13 +16,16 @@ import * as React from "react";
 
 import {
 	canonicalMediaProviderId,
-	fallbackToOriginalThumbnail,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
 	getMediaThumbnailUrl,
 	localMediaFileUrl,
 } from "../../lib/media-utils.js";
-import { useMediaItem, useRenditionWidth } from "../../lib/use-media-rendition.js";
+import {
+	useMediaItem,
+	useRenditionFallback,
+	useRenditionWidth,
+} from "../../lib/use-media-rendition.js";
 import type { GalleryImage } from "../../portable-text/convert.js";
 import { GalleryNode } from "../../portable-text/schema.js";
 import { PORTABLE_TEXT_KEY_ATTR } from "./portableTextIdentity.js";
@@ -88,16 +91,17 @@ export function GalleryPreviewImage({
 	});
 	const fileUrl = galleryImageUrl(image);
 	const previewUrl = getMediaPreviewUrl(fileUrl, currentMedia?.contentHash);
-	let src: string | undefined;
-	if (mediaId === null || mediaFailed) src = fileUrl;
+	let rendition: string | undefined;
+	if (mediaId === null || mediaFailed) rendition = fileUrl;
 	else if (currentMedia && renditionWidth) {
-		src = getMediaThumbnailUrl(
+		rendition = getMediaThumbnailUrl(
 			fileUrl,
 			currentMedia.mimeType,
 			renditionWidth,
 			currentMedia.contentHash,
 		);
 	}
+	const [src, handleRenditionError] = useRenditionFallback(rendition, previewUrl);
 	return (
 		<img
 			ref={imageRef}
@@ -107,9 +111,7 @@ export function GalleryPreviewImage({
 			style={{ objectPosition: getMediaObjectPosition(image) }}
 			loading="lazy"
 			decoding="async"
-			onError={(event) => {
-				if (src !== previewUrl) fallbackToOriginalThumbnail(event.currentTarget, previewUrl);
-			}}
+			onError={handleRenditionError}
 			draggable={false}
 		/>
 	);

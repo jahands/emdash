@@ -64,3 +64,23 @@ export function useRenditionWidth<T extends HTMLElement>(options: {
 
 	return [setElement, width];
 }
+
+/**
+ * The `src` to show for an image that is preferably shown as `rendition`: the
+ * rendition, or `original` once a rendition of that file version has failed to
+ * load, for every size asked for after it. Pass the returned handler to the
+ * image's `onError`; it returns false when there is nothing left to try.
+ */
+export function useRenditionFallback(
+	rendition: string | undefined,
+	original: string | undefined,
+): [src: string | undefined, handleError: () => boolean] {
+	const [failedOriginal, setFailedOriginal] = React.useState<string>();
+	const src = original !== undefined && failedOriginal === original ? original : rendition;
+	const handleError = () => {
+		if (src === undefined || original === undefined || src === original) return false;
+		setFailedOriginal(original);
+		return true;
+	};
+	return [src, handleError];
+}

@@ -361,7 +361,7 @@ describe("SeoImageField", () => {
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			Response.json({
 				success: true,
-				data: { item: { id, storageKey: "objects/unserved.jpg", status: "ready" } },
+				data: { item: { id, storageKey: "missing/unserved.jpg", status: "ready" } },
 			}),
 		);
 		const onChange = vi.fn();
@@ -464,7 +464,7 @@ describe("SeoImageField", () => {
 	});
 
 	it("says when the image can't be loaded and shows its actions", async () => {
-		const screen = await render(<Field image="/_emdash/api/media/file/deleted.png" />);
+		const screen = await render(<Field image="/_emdash/api/media/file/missing/deleted.png" />);
 
 		await expect.element(screen.getByText("Image not found", { exact: true })).toBeVisible();
 		await movePointerOffPreview(screen);

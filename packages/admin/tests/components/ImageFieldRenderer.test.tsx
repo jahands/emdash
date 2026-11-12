@@ -334,6 +334,31 @@ describe("ImageFieldRenderer", () => {
 		);
 	});
 
+	it("shows the original when the asset changes on a site whose renditions fail", async () => {
+		const original = "/_emdash/api/media/file/no-renditions/featured-image.jpg";
+		const screen = await render(
+			<ImageFieldRenderer
+				label="Featured image"
+				value={{ ...selectedImage, meta: { storageKey: "no-renditions/featured-image.jpg" } }}
+				onChange={vi.fn()}
+				variant="featured"
+			/>,
+		);
+		await vi.waitFor(() =>
+			expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(original),
+		);
+
+		await screen.getByRole("button", { name: "Edit asset" }).click();
+		await screen.getByRole("button", { name: "Refresh original asset" }).click();
+
+		await vi.waitFor(() =>
+			expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(
+				`${original}?_emdash_media=sha256%3Areplaced-original`,
+			),
+		);
+		expect(screen.container).not.toHaveTextContent("Image not found");
+	});
+
 	it("falls back cleanly when optional featured-image metadata is missing", async () => {
 		vi.mocked(fetchMediaItemBatched).mockRejectedValue(
 			new ApiResponseError(404, "NOT_FOUND", "Media item not found"),
@@ -341,7 +366,7 @@ describe("ImageFieldRenderer", () => {
 		const screen = await render(
 			<ImageFieldRenderer
 				label="Featured image"
-				value={{ id: "legacy", src: "https://example.com/legacy.jpg" }}
+				value={{ id: "legacy", src: "/_emdash/api/media/file/legacy.jpg" }}
 				onChange={vi.fn()}
 				variant="featured"
 			/>,
@@ -350,7 +375,7 @@ describe("ImageFieldRenderer", () => {
 		await expect.element(screen.getByText("Selected image")).toBeVisible();
 		await vi.waitFor(() =>
 			expect(shownFile(screen.container.querySelector("img"))).toBe(
-				"https://example.com/legacy.jpg",
+				"/_emdash/api/media/file/legacy.jpg",
 			),
 		);
 		expect(screen.container.textContent).not.toContain("×");
@@ -470,15 +495,11 @@ describe("ImageFieldRenderer", () => {
 		const screen = await render(
 			<ImageFieldRenderer
 				label="Featured image"
-				value={selectedImage}
+				value={{ ...selectedImage, meta: { storageKey: "missing/featured-image.jpg" } }}
 				onChange={vi.fn()}
 				variant="featured"
 			/>,
 		);
-		const image = screen.container.querySelector("img");
-		expect(image).not.toBeNull();
-
-		image!.dispatchEvent(new Event("error"));
 
 		await expect.element(screen.getByText("Image not found")).toBeVisible();
 		await expect.element(screen.getByText("notes-on-simplicity.jpg")).toBeVisible();

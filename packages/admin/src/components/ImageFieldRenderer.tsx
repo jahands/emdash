@@ -24,7 +24,6 @@ import * as React from "react";
 import type { MediaItem, MediaUpdateInput } from "../lib/api";
 import {
 	canonicalMediaProviderId,
-	fallbackToOriginalThumbnail,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
 	getMediaThumbnailUrl,
@@ -32,7 +31,11 @@ import {
 	metaString,
 	syncMediaCaption,
 } from "../lib/media-utils.js";
-import { useMediaItem, useRenditionWidth } from "../lib/use-media-rendition.js";
+import {
+	useMediaItem,
+	useRenditionFallback,
+	useRenditionWidth,
+} from "../lib/use-media-rendition.js";
 import { cn } from "../lib/utils.js";
 import { DISCLOSURE_EASE, DISCLOSURE_MS, IMAGE_EDGE, ROW_BUTTON } from "./block-field-styles.js";
 import { FieldHelpLabel } from "./FieldHelpLabel.js";
@@ -194,18 +197,14 @@ function useImageFieldRendition({
 		sourceWidth: media?.width ?? value?.width,
 		sourceHeight: media?.height ?? value?.height,
 	});
-	let src: string | undefined;
+	let rendition: string | undefined;
 	if (storedUrl && !waiting) {
-		if (!mimeType) src = previewUrl;
-		else if (width) src = getMediaThumbnailUrl(storedUrl, mimeType, width, contentHash);
+		if (!mimeType) rendition = previewUrl;
+		else if (width) rendition = getMediaThumbnailUrl(storedUrl, mimeType, width, contentHash);
 	}
-	const handleError = (event: React.SyntheticEvent<HTMLImageElement>) => {
-		const image = event.currentTarget;
-		if (previewUrl && src !== previewUrl && !image.dataset.thumbFallback) {
-			fallbackToOriginalThumbnail(image, previewUrl);
-		} else {
-			onBroken();
-		}
+	const [src, handleRenditionError] = useRenditionFallback(rendition, previewUrl);
+	const handleError = () => {
+		if (!handleRenditionError()) onBroken();
 	};
 	return [ref, src, handleError] as const;
 }

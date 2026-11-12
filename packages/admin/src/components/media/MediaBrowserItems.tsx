@@ -5,7 +5,6 @@ import * as React from "react";
 
 import type { MediaFolder, MediaItem } from "../../lib/api/media.js";
 import {
-	fallbackToOriginalThumbnail,
 	formatFileSize,
 	getFileIcon,
 	getMediaObjectPosition,
@@ -13,7 +12,7 @@ import {
 	getMediaThumbnailUrl,
 	renditionWidthFor,
 } from "../../lib/media-utils.js";
-import { useRenditionWidth } from "../../lib/use-media-rendition.js";
+import { useRenditionFallback, useRenditionWidth } from "../../lib/use-media-rendition.js";
 import { cn } from "../../lib/utils.js";
 import type { MediaUploadJob } from "./useMediaUploadQueue.js";
 
@@ -68,12 +67,16 @@ export function MediaBrowserItem({
 		sourceWidth: item.width,
 		sourceHeight: item.height,
 	});
-	const imageUrl =
+	const renditionUrl =
 		needsDimensions && onDimensionsLoaded
 			? previewUrl
 			: renditionWidth
 				? getMediaThumbnailUrl(item.url, item.mimeType, renditionWidth, item.contentHash)
 				: undefined;
+	const [imageUrl, handleRenditionError] = useRenditionFallback(
+		renditionUrl,
+		previewUrl || undefined,
+	);
 
 	const preview = hasVisualPreview ? (
 		<img
@@ -92,7 +95,7 @@ export function MediaBrowserItem({
 					onDimensionsLoaded(image.naturalWidth, image.naturalHeight);
 				}
 			}}
-			onError={(event) => fallbackToOriginalThumbnail(event.currentTarget, previewUrl)}
+			onError={handleRenditionError}
 		/>
 	) : (
 		<div className="flex h-full w-full items-center justify-center bg-kumo-tint">

@@ -14,11 +14,14 @@ import * as React from "react";
 import { useStableCallback } from "../../lib/hooks";
 import {
 	canonicalMediaProviderId,
-	fallbackToOriginalThumbnail,
 	getMediaPreviewUrl,
 	getMediaThumbnailUrl,
 } from "../../lib/media-utils.js";
-import { useMediaItem, useRenditionWidth } from "../../lib/use-media-rendition.js";
+import {
+	useMediaItem,
+	useRenditionFallback,
+	useRenditionWidth,
+} from "../../lib/use-media-rendition.js";
 import { cn } from "../../lib/utils";
 import { ImageNode } from "../../portable-text/schema.js";
 import type { ImageAttributes, ImagePanelAttributes } from "./ImageDetailPanel";
@@ -278,17 +281,18 @@ function ImageNodeView({
 	// A local image waits for its media item, so it is requested once, at its current version and size.
 	const fileSrc = currentMedia?.url || storedSrc;
 	const previewSrc = getMediaPreviewUrl(fileSrc, currentMedia?.contentHash);
-	let displaySrc: string | undefined;
-	if (mediaId === null || mediaFailed) displaySrc = storedSrc;
-	else if (currentMedia && !(renderWidth && renderHeight)) displaySrc = previewSrc;
+	let rendition: string | undefined;
+	if (mediaId === null || mediaFailed) rendition = storedSrc;
+	else if (currentMedia && !(renderWidth && renderHeight)) rendition = previewSrc;
 	else if (currentMedia && renditionWidth) {
-		displaySrc = getMediaThumbnailUrl(
+		rendition = getMediaThumbnailUrl(
 			fileSrc,
 			currentMedia.mimeType,
 			renditionWidth,
 			currentMedia.contentHash,
 		);
 	}
+	const [displaySrc, handleRenditionError] = useRenditionFallback(rendition, previewSrc);
 
 	return (
 		<NodeViewWrapper
@@ -318,10 +322,7 @@ function ImageNodeView({
 						aspectRatio:
 							renderWidth && renderHeight ? `${renderWidth} / ${renderHeight}` : undefined,
 					}}
-					onError={(event) => {
-						if (displaySrc !== previewSrc)
-							fallbackToOriginalThumbnail(event.currentTarget, previewSrc);
-					}}
+					onError={handleRenditionError}
 					draggable={false}
 				/>
 
