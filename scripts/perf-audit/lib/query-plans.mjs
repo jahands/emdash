@@ -90,13 +90,17 @@ export function planFlags(plan, tableRows, threshold = LARGE_TABLE_ROWS) {
  */
 export async function explainQueries(site, { cookies, requests, threshold = LARGE_TABLE_ROWS }) {
 	const captured = new Map();
+	const failed = [];
 	for (const request of requests) {
 		const phase = `query-plan-${++counter}`;
 		const { result } = await timedRequest(site, request.path, {
 			cookies: request.auth ? cookies : null,
 			phase,
 		});
-		if (result.status >= 400) continue;
+		if (result.status >= 400) {
+			failed.push({ kind: request.kind, request: request.path, error: `status ${result.status}` });
+			continue;
+		}
 		for (const event of site.queryEvents.filter((e) => e.phase === phase)) {
 			if (!READ_SQL.test(event.sql)) continue;
 			const sql = normalizeSql(event.sql);
@@ -108,7 +112,7 @@ export async function explainQueries(site, { cookies, requests, threshold = LARG
 	const { Client } = loadPg();
 	const client = new Client({ connectionString: site.directPostgresUrl });
 	await client.connect();
-	const out = [];
+	const out = [...failed];
 	try {
 		const tableRows = Object.fromEntries(
 			(

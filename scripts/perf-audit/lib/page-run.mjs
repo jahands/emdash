@@ -286,6 +286,16 @@ async function installHold(context, page, substring, screenshotPath, notes, afte
 	);
 }
 
+/** Runs in the page: whether the screen shows what `expected` asks for. */
+export function renderedContent(expected) {
+	return {
+		expected,
+		found: expected?.selector ? document.querySelector(expected.selector) !== null : null,
+		booting: document.getElementById("emdash-boot-loader") !== null,
+		images: document.images.length,
+	};
+}
+
 export async function measurePage({
 	browser,
 	site,
@@ -330,6 +340,7 @@ export async function measurePage({
 		const throttled = options.network || options.cpu > 1 || options.slowApi > 0 || options.hold;
 		const settle = await waitForSettle(page, network, { maxMs: throttled ? 180_000 : 25_000 });
 		const probe = await page.evaluate(collectProbe);
+		const content = await page.evaluate(renderedContent, target.expect ?? null);
 		if (options.screenshots) {
 			mkdirSync(dirname(paths.screenshot), { recursive: true });
 			await page.screenshot({ path: paths.screenshot });
@@ -368,6 +379,7 @@ export async function measurePage({
 			finalUrl: finalUrl.replace(site.origin, ""),
 			status: response?.status() ?? null,
 			redirected: finalUrl.replace(site.origin, "") !== target.path,
+			content,
 			settle,
 			cls: Math.round(cls.value * 10000) / 10000,
 			clsAttribution: cls.attribution.slice(0, 5),

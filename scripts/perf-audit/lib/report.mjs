@@ -146,6 +146,19 @@ export function renderSummary(run) {
 		lines.push(table(["Profile", "Package", "Finding"], findings));
 	}
 
+	if (run.failures?.length > 0) {
+		lines.push("## Failed checks", "");
+		lines.push(
+			"Measurements that failed or measured a broken screen. The run exits non-zero, and numbers from these measurements are not trustworthy.\n",
+		);
+		lines.push(
+			table(
+				["Profile", "Check", "Where", "Detail"],
+				run.failures.map((f) => [f.profile, f.check, f.where, f.detail]),
+			),
+		);
+	}
+
 	if (run.budgetFailures.length > 0) {
 		lines.push("## Budget failures", "");
 		lines.push(
@@ -732,7 +745,7 @@ export function renderSummary(run) {
 							q.error ? "error" : `${q.executionMs} ms`,
 							q.error ??
 								(q.flags.length > 0 ? `**${q.flags.map(describePlanFlag).join("; ")}**` : "-"),
-							shortSql(q.sql),
+							q.sql ? shortSql(q.sql) : "-",
 						]),
 				),
 			),

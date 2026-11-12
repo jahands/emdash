@@ -35,8 +35,19 @@ export const OTHER_ADMIN_SCREENS = [
 	["WordPress import", "/import/wordpress"],
 ];
 
-const admin = (name, path) => ({ name, path: `/_emdash/admin${path}`, kind: "admin" });
-const pub = (name, path) => ({ name, path, kind: "public" });
+/**
+ * What a screen must show once it settles to count as rendered: signed-in
+ * admin screens render inside the shell's `<main>`, the login screen has a
+ * heading, and public pages use the templates' `<main>` landmark.
+ */
+const SHELL = { selector: "main" };
+const admin = (name, path) => ({
+	name,
+	path: `/_emdash/admin${path}`,
+	kind: "admin",
+	expect: SHELL,
+});
+const pub = (name, path, expect = { selector: "main" }) => ({ name, path, kind: "public", expect });
 
 const PUBLIC_ROUTES = {
 	blog: { entry: (slug) => `/posts/${slug}`, archive: (term) => `/category/${term}` },
@@ -59,7 +70,7 @@ export function buildTargets({
 	firstPageSlug,
 }) {
 	const targets = [
-		{ ...admin("admin login (signed out)", "/login"), signedOut: true },
+		{ ...admin("admin login (signed out)", "/login"), signedOut: true, expect: { selector: "h1" } },
 		admin("admin dashboard", "/"),
 	];
 	for (const slug of collections) targets.push(admin(`admin list ${slug}`, `/content/${slug}`));
@@ -86,7 +97,12 @@ export function buildTargets({
 	const routes = PUBLIC_ROUTES[template];
 	targets.push(pub("public home", "/"));
 	if (heaviest && routes?.entry)
-		targets.push(pub("public entry (most images)", routes.entry(heaviest.slug)));
+		targets.push(
+			pub("public entry (most images)", routes.entry(heaviest.slug), {
+				selector: "main",
+				minImages: 1,
+			}),
+		);
 	else if (firstPageSlug && routes?.entry)
 		targets.push(pub("public entry", routes.entry(firstPageSlug)));
 	if (term && routes?.archive) targets.push(pub(`public archive ${term}`, routes.archive(term)));

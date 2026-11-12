@@ -12,6 +12,7 @@ import { adminComposition, serverComposition } from "./bundle-composition.mjs";
 import { burstPlan, measureColdBursts } from "./cold-burst.mjs";
 import { measureColdStarts } from "./cold-start.mjs";
 import { failedResponses } from "./evaluate.mjs";
+import { pageProblems } from "./failures.mjs";
 import { RestoreLedger } from "./ledger.mjs";
 import { measurePage } from "./page-run.mjs";
 import { prepareProfile, SEEDED } from "./prepare.mjs";
@@ -21,6 +22,16 @@ import { planOwnerEdits } from "./seed.mjs";
 import { eventsForPhase, serverPass } from "./server-pass.mjs";
 import { buildTargets, filterTargets } from "./targets.mjs";
 import { measureWrites } from "./writes.mjs";
+
+/** An error's message with its cause, which is where `fetch failed` keeps the reason. */
+export function describeError(error) {
+	const cause = error?.cause;
+	const reason = cause
+		? ` (cause: ${cause.code ?? ""}${cause.code ? " " : ""}${cause.message ?? cause})`
+		: "";
+	const [first, ...rest] = String(error?.stack ?? error).split("\n");
+	return [`${first}${reason}`, ...rest].join("\n").slice(0, 800);
+}
 
 function slug(text) {
 	return text
@@ -133,6 +144,7 @@ export async function runProfile(ctx) {
 		pages: [],
 		scenarios: [],
 		errors: [],
+		selected: { screens: 0, scenarios: 0, writes: false, queryPlans: false },
 	};
 
 	await fetch(`${site.origin}/`, { headers: { "x-perf-phase": "warm-up" } }).then((r) =>
@@ -168,10 +180,11 @@ export async function runProfile(ctx) {
 				server: serverComposition(site, workspace),
 			};
 		} catch (error) {
-			result.errors.push({ measurement: "bundle composition", error: String(error).slice(0, 800) });
+			result.errors.push({ measurement: "bundle composition", error: describeError(error) });
 		}
 
 		const targets = filterTargets(discoverTargets(site, prepared), options.only);
+		result.selected.screens = targets.length * options.viewports.length;
 		const passCache = new Map();
 		const pixelCache = new Map();
 		for (const viewport of options.viewports) {
@@ -210,7 +223,7 @@ export async function runProfile(ctx) {
 				} catch (error) {
 					result.errors.push({
 						measurement: name,
-						error: String(error?.stack ?? error).slice(0, 800),
+						error: describeError(error),
 					});
 					log(`  ${name}: failed: ${String(error).slice(0, 200)}`);
 					ledger.record(name, { declaredWrites: true });
@@ -233,10 +246,12 @@ export async function runProfile(ctx) {
 				mediaFile: ctx.scenarioUpload,
 				screenshotDir: join(shots, "scenarios"),
 			});
+			result.selected.scenarios = result.scenarios.length;
 		}
 
 		const writeArgs = writeTarget(site, prepared);
 		if (!options.skipWrites && passSelected(options.only, "write") && writeArgs) {
+			result.selected.writes = true;
 			try {
 				await ensureClean("writes");
 				const pass = await measureWrites(site, {
@@ -252,13 +267,14 @@ export async function runProfile(ctx) {
 					);
 				}
 			} catch (error) {
-				result.errors.push({ measurement: "writes", error: String(error).slice(0, 800) });
+				result.errors.push({ measurement: "writes", error: describeError(error) });
 			} finally {
 				ledger.record("writes", { declaredWrites: true });
 			}
 		}
 
 		if (profile.usesPostgres && passSelected(options.only, "plan")) {
+			result.selected.queryPlans = true;
 			try {
 				await ensureClean("query plans");
 				const seed = readSeed(site);
@@ -272,7 +288,7 @@ export async function runProfile(ctx) {
 				const flagged = result.queryPlans.filter((q) => q.flags?.length > 0).length;
 				log(`  query plans: ${result.queryPlans.length} queries explained, ${flagged} flagged`);
 			} catch (error) {
-				result.errors.push({ measurement: "query plans", error: String(error).slice(0, 800) });
+				result.errors.push({ measurement: "query plans", error: describeError(error) });
 			}
 		}
 
@@ -284,7 +300,7 @@ export async function runProfile(ctx) {
 					`  cold start: public ${result.coldStart.publicPage.ttfbMs} ms, admin API ${result.coldStart.adminApi.ttfbMs} ms`,
 				);
 			} catch (error) {
-				result.errors.push({ measurement: "cold start", error: String(error).slice(0, 800) });
+				result.errors.push({ measurement: "cold start", error: describeError(error) });
 			}
 			try {
 				await ensureClean("cold-start burst");
@@ -302,7 +318,7 @@ export async function runProfile(ctx) {
 			} catch (error) {
 				result.errors.push({
 					measurement: "cold-start burst",
-					error: String(error).slice(0, 800),
+					error: describeError(error),
 				});
 			}
 		}
@@ -335,13 +351,16 @@ export async function remeasureProfile(ctx, { pages, coldStart, writes, samples 
 		options: { ...options, reuse: true },
 	});
 	const ledger = new RestoreLedger(SEEDED);
-	const out = { pages: {}, coldStart: [], writes: [] };
+	const out = { pages: {}, coldStart: [], writes: [], errors: [] };
 	const warm = () =>
 		fetch(`${site.origin}/`, { headers: { "x-perf-phase": "warm-up" } }).then((r) =>
 			r.arrayBuffer(),
 		);
 	const ensureClean = async (name) => {
-		await site.ensureRunning();
+		if (await site.ensureRunning()) {
+			out.errors.push({ measurement: name, error: "The server had exited; restarted it." });
+			ledger.record(`server exit before ${name}`, { declaredWrites: true });
+		}
 		if (!ledger.needsRestore()) return;
 		const started = performance.now();
 		await site.stop();
@@ -355,8 +374,11 @@ export async function remeasureProfile(ctx, { pages, coldStart, writes, samples 
 		const targets = discoverTargets(site, prepared);
 		for (const { name, viewport } of pages) {
 			const target = targets.find((t) => t.name === name);
-			if (!target) continue;
 			const key = `${viewport} ${name}`;
+			if (!target) {
+				out.errors.push({ measurement: key, error: "No such screen to measure again" });
+				continue;
+			}
 			out.pages[key] = [];
 			for (let i = 0; i < samples; i++) {
 				await ensureClean(key);
@@ -372,6 +394,10 @@ export async function remeasureProfile(ctx, { pages, coldStart, writes, samples 
 					paths: {},
 				});
 				ledger.record(key, { observedSql: eventsForPhase(site, phase).map((e) => e.sql) });
+				const problems = pageProblems(page, site.origin);
+				if (problems.length > 0) {
+					out.errors.push({ measurement: `${key} sample ${i + 1}`, error: problems.join("; ") });
+				}
 				out.pages[key].push({
 					cls: page.cls,
 					apiCount: page.api.count,
@@ -382,7 +408,14 @@ export async function remeasureProfile(ctx, { pages, coldStart, writes, samples 
 		}
 		if (coldStart) {
 			await ensureClean("cold start");
-			out.coldStart.push(await measureColdStarts(site, cookies, samples));
+			const measured = await measureColdStarts(site, cookies, samples);
+			out.coldStart.push(measured);
+			for (const [key, sample] of Object.entries(measured)) {
+				const bad = sample.samplesStatus?.filter((status) => status >= 400) ?? [];
+				if (bad.length > 0) {
+					out.errors.push({ measurement: `cold start ${key}`, error: `status ${bad.join(", ")}` });
+				}
+			}
 		}
 		const writeArgs = writes ? writeTarget(site, prepared) : null;
 		for (let i = 0; i < (writeArgs ? samples : 0); i++) {
@@ -394,6 +427,7 @@ export async function remeasureProfile(ctx, { pages, coldStart, writes, samples 
 				phasePrefix: "confirm-write",
 			});
 			ledger.record("writes", { declaredWrites: true });
+			if (pass.error) out.errors.push({ measurement: `writes sample ${i + 1}`, error: pass.error });
 			out.writes.push(pass.ops);
 		}
 	} finally {

@@ -130,6 +130,19 @@ pnpm perf:audit --profile blog-workerd-d1 --max-upload-gz 3072
 
 `--only` selects screens and scenarios whose name or path contains the text. Text starting with `write` selects the write pass and text starting with `plan` the query plans; both run when there is no `--only`. Cold starts still run unless `--skip-cold-start` is set.
 
+A run exits with code 1 and lists the cause under "Failed checks" in `summary.md` when any of these happen, with or without budgets:
+
+- a profile, a measurement or a confirmation sample throws, or the server exits during the run
+- a page load, server-pass replay, cold start, write or query-plan request gets a 5xx
+- a screen gets an error status, or doesn't render what it must: the template's `<main>` on public pages, the admin shell's `<main>` on signed-in admin screens, the heading on the login screen, and at least one image on the image-heavy entry; a same-origin script, stylesheet or image that gets a 4xx also fails the screen
+- a scenario errors, including one of several repeated runs
+- any cold-start restart gets a 4xx or 5xx
+- a query-plan request fails, an `EXPLAIN` fails, or no query is explained
+- the server logs no queries, which would make every query count read 0
+- `--only` selects no screen, scenario, write pass or query plan
+
+Budget overruns and failed cold-start burst requests also exit with code 1. Compare regressions are reported and don't change the exit code.
+
 `--workspace <dir>` builds the sites against another checkout's packages. `--compare <dir>` runs the same profiles against a second checkout and prints a before/after table. A row is a regression when:
 
 - CLS rises by more than 0.01, server gzip by more than 5%, API requests by more than 1, image bytes by more than 20%, or a cold start by more than 25%

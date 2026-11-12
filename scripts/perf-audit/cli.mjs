@@ -19,6 +19,7 @@ import {
 	confirmRegressions,
 	evaluateBudgets,
 } from "./lib/evaluate.mjs";
+import { exitCode, runFailures } from "./lib/failures.mjs";
 import { acquire, registerRun } from "./lib/locks.mjs";
 import { generateMedia, generateScenarioUpload } from "./lib/media-gen.mjs";
 import { PortRegistry } from "./lib/ports.mjs";
@@ -87,6 +88,16 @@ function workspaceDirs({ slotDir, label, resultsDir, ports }) {
 function startPostgresFor(profiles, dirs) {
 	if (!profiles.some((p) => p.usesPostgres)) return null;
 	return startPostgres({ stateDir: dirs.postgres, log: process.stdout, ports: dirs.ports });
+}
+
+/** Failed or broken re-measurements, as run errors: their samples cannot confirm or dismiss a regression. */
+function confirmationErrors(extra, label) {
+	return Object.entries(extra).flatMap(([profile, samples]) =>
+		samples.errors.map((e) => ({
+			profile: `${profile} (confirming, ${label})`,
+			error: `${e.measurement}: ${e.error}`,
+		})),
+	);
 }
 
 /** Re-measure candidate regressions on one workspace's prepared sites. */
@@ -292,6 +303,10 @@ async function main() {
 					workspace: compare,
 				});
 				const extraAfter = await remeasureWorkspace({ ...shared, label: "primary", workspace });
+				run.errors.push(
+					...confirmationErrors(extraBefore, "compare"),
+					...confirmationErrors(extraAfter, "primary"),
+				);
 				const judged = confirmRegressions(
 					candidates,
 					run.compareProfiles,
@@ -315,6 +330,7 @@ async function main() {
 
 	run.budgetFailures = evaluateBudgets(run.profiles, options.budgets);
 	run.burstFailures = coldBurstFailures(run.profiles);
+	run.failures = runFailures(run);
 	run.finishedAt = new Date().toISOString();
 	writeFileSync(resultsPath, JSON.stringify(run, null, "\t"));
 	const summary = renderSummary(run);
@@ -345,8 +361,10 @@ async function main() {
 			`Cold-start burst: ${f.profile} ${f.failed} of ${f.requests} requests failed (first: ${e.status || e.error} ${e.path})`,
 		);
 	}
-	if (run.errors.length > 0) return 1;
-	return run.budgetFailures.length > 0 || run.burstFailures.length > 0 ? 1 : 0;
+	for (const f of run.failures) {
+		console.log(`Failed: ${f.profile} ${f.check}${f.where ? ` (${f.where})` : ""}: ${f.detail}`);
+	}
+	return exitCode(run);
 }
 
 main()

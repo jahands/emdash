@@ -42,7 +42,11 @@ async function timeFirstRequest(site, path, cookies) {
 
 function medianSample(samples) {
 	const sorted = samples.toSorted((a, b) => a.ttfbMs - b.ttfbMs);
-	return { ...sorted[Math.floor(sorted.length / 2)], samplesTtfbMs: samples.map((s) => s.ttfbMs) };
+	return {
+		...sorted[Math.floor(sorted.length / 2)],
+		samplesTtfbMs: samples.map((s) => s.ttfbMs),
+		samplesStatus: samples.map((s) => s.status),
+	};
 }
 
 /** Median of `samples` restarts for the first public page and the first admin API request. */
