@@ -64,6 +64,7 @@ import {
 	type BylineFilterState,
 } from "./BylineFilter.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER } from "./content-list-options.js";
 import {
 	ContentStatusBadge,
 	ContentStatusLabel,
@@ -90,6 +91,8 @@ import { TableToolbar, TableToolbarSearch } from "./TableToolbar.js";
  * order fields; a collection's configured titleField/dateField slug is also
  * accepted, which the server validates against the collection.
  */
+export { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER };
+
 export type ContentListSortField = "title" | "status" | "locale" | ContentDateField | (string & {});
 export interface ContentListSort {
 	field: ContentListSortField;
@@ -116,9 +119,6 @@ export interface ContentDateFilter {
 	from: string;
 	to: string;
 }
-
-/** An empty (inactive) date filter, defaulting to the created-at column. */
-export const EMPTY_DATE_FILTER: ContentDateFilter = { field: "createdAt", from: "", to: "" };
 
 type RowRequest = (id: string) => Promise<unknown> | void;
 
@@ -235,8 +235,6 @@ type ViewTab = "all" | "trash";
 const PAGE_SIZE = 20;
 
 /** Page sizes offered with `pagination`; the first is the default. */
-export const CONTENT_LIST_PAGE_SIZES = [20, 50, 100];
-
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**

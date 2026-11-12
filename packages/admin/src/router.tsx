@@ -12,6 +12,7 @@ import {
 	keepPreviousData,
 	useQuery,
 	useInfiniteQuery,
+	useIsFetching,
 	useMutation,
 	useQueryClient,
 } from "@tanstack/react-query";
@@ -29,59 +30,19 @@ import {
 import * as React from "react";
 
 import type { OutsideValue } from "./co-editing/types.js";
-import { BlockTypeList } from "./components/BlockTypeList.js";
 import { EMPTY_BYLINE_FILTER, type BylineFilterState } from "./components/BylineFilter";
 import type { BylineFormValues } from "./components/BylineFormDialog.js";
 import type { SyncProblem } from "./components/co-editing/SyncStatus.js";
-import { CommentInbox } from "./components/comments/CommentInbox";
-import { ContentEditor, type ReferenceEntryRow } from "./components/ContentEditor";
-import {
-	CONTENT_LIST_PAGE_SIZES,
-	ContentList,
-	EMPTY_DATE_FILTER,
-	type ContentDateFilter,
-	type ContentListSort,
-	type ContentStatusFilter,
+import { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER } from "./components/content-list-options.js";
+import type { ReferenceEntryRow } from "./components/ContentEditor";
+import type {
+	ContentDateFilter,
+	ContentListSort,
+	ContentStatusFilter,
 } from "./components/ContentList";
-import { ContentTypeEditor } from "./components/ContentTypeEditor";
-import { ContentTypeList } from "./components/ContentTypeList";
-import { Dashboard } from "./components/Dashboard";
-import { DeviceAuthorizePage } from "./components/DeviceAuthorizePage";
 import { EntryLockNotice } from "./components/EntryLockNotice";
-import { InviteAcceptPage } from "./components/InviteAcceptPage";
-import { LoginPage } from "./components/LoginPage";
-import { MagicLinkConfirmPage } from "./components/MagicLinkConfirmPage";
-import { MediaLibrary } from "./components/MediaLibrary";
-import { MenuEditor } from "./components/MenuEditor";
-import { MenuList } from "./components/MenuList";
-import { PluginManager } from "./components/PluginManager";
-import { PluginSettings } from "./components/PluginSettings";
-import { Redirects } from "./components/Redirects";
-import { RegistryBrowse } from "./components/RegistryBrowse";
-import { RegistryPluginDetail } from "./components/RegistryPluginDetail";
-import { RelationList } from "./components/RelationList";
 import { RequireAdmin } from "./components/RequireAdmin.js";
-import { SandboxedPluginPage } from "./components/SandboxedPluginPage";
-import { SectionEditor } from "./components/SectionEditor";
-import { Sections } from "./components/Sections";
-import { Settings } from "./components/Settings";
-import { AllowedDomainsSettings } from "./components/settings/AllowedDomainsSettings";
-import { ApiTokenSettings } from "./components/settings/ApiTokenSettings";
-import { BackupSettings } from "./components/settings/BackupSettings";
-import { EmailSettings } from "./components/settings/EmailSettings";
-import { GeneralSettings } from "./components/settings/GeneralSettings";
-import { MediaUsageSettings } from "./components/settings/MediaUsageSettings";
-import { SecuritySettings } from "./components/settings/SecuritySettings";
-import { SeoSettings } from "./components/settings/SeoSettings";
-import { SidebarsSettings } from "./components/settings/SidebarsSettings";
-import { SocialSettings } from "./components/settings/SocialSettings";
-import { TransferSettings } from "./components/settings/TransferSettings";
-import { SetupWizard } from "./components/SetupWizard";
 import { Shell } from "./components/Shell";
-import { SignupPage } from "./components/SignupPage";
-import { TaxonomyManager } from "./components/TaxonomyManager";
-import { Widgets } from "./components/Widgets";
-import { WordPressImport } from "./components/WordPressImport";
 import { useAdminBranding } from "./lib/admin-branding-context.js";
 import {
 	apiFetch,
@@ -188,14 +149,86 @@ import {
 	lastAutosavedDrafts,
 	withAutosavedDraft,
 } from "./lib/revision-list-cache.js";
+import { lazyRouteModule, prefetchRouteModules, withRouteModules } from "./lib/route-module.js";
 import { sanitizeRedirectUrl } from "./lib/url";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
 import { useDateLocaleReady } from "./locales/date-locale.js";
-import { BylineSchemaPage } from "./routes/byline-schema";
-import { BylinesPage } from "./routes/bylines";
-import { CalendarPage } from "./routes/calendar";
-import { UsersPage } from "./routes/users";
+
+const SetupWizard = lazyRouteModule("components/SetupWizard", "SetupWizard");
+const LoginPage = lazyRouteModule("components/LoginPage", "LoginPage");
+const MagicLinkConfirmPage = lazyRouteModule(
+	"components/MagicLinkConfirmPage",
+	"MagicLinkConfirmPage",
+);
+const SignupPage = lazyRouteModule("components/SignupPage", "SignupPage");
+const InviteAcceptPage = lazyRouteModule("components/InviteAcceptPage", "InviteAcceptPage");
+const DeviceAuthorizePage = lazyRouteModule(
+	"components/DeviceAuthorizePage",
+	"DeviceAuthorizePage",
+);
+const Dashboard = lazyRouteModule("components/Dashboard", "Dashboard");
+const CalendarPage = lazyRouteModule("routes/calendar", "CalendarPage");
+const ContentList = lazyRouteModule("components/ContentList", "ContentList");
+const ContentEditor = lazyRouteModule("components/ContentEditor", "ContentEditor");
+const ContentTypeList = lazyRouteModule("components/ContentTypeList", "ContentTypeList");
+const BlockTypeList = lazyRouteModule("components/BlockTypeList", "BlockTypeList");
+const ContentTypeEditor = lazyRouteModule("components/ContentTypeEditor", "ContentTypeEditor");
+const RelationList = lazyRouteModule("components/RelationList", "RelationList");
+const MediaLibrary = lazyRouteModule("components/MediaLibrary", "MediaLibrary");
+const CommentInbox = lazyRouteModule("components/comments/CommentInbox", "CommentInbox");
+const MenuList = lazyRouteModule("components/MenuList", "MenuList");
+const MenuEditor = lazyRouteModule("components/MenuEditor", "MenuEditor");
+const PluginManager = lazyRouteModule("components/PluginManager", "PluginManager");
+const PluginSettings = lazyRouteModule("components/PluginSettings", "PluginSettings");
+const RegistryBrowse = lazyRouteModule("components/RegistryBrowse", "RegistryBrowse");
+const RegistryPluginDetail = lazyRouteModule(
+	"components/RegistryPluginDetail",
+	"RegistryPluginDetail",
+);
+const SandboxedPluginPage = lazyRouteModule(
+	"components/SandboxedPluginPage",
+	"SandboxedPluginPage",
+);
+const Redirects = lazyRouteModule("components/Redirects", "Redirects");
+const Sections = lazyRouteModule("components/Sections", "Sections");
+const SectionEditor = lazyRouteModule("components/SectionEditor", "SectionEditor");
+const TaxonomyManager = lazyRouteModule("components/TaxonomyManager", "TaxonomyManager");
+const UsersPage = lazyRouteModule("routes/users", "UsersPage");
+const BylinesPage = lazyRouteModule("routes/bylines", "BylinesPage");
+const BylineSchemaPage = lazyRouteModule("routes/byline-schema", "BylineSchemaPage");
+const Widgets = lazyRouteModule("components/Widgets", "Widgets");
+const Settings = lazyRouteModule("components/Settings", "Settings");
+const MediaUsageSettings = lazyRouteModule(
+	"components/settings/MediaUsageSettings",
+	"MediaUsageSettings",
+);
+const GeneralSettings = lazyRouteModule("components/settings/GeneralSettings", "GeneralSettings");
+const SocialSettings = lazyRouteModule("components/settings/SocialSettings", "SocialSettings");
+const SeoSettings = lazyRouteModule("components/settings/SeoSettings", "SeoSettings");
+const SecuritySettings = lazyRouteModule(
+	"components/settings/SecuritySettings",
+	"SecuritySettings",
+);
+const AllowedDomainsSettings = lazyRouteModule(
+	"components/settings/AllowedDomainsSettings",
+	"AllowedDomainsSettings",
+);
+const ApiTokenSettings = lazyRouteModule(
+	"components/settings/ApiTokenSettings",
+	"ApiTokenSettings",
+);
+const EmailSettings = lazyRouteModule("components/settings/EmailSettings", "EmailSettings");
+const BackupSettings = lazyRouteModule("components/settings/BackupSettings", "BackupSettings");
+const TransferSettings = lazyRouteModule(
+	"components/settings/TransferSettings",
+	"TransferSettings",
+);
+const SidebarsSettings = lazyRouteModule(
+	"components/settings/SidebarsSettings",
+	"SidebarsSettings",
+);
+const WordPressImport = lazyRouteModule("components/WordPressImport", "WordPressImport");
 
 // Router context type
 interface RouterContext {
@@ -470,7 +503,7 @@ const loginRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	path: "/login",
 	staticData: { pageTitle: msg`Log in` },
-	component: LoginPageWrapper,
+	component: withRouteModules(LoginPageWrapper, LoginPage),
 });
 
 function LoginPageWrapper() {
@@ -484,7 +517,7 @@ const magicLinkConfirmRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	path: "/login/magic-link",
 	staticData: { pageTitle: msg`Confirm magic link` },
-	component: MagicLinkConfirmPageWrapper,
+	component: withRouteModules(MagicLinkConfirmPageWrapper, MagicLinkConfirmPage),
 	validateSearch: (search: Record<string, unknown>) => ({
 		token: typeof search.token === "string" ? search.token : undefined,
 		redirect: typeof search.redirect === "string" ? search.redirect : undefined,
@@ -553,8 +586,16 @@ function RootComponent() {
 	const [userSettled, setUserSettled] = React.useState(false);
 	if (!userSettled && !currentUser.isLoading) setUserSettled(true);
 	const dateLocaleReady = useDateLocaleReady(i18n.locale);
+	const ready = !isLoading && userSettled && dateLocaleReady;
+	const fetching = useIsFetching();
 
-	if (isLoading || !userSettled || !dateLocaleReady) {
+	React.useEffect(() => {
+		if (!ready || fetching > 0) return;
+		const handle = window.requestIdleCallback(prefetchRouteModules);
+		return () => window.cancelIdleCallback(handle);
+	}, [ready, fetching]);
+
+	if (!ready) {
 		return <ConfigurationLoadingScreen />;
 	}
 
@@ -574,7 +615,7 @@ function RootComponent() {
 const dashboardRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/",
-	component: DashboardPage,
+	component: withRouteModules(DashboardPage, Dashboard),
 	staticData: { pageTitle: msg`Dashboard` },
 });
 
@@ -601,7 +642,7 @@ const calendarRoute = createRoute({
 const contentListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection",
-	component: ContentListPage,
+	component: withRouteModules(ContentListPage, ContentList),
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
 	}),
@@ -936,7 +977,7 @@ function ContentListPage() {
 const contentNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/new",
-	component: ContentNewPage,
+	component: withRouteModules(ContentNewPage, ContentEditor),
 	staticData: { fullBleed: true, pageTitle: msg`New content` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
@@ -1088,7 +1129,7 @@ function ContentNewPage() {
 const contentEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/$id",
-	component: ContentEditPage,
+	component: withRouteModules(ContentEditPage, ContentEditor),
 	staticData: { fullBleed: true, pageTitle: msg`Edit content` },
 	validateSearch: (search) => ({
 		...(typeof search.field === "string" && { field: search.field }),
@@ -2661,7 +2702,7 @@ function ContentEditPage() {
 const mediaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/media",
-	component: MediaPage,
+	component: withRouteModules(MediaPage, MediaLibrary),
 	staticData: { pageTitle: msg`Media` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		folder:
@@ -2960,7 +3001,7 @@ function MediaPage() {
 const commentsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/comments",
-	component: CommentsPage,
+	component: withRouteModules(CommentsPage, CommentInbox),
 	staticData: { pageTitle: msg`Comments` },
 });
 
@@ -3145,7 +3186,7 @@ const mediaUsageSettingsRoute = createRoute({
 const securitySettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/security",
-	component: SecuritySettingsWrapper,
+	component: withRouteModules(SecuritySettingsWrapper, SecuritySettings),
 	staticData: { pageTitle: msg`Security Settings` },
 	validateSearch: (search: Record<string, unknown>): { addPasskey?: boolean } =>
 		search.addPasskey === true || search.addPasskey === 1 || search.addPasskey === "1"
@@ -3162,10 +3203,13 @@ function SecuritySettingsWrapper() {
 const allowedDomainsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/allowed-domains",
-	component: () => (
-		<RequireAdmin>
-			<AllowedDomainsSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<AllowedDomainsSettings />
+			</RequireAdmin>
+		),
+		AllowedDomainsSettings,
 	),
 	staticData: { pageTitle: msg`Allowed Domains` },
 });
@@ -3174,10 +3218,13 @@ const allowedDomainsSettingsRoute = createRoute({
 const apiTokenSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/api-tokens",
-	component: () => (
-		<RequireAdmin>
-			<ApiTokenSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<ApiTokenSettings />
+			</RequireAdmin>
+		),
+		ApiTokenSettings,
 	),
 	staticData: { pageTitle: msg`API Tokens` },
 });
@@ -3186,10 +3233,13 @@ const apiTokenSettingsRoute = createRoute({
 const emailSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/email",
-	component: () => (
-		<RequireAdmin>
-			<EmailSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<EmailSettings />
+			</RequireAdmin>
+		),
+		EmailSettings,
 	),
 	staticData: { pageTitle: msg`Email Settings` },
 });
@@ -3198,10 +3248,13 @@ const emailSettingsRoute = createRoute({
 const backupSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/backups",
-	component: () => (
-		<RequireAdmin>
-			<BackupSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<BackupSettings />
+			</RequireAdmin>
+		),
+		BackupSettings,
 	),
 	staticData: { pageTitle: msg`Backups` },
 });
@@ -3209,7 +3262,7 @@ const backupSettingsRoute = createRoute({
 const transferSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/transfer",
-	component: TransferSettingsPage,
+	component: withRouteModules(TransferSettingsPage, TransferSettings),
 	staticData: { pageTitle: msg`Transfer` },
 	validateSearch: (search: Record<string, unknown>): { start?: "import" } =>
 		search.start === "import" ? { start: "import" } : {},
@@ -3223,7 +3276,7 @@ function TransferSettingsPage() {
 const sidebarsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/sidebars",
-	component: SidebarsSettingsPage,
+	component: withRouteModules(SidebarsSettingsPage, SidebarsSettings),
 	validateSearch: (search: Record<string, unknown>): { tab?: "editor" } =>
 		search.tab === "editor" ? { tab: "editor" } : {},
 });
@@ -3237,10 +3290,13 @@ function SidebarsSettingsPage() {
 const generalSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/general",
-	component: () => (
-		<RequireAdmin>
-			<GeneralSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<GeneralSettings />
+			</RequireAdmin>
+		),
+		GeneralSettings,
 	),
 	staticData: { pageTitle: msg`General Settings` },
 });
@@ -3249,10 +3305,13 @@ const generalSettingsRoute = createRoute({
 const socialSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/social",
-	component: () => (
-		<RequireAdmin>
-			<SocialSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<SocialSettings />
+			</RequireAdmin>
+		),
+		SocialSettings,
 	),
 	staticData: { pageTitle: msg`Social Settings` },
 });
@@ -3261,10 +3320,13 @@ const socialSettingsRoute = createRoute({
 const seoSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/seo",
-	component: () => (
-		<RequireAdmin>
-			<SeoSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<SeoSettings />
+			</RequireAdmin>
+		),
+		SeoSettings,
 	),
 	staticData: { pageTitle: msg`SEO Settings` },
 });
@@ -3273,7 +3335,7 @@ const seoSettingsRoute = createRoute({
 const pluginManagerRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins-manager",
-	component: PluginManagerPage,
+	component: withRouteModules(PluginManagerPage, PluginManager),
 	staticData: { pageTitle: msg`Plugins` },
 });
 
@@ -3288,7 +3350,7 @@ function PluginManagerPage() {
 const registryBrowseRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/registry",
-	component: RegistryBrowsePage,
+	component: withRouteModules(RegistryBrowsePage, RegistryBrowse),
 	staticData: { pageTitle: msg`Plugin Registry` },
 });
 
@@ -3343,7 +3405,7 @@ const marketplaceDetailRoute = createRoute({
 const registryDetailRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/registry/$publisher/$slug",
-	component: RegistryDetailPage,
+	component: withRouteModules(RegistryDetailPage, RegistryPluginDetail),
 	staticData: { pageTitle: msg`Plugin Details` },
 });
 
@@ -3399,10 +3461,13 @@ function MarketplaceUnavailablePage() {
 const wordpressImportRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/import/wordpress",
-	component: () => (
-		<RequireAdmin>
-			<WordPressImport />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<WordPressImport />
+			</RequireAdmin>
+		),
+		WordPressImport,
 	),
 	staticData: { pageTitle: msg`Import from WordPress` },
 });
@@ -3431,7 +3496,7 @@ const menuEditorRoute = createRoute({
 const taxonomyRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/taxonomies/$taxonomy",
-	component: TaxonomyPage,
+	component: withRouteModules(TaxonomyPage, TaxonomyManager),
 	staticData: { pageTitle: msg`Taxonomies` },
 });
 
@@ -3475,10 +3540,13 @@ const sectionEditRoute = createRoute({
 const usersRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/users",
-	component: () => (
-		<RequireAdmin>
-			<UsersPage />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<UsersPage />
+			</RequireAdmin>
+		),
+		UsersPage,
 	),
 	staticData: { pageTitle: msg`Users` },
 });
@@ -3520,7 +3588,7 @@ const bylineSchemaRoute = createRoute({
 const contentTypesListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types",
-	component: ContentTypesListPage,
+	component: withRouteModules(ContentTypesListPage, ContentTypeList, BlockTypeList),
 	staticData: { pageTitle: msg`Content Types` },
 });
 
@@ -3619,7 +3687,7 @@ function ContentTypesListPage() {
 const contentTypesNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/new",
-	component: ContentTypesNewPage,
+	component: withRouteModules(ContentTypesNewPage, ContentTypeEditor),
 	staticData: { pageTitle: msg`New content type` },
 });
 
@@ -3655,7 +3723,7 @@ function ContentTypesNewPage() {
 const relationsListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/relations",
-	component: RelationsListPage,
+	component: withRouteModules(RelationsListPage, RelationList),
 	staticData: { pageTitle: msg`Relations` },
 });
 
@@ -3716,7 +3784,7 @@ function useRelationsQuery() {
 const contentTypesEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/$slug",
-	component: ContentTypesEditPage,
+	component: withRouteModules(ContentTypesEditPage, ContentTypeEditor),
 	staticData: { pageTitle: msg`Edit content type` },
 });
 
@@ -3896,10 +3964,13 @@ function ContentTypesEditPage() {
 const pluginSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins-manager/$pluginId/settings",
-	component: () => (
-		<RequireAdmin>
-			<PluginSettingsPage />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<PluginSettingsPage />
+			</RequireAdmin>
+		),
+		PluginSettings,
 	),
 	staticData: { pageTitle: msg`Plugin Settings` },
 });
@@ -3913,7 +3984,7 @@ function PluginSettingsPage() {
 const pluginRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/$pluginId/$",
-	component: PluginPage,
+	component: withRouteModules(PluginPage, SandboxedPluginPage),
 	staticData: { pageTitle: msg`Plugin` },
 });
 
