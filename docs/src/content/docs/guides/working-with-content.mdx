@@ -166,7 +166,9 @@ they save. Autosave also never replaces a version EmDash creates itself, such as
 unpublishing an entry leaves.
 
 If a save fails, the editor keeps the unsaved fields in place and shows an error notification that
-stays open until a save succeeds. Closing the notification does not save the data. Retry with the
+stays open until a save succeeds. While autosave keeps retrying the same failure, the notification is
+not repeated, and the screen-reader status says the save failed. Closing the notification does not
+save the data. Retry with the
 toolbar's **Save** control, or on a phone use **Settings** > **Save draft** when the toolbar has no
 **Save** control. Keep the page open until a successful retry closes the notification and the saving
 control settles. If you must leave first, copy the unsaved work elsewhere.

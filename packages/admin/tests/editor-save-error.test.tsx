@@ -311,6 +311,61 @@ describe("ContentEditPage save error wiring", () => {
 		expect(screen.getByRole("alert").query()).toBeNull();
 	});
 
+	it("keeps one notification and a lasting status while autosave retries keep failing", async () => {
+		vi.useFakeTimers();
+		server = createMockServer([500, 500, 500, 500, 500, 200]);
+		const respond = globalThis.fetch;
+		// A save that answers in the same tick never renders as pending, and the
+		// editor retries a failed autosave only once it has seen it pending.
+		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			const response = await respond(input, init);
+			if (init?.method === "PUT") await new Promise((resolve) => setTimeout(resolve, 100));
+			return response;
+		}) as typeof fetch;
+		const { screen } = await renderEditPage();
+		const status = screen.getByRole("status").filter({ hasText: "Saved" }).element();
+		const toasts = new Set<Element>();
+		const announced: string[] = [];
+		const observer = new MutationObserver((records) => {
+			for (const record of records) {
+				for (const node of record.addedNodes) {
+					if (!(node instanceof Element)) continue;
+					if (node.matches('[role="dialog"]')) toasts.add(node);
+					for (const toast of node.querySelectorAll('[role="dialog"]')) toasts.add(toast);
+				}
+				const text = status.textContent ?? "";
+				if (status.contains(record.target) && announced.at(-1) !== text) announced.push(text);
+			}
+		});
+		observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+
+		await screen.getByRole("textbox", { name: "Title" }).fill("Autosave keeps failing");
+		await vi.waitFor(async () => {
+			await vi.advanceTimersByTimeAsync(500);
+			expect(server!.writes).toHaveLength(5);
+		}, 10000);
+		await vi.advanceTimersByTimeAsync(500);
+		expect(errorNotices()).toBe(1);
+		expect(status.textContent).toBe("Autosave failed");
+
+		await vi.waitFor(async () => {
+			await vi.advanceTimersByTimeAsync(500);
+			expect(errorNotices()).toBe(0);
+		}, 5000);
+		observer.disconnect();
+		expect(server.writes).toHaveLength(6);
+		expect(status.textContent).toBe("Saved");
+		expect(
+			[...toasts].filter((toast) =>
+				toast.textContent?.includes("Title is rejected by the server."),
+			),
+		).toHaveLength(1);
+		expect(announced.slice(announced.indexOf("Autosave failed"))).toEqual([
+			"Autosave failed",
+			"Saved",
+		]);
+	});
+
 	it("shows autosave failures in the editor and does not carry them to another entry", async () => {
 		vi.useFakeTimers();
 		server = createMockServer([500, 200, 500]);

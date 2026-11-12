@@ -3141,6 +3141,8 @@ export function ContentEditor({
 				<RevisionViewSheetSync sheetRef={revisionView.sheetRef} />
 			</Sidebar.Provider>
 			<span role="status" aria-live="polite" aria-atomic="true" className="sr-only">
+				{/* An autosave retrying behind a failure keeps the failure, so the region
+				    does not announce every retry. */}
 				{roomSync?.kind === "joining"
 					? t`Joining…`
 					: roomSync?.kind === "offline"
@@ -3153,13 +3155,17 @@ export function ContentEditor({
 									: roomSaveState && !roomSaveState.covered
 										? t`Unsaved changes`
 										: t`Saved`
-								: saveFeedbackActive || autosaveFeedbackActive
+								: saveFeedbackActive
 									? t`Saving...`
-									: isNew
-										? t`Not saved yet`
-										: isDirty
-											? t`Unsaved changes`
-											: t`Saved`}
+									: saveError || hasAutosaveError || hasSaveConflict
+										? (saveError?.title ?? t`Failed to save`)
+										: autosaveFeedbackActive
+											? t`Saving...`
+											: isNew
+												? t`Not saved yet`
+												: isDirty
+													? t`Unsaved changes`
+													: t`Saved`}
 			</span>
 			{/* Outside the sidebar, which is inert while the phone sheet is closed. */}
 			<p role="status" aria-live="polite" aria-atomic="true" className="sr-only">

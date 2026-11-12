@@ -1820,12 +1820,16 @@ function ContentEditPage() {
 				describeContentValidationError(error, collectionFields) ??
 				(error instanceof Error ? error.message : t`An error occurred`);
 			if ((source === "editor" || source === "autosave") && editorShows(targetId)) {
-				setEditorSaveError((current) => ({
-					entryId: targetId,
-					message,
-					title: toastTitle,
-					token: (current?.token ?? 0) + 1,
-				}));
+				// An autosave retried every few seconds keeps its error's token, so the
+				// writer is told once per failure rather than once per retry.
+				setEditorSaveError((current) =>
+					source === "autosave" &&
+					current?.entryId === targetId &&
+					current.message === message &&
+					current.title === toastTitle
+						? current
+						: { entryId: targetId, message, title: toastTitle, token: (current?.token ?? 0) + 1 },
+				);
 				return;
 			}
 			toastManager.add({ title: toastTitle, description: message, variant: "error" });

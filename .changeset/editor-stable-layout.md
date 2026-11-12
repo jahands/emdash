@@ -6,7 +6,7 @@ Fixes the content editor moving under the writer while they edit and save. The t
 
 To keep that space steady, a published entry's publishing summary always shows its draft row, and **Schedule** stays visible but disabled until there are draft changes to schedule. On phones, **Unpublish** takes the same two cells as **Publish changes**, and the toolbar keeps a cell for **Save** in collections that show it there.
 
-A failed save or autosave is now reported in one error notification, which stays open until a save succeeds, instead of a banner below the toolbar plus a toast, and screen readers hear it once. A save conflict is reported the same way, with **Save anyway** in the notification. On phones, these errors no longer add a **Save** button to the toolbar: retry with **Settings** > **Save draft**.
+A failed save or autosave is now reported in one error notification, which stays open until a save succeeds, instead of a banner below the toolbar plus a toast, and screen readers hear it once, not again on each autosave retry. The screen-reader save status says the save failed until a save succeeds. A save conflict is reported the same way, with **Save anyway** in the notification. On phones, these errors no longer add a **Save** button to the toolbar: retry with **Settings** > **Save draft**.
 
 #### Browser tests
 
