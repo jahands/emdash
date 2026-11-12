@@ -14,7 +14,13 @@ import * as React from "react";
 
 import { fetchMediaItem, type ContentSeo, type ContentSeoInput, type MediaItem } from "../lib/api";
 import { ApiResponseError } from "../lib/api/client.js";
-import { localMediaFileUrl } from "../lib/media-utils.js";
+import {
+	getMediaPreviewUrl,
+	getMediaThumbnailUrl,
+	imageMimeTypeFromUrl,
+	localMediaFileUrl,
+} from "../lib/media-utils.js";
+import { useRenditionFallback, useRenditionWidth } from "../lib/use-media-rendition.js";
 import { cn } from "../lib/utils.js";
 import { FieldHelpLabel } from "./FieldHelpLabel.js";
 import { ImageDropTarget } from "./media/ImageDropTarget.js";
@@ -86,6 +92,21 @@ export function SeoImageField({ seo, onChange }: SeoImageFieldProps) {
 		!failed &&
 		loadedUrl === imageUrl;
 	const label = t`OG Image`;
+	const mimeType = media?.mimeType ?? (imageUrl ? imageMimeTypeFromUrl(imageUrl) : undefined);
+	const previewUrl = imageUrl ? getMediaPreviewUrl(imageUrl, media?.contentHash) : undefined;
+	const [previewRef, renditionWidth] = useRenditionWidth<HTMLImageElement>({
+		fit: "cover",
+		sourceWidth: media?.width,
+		sourceHeight: media?.height,
+	});
+	const [previewSrc, handleRenditionError] = useRenditionFallback(
+		imageUrl && mimeType
+			? renditionWidth
+				? getMediaThumbnailUrl(imageUrl, mimeType, renditionWidth, media?.contentHash)
+				: undefined
+			: previewUrl,
+		previewUrl,
+	);
 
 	// Safari and Firefox on macOS don't focus a clicked button. Handing focus to
 	// a button the user never focused would let their next Space press open the
@@ -151,7 +172,8 @@ export function SeoImageField({ seo, onChange }: SeoImageFieldProps) {
 						</div>
 					) : (
 						<img
-							src={imageUrl}
+							ref={previewRef}
+							src={previewSrc}
 							alt=""
 							className={cn(
 								"size-full object-cover",
@@ -159,7 +181,9 @@ export function SeoImageField({ seo, onChange }: SeoImageFieldProps) {
 								loadedUrl === imageUrl && "emdash-media-transparency-grid",
 							)}
 							onLoad={() => setLoadedUrl(imageUrl)}
-							onError={() => setFailedUrl(imageUrl)}
+							onError={() => {
+								if (!handleRenditionError()) setFailedUrl(imageUrl);
+							}}
 						/>
 					)}
 					<span

@@ -258,6 +258,27 @@ export function getMediaThumbnailUrl(
 	return `/_image?${params.toString()}`;
 }
 
+const IMAGE_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+	avif: "image/avif",
+	gif: "image/gif",
+	jpeg: "image/jpeg",
+	jpg: "image/jpeg",
+	png: "image/png",
+	svg: "image/svg+xml",
+	webp: "image/webp",
+};
+
+const URL_QUERY_OR_HASH = /[?#]/;
+
+/** The image MIME type a file URL's extension names, or undefined when it names none. */
+export function imageMimeTypeFromUrl(url: string): string | undefined {
+	const path = url.split(URL_QUERY_OR_HASH, 1)[0] ?? "";
+	const dot = path.lastIndexOf(".");
+	return dot > path.lastIndexOf("/")
+		? IMAGE_MIME_TYPES_BY_EXTENSION[path.slice(dot + 1).toLowerCase()]
+		: undefined;
+}
+
 /**
  * Rounds a width up to the step for its size, so boxes of nearly the same
  * size share one cached rendition while none is much wider than it needs.
