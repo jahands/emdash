@@ -254,6 +254,85 @@ export function evaluateImages(images) {
 	return { images: evaluated, failures: evaluated.filter((image) => image.failed) };
 }
 
+const isOk = (status) => typeof status === "number" && status >= 200 && status < 300;
+
+/** Why a measured page does not count as rendered, or an empty list. */
+export function pageProblems(page) {
+	const problems = [];
+	if (page.status === null || page.status === undefined) problems.push("no document response");
+	else if (page.status >= 400) problems.push(`document status ${page.status}`);
+	const content = page.content;
+	if (!content) return problems;
+	const expected = content.expected ?? {};
+	if (content.booting) problems.push("still showing the admin boot loader");
+	if (expected.selector && !content.found) {
+		problems.push(
+			`no ${expected.selector} element${page.finalPath && page.finalPath !== page.path ? ` (ended at ${page.finalPath})` : ""}`,
+		);
+	}
+	const media = (page.images ?? []).filter((image) => image.isMedia).length;
+	if (expected.minMedia && media < expected.minMedia) {
+		problems.push(`${media} media images, expected at least ${expected.minMedia}`);
+	}
+	return problems;
+}
+
+/** Cold and warm samples of one request that did not get a 2xx response. */
+export function coldStartProblems(sample) {
+	const problems = [];
+	if (sample.cold && !isOk(sample.cold.status)) problems.push(`cold status ${sample.cold.status}`);
+	const warmFailures = (sample.warm ?? []).filter((w) => !isOk(w.status));
+	if (warmFailures.length > 0) {
+		problems.push(
+			`${warmFailures.length} of ${sample.warm.length} warm samples got ${[...new Set(warmFailures.map((w) => w.status))].join(", ")}`,
+		);
+	}
+	return problems;
+}
+
+/**
+ * Everything that fails a run besides errors and image verdicts: pages that
+ * did not render, cold samples without a 2xx, and measurements a finished
+ * run should have but does not.
+ */
+export function runProblems(results) {
+	const out = [];
+	const { pages = [], coldStarts = [], errors = [] } = results;
+	for (const page of pages) {
+		const problems = pageProblems(page);
+		if (problems.length > 0)
+			out.push({ where: `${page.name} (${page.viewport})`, detail: problems.join("; ") });
+	}
+	for (const sample of coldStarts) {
+		const problems = coldStartProblems(sample);
+		if (problems.length > 0)
+			out.push({ where: `${sample.moment}: ${sample.label}`, detail: problems.join("; ") });
+	}
+	if (errors.length === 0) {
+		if (pages.length === 0) out.push({ where: "pages", detail: "no pages were measured" });
+		if (coldStarts.length === 0)
+			out.push({ where: "cold starts", detail: "no cold starts were sampled" });
+	}
+	return out;
+}
+
+function imageFailures(results) {
+	return (results.pages ?? []).flatMap((page) =>
+		(page.images ?? []).filter((image) => image.failed),
+	);
+}
+
+/** ERROR when a stage threw, FAIL when a check failed, otherwise PASS. */
+export function runStatus(results) {
+	if ((results.errors ?? []).length > 0) return "ERROR";
+	return runProblems(results).length + imageFailures(results).length > 0 ? "FAIL" : "PASS";
+}
+
+/** 2 for errors, 1 for failed checks, 0 for a pass. */
+export function exitCode(results) {
+	return { ERROR: 2, FAIL: 1, PASS: 0 }[runStatus(results)];
+}
+
 function round(value, digits) {
 	const factor = 10 ** digits;
 	return Math.round(value * factor) / factor;
@@ -289,8 +368,8 @@ export function renderSummary(results) {
 		);
 	const oversized = flagged("oversized");
 	const broken = flagged("broken");
-	const status =
-		errors.length > 0 ? "ERROR" : oversized.length + broken.length > 0 ? "FAIL" : "PASS";
+	const status = runStatus(results);
+	const problems = runProblems(results);
 
 	lines.push(`# EmDash deploy check: ${status}`, "");
 	lines.push(`- Run: \`${run.runId}\` on \`${run.hostname}\``);
@@ -320,15 +399,21 @@ export function renderSummary(results) {
 		lines.push("");
 	}
 
+	if (problems.length > 0) {
+		lines.push("## Failed checks", "");
+		for (const problem of problems) lines.push(`- ${problem.where}: ${problem.detail}`);
+		lines.push("");
+	}
+
 	lines.push("## Images", "");
 	lines.push(
-		"| Page | Viewport | Images | Media | Via /cdn-cgi/image | Via /_image | Oversized | Broken |",
+		"| Page | Viewport | Status | Images | Media | Via /cdn-cgi/image | Via /_image | Oversized | Broken |",
 	);
-	lines.push("| --- | --- | --- | --- | --- | --- | --- | --- |");
+	lines.push("| --- | --- | --- | --- | --- | --- | --- | --- | --- |");
 	for (const page of pages) {
 		const pageMedia = page.images.filter((image) => image.isMedia);
 		lines.push(
-			`| ${page.name} | ${page.viewport} | ${page.images.length} | ${pageMedia.length} | ` +
+			`| ${page.name} | ${page.viewport} | ${page.status ?? "—"} | ${page.images.length} | ${pageMedia.length} | ` +
 				`${pageMedia.filter((image) => image.viaCdnCgi).length} | ` +
 				`${pageMedia.filter((image) => image.viaImageEndpoint).length} | ` +
 				`${page.images.filter((image) => image.oversized).length} | ` +

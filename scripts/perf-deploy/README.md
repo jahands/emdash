@@ -26,7 +26,14 @@ A run takes about 10 minutes, five of which are the idle gap before the second c
 
 Results go to `.perf-audit/deploy/<run-id>/`: `summary.md` for reading, `results.json` with every measurement, a screenshot of each page, and `commands.log` with build and deploy output.
 
-The check fails, and exits with code 1, when a media image is more than twice the size its box needs (rendered size × DPR) and larger than 50 KB, or when a media image fails to load. It exits with code 2 when a step errors.
+The check fails, and exits with code 1, when:
+
+- a media image is more than twice the size its box needs (rendered size × DPR) and larger than 50 KB, or fails to load
+- a measured page gets an error status, still shows the admin boot loader, has no `<main>` element, or shows fewer media images than it was seeded with: every upload in the media library, one in the editor and on the home page, and the featured image plus both body images on the entry
+- a cold or warm sample doesn't get a 2xx response
+- the run measured no pages or sampled no cold starts
+
+`summary.md` lists each failure under "Failed checks". The check exits with code 2 when a step errors or teardown leaves resources behind.
 
 ## Options
 

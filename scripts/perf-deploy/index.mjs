@@ -20,6 +20,8 @@ import {
 	createRunId,
 	domainConflict,
 	evaluateImages,
+	exitCode,
+	pageProblems,
 	median,
 	parseOptions,
 	renderSummary,
@@ -211,6 +213,12 @@ async function runDeploy(options) {
 			} else if (cf) {
 				try {
 					results.teardown = await teardownAndVerify(cf, record, recordPath);
+					if (!results.teardown.clean) {
+						results.errors.push({
+							stage: "teardown",
+							message: `Resources remain: ${JSON.stringify(results.teardown.leftovers)}. Retry with: pnpm perf:deploy --teardown ${runId}`,
+						});
+					}
 				} catch (error) {
 					results.errors.push({ stage: "teardown", message: String(error?.message ?? error) });
 					log(
@@ -377,10 +385,25 @@ async function runDeploy(options) {
 		stage = "measure pages";
 		const newest = results.content.newest;
 		const pages = [
-			{ name: "Admin media library", path: "/_emdash/admin/media", admin: true },
-			{ name: "Admin editor", path: `/_emdash/admin/content/posts/${newest.id}`, admin: true },
-			{ name: "Home", path: "/", admin: false },
-			{ name: "Entry", path: `/posts/${newest.slug}`, admin: false },
+			{
+				name: "Admin media library",
+				path: "/_emdash/admin/media",
+				admin: true,
+				expect: { selector: "main", minMedia: uploads.length },
+			},
+			{
+				name: "Admin editor",
+				path: `/_emdash/admin/content/posts/${newest.id}`,
+				admin: true,
+				expect: { selector: "main", minMedia: 1 },
+			},
+			{ name: "Home", path: "/", admin: false, expect: { selector: "main", minMedia: 1 } },
+			{
+				name: "Entry",
+				path: `/posts/${newest.slug}`,
+				admin: false,
+				expect: { selector: "main", minMedia: 1 + newest.bodyImages },
+			},
 		];
 		for (const viewportName of Object.keys(VIEWPORTS)) {
 			for (const page of pages) {
@@ -391,10 +414,15 @@ async function runDeploy(options) {
 					viewportName,
 					storageState: page.admin ? storageState : undefined,
 					outDir: runDir,
+					expect: page.expect,
 				});
 				const { images, failures } = evaluateImages(measured.images);
-				results.pages.push({ ...measured, images });
-				log(`${page.name} (${viewportName}): ${images.length} images, ${failures.length} failing`);
+				const evaluated = { ...measured, images };
+				results.pages.push(evaluated);
+				const problems = pageProblems(evaluated);
+				log(
+					`${page.name} (${viewportName}): status ${measured.status}, ${images.length} images, ${failures.length} failing${problems.length > 0 ? `; ${problems.join("; ")}` : ""}`,
+				);
 			}
 		}
 
@@ -413,10 +441,8 @@ async function runDeploy(options) {
 		await finish();
 	}
 
-	const failed = results.pages.some((page) => page.images.some((image) => image.failed));
 	log(`Results: ${relative(ROOT, join(runDir, "summary.md"))}`);
-	if (results.errors.length > 0) return 2;
-	return failed ? 1 : 0;
+	return exitCode(results);
 }
 
 async function main() {

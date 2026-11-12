@@ -479,14 +479,24 @@ function scrollOneScreen() {
 	return true;
 }
 
+/** Runs in the page: whether it shows the landmark `expect` asks for, and the admin boot loader. */
+function renderedContent(selector) {
+	return {
+		found: selector ? document.querySelector(selector) !== null : null,
+		booting: document.getElementById("emdash-boot-loader") !== null,
+	};
+}
+
 /**
  * Load a page, scroll it top to bottom, and record every image that enters the
  * viewport: natural size, rendered size, DPR, object-fit, bytes on the wire
- * and the response headers that show how it was transformed.
+ * and the response headers that show how it was transformed. Also records the
+ * document status and, for `expect: { selector, minMedia }`, whether the page
+ * rendered that landmark.
  */
 export async function measurePage(
 	browser,
-	{ origin, name, path, viewportName, storageState, outDir },
+	{ origin, name, path, viewportName, storageState, outDir, expect = null },
 ) {
 	const options = VIEWPORTS[viewportName];
 	const context = await browser.newContext({ ...options, locale: "en-US", storageState });
@@ -517,7 +527,7 @@ export async function measurePage(
 	});
 
 	const started = Date.now();
-	await page.goto(`${origin}${path}`, { waitUntil: "load", timeout: 120_000 });
+	const navigation = await page.goto(`${origin}${path}`, { waitUntil: "load", timeout: 120_000 });
 	await page.waitForLoadState("networkidle", { timeout: 20_000 }).catch(() => {});
 	const loadMs = Date.now() - started;
 
@@ -544,6 +554,8 @@ export async function measurePage(
 		await page.waitForTimeout(500);
 	}
 	await Promise.all(pending);
+	const content = { expected: expect, ...(await page.evaluate(renderedContent, expect?.selector)) };
+	const finalUrl = page.url();
 
 	const dpr = options.deviceScaleFactor;
 	const images = Array.from(seen.values(), ({ id: _id, ...image }) => {
@@ -568,5 +580,15 @@ export async function measurePage(
 	});
 	await page.screenshot({ path: screenshot });
 	await context.close();
-	return { name, path, viewport: viewportName, loadMs, images, screenshot };
+	return {
+		name,
+		path,
+		viewport: viewportName,
+		status: navigation?.status() ?? null,
+		finalPath: finalUrl.startsWith(origin) ? finalUrl.slice(origin.length) : finalUrl,
+		content,
+		loadMs,
+		images,
+		screenshot,
+	};
 }

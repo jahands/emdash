@@ -5,14 +5,19 @@ import {
 	assertOwnedDomain,
 	assertOwnedName,
 	classifyImageUrl,
+	coldStartProblems,
 	createRunId,
 	domainConflict,
 	evaluateImage,
+	exitCode,
 	isOwnedName,
 	oversizeRatio,
+	pageProblems,
 	parseOptions,
 	renderSummary,
 	resourceNames,
+	runProblems,
+	runStatus,
 	UsageError,
 	zoneCandidates,
 } from "./lib.mjs";
@@ -306,12 +311,159 @@ void test("the summary reports FAIL with each oversized image", () => {
 		summary,
 		includes("| Admin media library | desktop | 1600×1000 | 176×99 | 9.09x | 647 KB |"),
 	);
+	assert.match(renderSummary(passingRun()), pattern("^# EmDash deploy check: PASS"));
+});
+
+const okSample = (over = {}) => ({ status: 200, ttfbMs: 40, serverMs: 20, ...over });
+
+const mediaImage = (over = {}) =>
+	evaluateImage({
+		isMedia: true,
+		viaImageEndpoint: true,
+		viaCdnCgi: false,
+		url: "https://perf.example.com/_image?href=x&w=400",
+		renderedWidth: 400,
+		renderedHeight: 300,
+		dpr: 1,
+		objectFit: "cover",
+		naturalWidth: 400,
+		naturalHeight: 300,
+		bytes: 20 * 1024,
+		status: 200,
+		...over,
+	});
+
+const renderedPage = (over = {}) => ({
+	name: "Home",
+	path: "/",
+	viewport: "desktop",
+	status: 200,
+	finalPath: "/",
+	content: { expected: { selector: "main", minMedia: 1 }, found: true, booting: false },
+	images: [mediaImage()],
+	...over,
+});
+
+const coldSample = (over = {}) => ({
+	moment: "after deploy",
+	label: "GET / (logged out)",
+	cold: okSample(),
+	warm: [okSample(), okSample()],
+	...over,
+});
+
+function passingRun(over = {}) {
+	return {
+		run: {
+			runId: "abcd1234",
+			hostname: "perf.example.com",
+			imageService: "binding",
+			startedAt: "now",
+		},
+		pages: [renderedPage()],
+		coldStarts: [coldSample()],
+		errors: [],
+		...over,
+	};
+}
+
+void test("a run whose pages rendered and whose samples got 2xx passes with exit 0", () => {
+	assert.deepEqual(runProblems(passingRun()), []);
+	assert.equal(runStatus(passingRun()), "PASS");
+	assert.equal(exitCode(passingRun()), 0);
+});
+
+void test("an HTTP 500 document with no images fails (reviewer reproduction)", () => {
+	const results = passingRun({
+		pages: [
+			renderedPage({
+				name: "Home error",
+				status: 500,
+				content: { expected: { selector: "main", minMedia: 1 }, found: false, booting: false },
+				images: [],
+			}),
+		],
+	});
+	const summary = renderSummary(results);
+	assert.match(summary, pattern("^# EmDash deploy check: FAIL"));
 	assert.match(
-		renderSummary({
-			run: { runId: "a", hostname: "h", imageService: "binding", startedAt: "now" },
-			pages: [],
-			errors: [],
-		}),
-		pattern("^# EmDash deploy check: PASS"),
+		summary,
+		includes(
+			"- Home error (desktop): document status 500; no main element; 0 media images, expected at least 1",
+		),
 	);
+	assert.match(summary, includes("| Home error | desktop | 500 | 0 | 0 |"));
+	assert.equal(exitCode(results), 1);
+});
+
+void test("a page fails without its landmark, while booting, or with too few media images", () => {
+	assert.deepEqual(pageProblems(renderedPage({ status: null })), ["no document response"]);
+	assert.deepEqual(
+		pageProblems(
+			renderedPage({
+				name: "Admin editor",
+				path: "/_emdash/admin/content/posts/1",
+				finalPath: "/_emdash/admin/login",
+				content: { expected: { selector: "main" }, found: false, booting: false },
+			}),
+		),
+		["no main element (ended at /_emdash/admin/login)"],
+	);
+	assert.deepEqual(
+		pageProblems(
+			renderedPage({ content: { expected: { selector: "main" }, found: false, booting: true } }),
+		),
+		["still showing the admin boot loader", "no main element"],
+	);
+	assert.deepEqual(
+		pageProblems(
+			renderedPage({
+				content: { expected: { selector: "main", minMedia: 3 }, found: true, booting: false },
+				images: [mediaImage(), mediaImage({ isMedia: false })],
+			}),
+		),
+		["1 media images, expected at least 3"],
+	);
+	assert.equal(exitCode(passingRun({ pages: [renderedPage({ status: 404 })] })), 1);
+});
+
+void test("a cold or warm sample without a 2xx fails the run", () => {
+	const cold = passingRun({ coldStarts: [coldSample({ cold: okSample({ status: 500 }) })] });
+	assert.deepEqual(runProblems(cold), [
+		{ where: "after deploy: GET / (logged out)", detail: "cold status 500" },
+	]);
+	assert.match(
+		renderSummary(cold),
+		includes("- after deploy: GET / (logged out): cold status 500"),
+	);
+	assert.equal(exitCode(cold), 1);
+	const warm = passingRun({
+		coldStarts: [coldSample({ warm: [okSample(), okSample({ status: 302 })] })],
+	});
+	assert.deepEqual(coldStartProblems(warm.coldStarts[0]), ["1 of 2 warm samples got 302"]);
+	assert.equal(exitCode(warm), 1);
+});
+
+void test("a run without pages or cold starts fails unless a stage already errored", () => {
+	assert.deepEqual(
+		runProblems(passingRun({ pages: [], coldStarts: [] })).map((p) => p.detail),
+		["no pages were measured", "no cold starts were sampled"],
+	);
+	assert.equal(exitCode(passingRun({ pages: [] })), 1);
+	const errored = passingRun({
+		pages: [],
+		coldStarts: [],
+		errors: [{ stage: "deploy", message: "x" }],
+	});
+	assert.deepEqual(runProblems(errored), []);
+	assert.equal(runStatus(errored), "ERROR");
+	assert.equal(exitCode(errored), 2);
+});
+
+void test("image failures still fail a rendered run", () => {
+	const results = passingRun({
+		pages: [renderedPage({ images: [mediaImage({ status: 404, naturalWidth: 0 })] })],
+	});
+	assert.deepEqual(runProblems(results), []);
+	assert.equal(exitCode(results), 1);
 });
