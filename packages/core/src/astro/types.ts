@@ -321,6 +321,8 @@ export interface EmDashHandlers {
 			bylinesNone?: boolean;
 			includeInferredBylines?: boolean;
 			fieldFilters?: ContentFieldFilters;
+			/** Field slugs to return in each item's `data`; omit for every field. */
+			fields?: string[];
 		},
 	) => Promise<HandlerResponse>;
 

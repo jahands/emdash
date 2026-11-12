@@ -16,6 +16,7 @@ import type {
 } from "../../schema/types.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import { hashString } from "../../utils/hash.js";
+import { settleAll } from "../../utils/settle.js";
 import type {
 	FieldDescriptor,
 	ManifestCollectionMap,
@@ -139,10 +140,10 @@ export async function buildManifestCollections(
 	try {
 		const registry = new SchemaRegistry(db);
 		const storedCollections = await registry.listCollectionsWithFields();
-		const dbCollections = await Promise.all(
-			storedCollections.map((collection) => expandCollectionBlockFields(db, collection)),
-		);
-		const cardinality = await relationCardinality(db, dbCollections);
+		const [dbCollections, cardinality] = await settleAll([
+			settleAll(storedCollections.map((collection) => expandCollectionBlockFields(db, collection))),
+			relationCardinality(db, storedCollections),
+		]);
 		for (const collection of dbCollections) {
 			if (manifestCollections[collection.slug]) continue;
 

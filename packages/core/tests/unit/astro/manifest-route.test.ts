@@ -47,6 +47,10 @@ interface ManifestEnvelope {
 	};
 }
 
+function manifestRequest(): Request {
+	return new Request("http://localhost/_emdash/api/manifest");
+}
+
 function makeContext(
 	adminBranding?: {
 		logo?: string;
@@ -66,7 +70,7 @@ function makeContext(
 			: undefined,
 	};
 
-	return { locals } as unknown as APIContext;
+	return { locals, request: manifestRequest() } as unknown as APIContext;
 }
 
 describe("manifest route admin branding", () => {
@@ -147,6 +151,7 @@ describe("manifest route admin branding", () => {
 						}),
 					},
 				},
+				request: manifestRequest(),
 			} as unknown as APIContext;
 
 			const response = await getManifest(context);
@@ -175,6 +180,7 @@ describe("manifest route admin branding", () => {
 						}),
 					},
 				},
+				request: manifestRequest(),
 			} as unknown as APIContext;
 			const staging = async () =>
 				((await (await getManifest(context)).json()) as ManifestEnvelope).data.staging;
@@ -203,6 +209,7 @@ describe("manifest route provider-managed names", () => {
 					}),
 				},
 			},
+			request: manifestRequest(),
 		} as unknown as APIContext;
 		const body = (await (await getManifest(context)).json()) as ManifestEnvelope;
 		return body.data.providerManagedName;
@@ -254,6 +261,7 @@ describeEachDialect("manifest route saved site logo", (dialect) => {
 					}),
 				},
 			},
+			request: manifestRequest(),
 		} as unknown as APIContext;
 	}
 

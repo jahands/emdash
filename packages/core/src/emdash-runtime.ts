@@ -60,6 +60,7 @@ import { getTrustedProxyHeaders } from "./auth/trusted-proxy.js";
 import { lookupContentAuthor, sendCommentNotification } from "./comments/notifications.js";
 import type { ContentFieldFilters } from "./content-list-query.js";
 import { keepKnownFields, staleStoredKeys } from "./content/known-fields.js";
+import { ContentDatetimeNormalizer } from "./database/content-datetime.js";
 import { isSqlite } from "./database/dialect-helpers.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
 import {
@@ -166,6 +167,7 @@ import { AUTO_SEED_COMPLETE_OPTION } from "./seed/ownership.js";
 import { isMissingTableError } from "./utils/db-errors.js";
 import { hashString } from "./utils/hash.js";
 import { createInitLock, type InitLock, initWithLock } from "./utils/init-lock.js";
+import { settleAll } from "./utils/settle.js";
 import { createSingleFlightCache, singleFlightCached } from "./utils/single-flight-cache.js";
 import { COMMIT, VERSION } from "./version.js";
 
@@ -3655,10 +3657,33 @@ export class EmDashRuntime {
 	 * is two queries in practice; never N+1.
 	 */
 	private async _buildManifest(): Promise<EmDashManifest> {
-		// Build collections from the live database.
 		// Use this.db (ALS-aware getter) so playground mode picks up the
-		// per-session DO database instead of the hardcoded singleton.
-		const manifestCollections = await buildManifestCollections({}, this.db);
+		// per-session DO database instead of the hardcoded singleton. The schema,
+		// taxonomy and diagnostic reads are independent and run together; each
+		// handles its own failure.
+		const db = this.db;
+		const taxonomyRows = selectTaxonomyDefs(db).orderBy("d.name").execute();
+		const configuredLocales = virtualConfig?.i18n?.locales ?? getI18nConfig()?.locales ?? [];
+		const [manifestCollections, taxonomyResult] = await Promise.all([
+			buildManifestCollections({}, db),
+			taxonomyRows.then(
+				(rows) => ({ rows }),
+				(error: unknown) => {
+					console.debug("EmDash: Could not load taxonomy definitions:", error);
+					return { rows: [] };
+				},
+			),
+			warnAboutUnconfiguredTaxonomyLocales(
+				db,
+				configuredLocales,
+				taxonomyRows.then(
+					(rows) => rows.map((row) => row.locale),
+					() => [],
+				),
+			).catch((error: unknown) => {
+				console.warn("[i18n] taxonomy locale diagnostic failed:", error);
+			}),
+		]);
 
 		// Build plugins manifest
 		const manifestPlugins: Record<
@@ -3781,44 +3806,16 @@ export class EmDashRuntime {
 		}
 
 		// Build taxonomies from database
-		let manifestTaxonomies: Array<{
-			id: string;
-			name: string;
-			label: string;
-			labelSingular?: string;
-			hierarchical: boolean;
-			collections: string[];
-			locale: string;
-			translationGroup: string;
-		}> = [];
-		let taxonomyDefinitionLocales: string[] = [];
-		try {
-			const rows = await selectTaxonomyDefs(this.db).orderBy("d.name").execute();
-			taxonomyDefinitionLocales = rows.map((row) => row.locale);
-			manifestTaxonomies = rows.map((row) => ({
-				id: row.id,
-				name: row.name,
-				label: row.label,
-				labelSingular: row.label_singular ?? undefined,
-				hierarchical: row.hierarchical === 1,
-				collections: parseStringArray(row.collections).toSorted(),
-				locale: row.locale,
-				translationGroup: row.translation_group ?? row.id,
-			}));
-		} catch (error) {
-			console.debug("EmDash: Could not load taxonomy definitions:", error);
-		}
-
-		try {
-			const configuredLocales = virtualConfig?.i18n?.locales ?? getI18nConfig()?.locales ?? [];
-			await warnAboutUnconfiguredTaxonomyLocales(
-				this.db,
-				configuredLocales,
-				taxonomyDefinitionLocales,
-			);
-		} catch (error) {
-			console.warn("[i18n] taxonomy locale diagnostic failed:", error);
-		}
+		const manifestTaxonomies = taxonomyResult.rows.map((row) => ({
+			id: row.id,
+			name: row.name,
+			label: row.label,
+			labelSingular: row.label_singular ?? undefined,
+			hierarchical: row.hierarchical === 1,
+			collections: parseStringArray(row.collections).toSorted(),
+			locale: row.locale,
+			translationGroup: row.translation_group ?? row.id,
+		}));
 
 		// Build manifest hash
 		const manifestHash = await hashString(
@@ -3949,6 +3946,7 @@ export class EmDashRuntime {
 			bylinesNone?: boolean;
 			includeInferredBylines?: boolean;
 			fieldFilters?: ContentFieldFilters;
+			fields?: string[];
 		},
 	) {
 		return handleContentList(this.db, collection, params);
@@ -3965,11 +3963,38 @@ export class EmDashRuntime {
 		referenceOptions?: { includeDrafts: boolean },
 		options: { includeStagedSlug?: boolean; rowOnly?: boolean } = {},
 	) {
-		const result = await handleContentGet(this.db, collection, id, locale, referenceOptions, {
-			rowOnly: options.rowOnly,
+		const found = await handleContentGet(this.db, collection, id, locale, undefined, {
+			rowOnly: true,
 		});
-		if (options.rowOnly) return result;
-		return this.hydrateDraftData(result, options);
+		if (options.rowOnly || !found.success) return found;
+		const { item } = found.data;
+		const draftRevision = item.draftRevisionId
+			? this.readRevisionOfCollection(collection, item.draftRevisionId)
+			: undefined;
+		const [hydrated] = await Promise.allSettled([
+			contentResponseForRow(this.db, collection, item, referenceOptions, draftRevision),
+			draftRevision,
+		]);
+		if (hydrated.status === "rejected") throw hydrated.reason;
+		return this.hydrateDraftData(hydrated.value, { ...options, draftRevision });
+	}
+
+	/**
+	 * Read a revision of `collection`, loading the collection's field metadata
+	 * (which reading a revision needs) at the same time instead of after it.
+	 */
+	private async readRevisionOfCollection(
+		collection: string,
+		revisionId: string,
+	): Promise<Revision | null> {
+		const [revision] = await settleAll([
+			new RevisionRepository(this.db).findById(revisionId),
+			// Shared through the request cache; without a request there is nothing to share.
+			getRequestContext()
+				? new ContentDatetimeNormalizer(this.db).writableFieldSlugs(collection)
+				: undefined,
+		]);
+		return revision;
 	}
 
 	async handleContentGetIncludingTrashed(collection: string, id: string, locale?: string) {
@@ -3989,7 +4014,13 @@ export class EmDashRuntime {
 	 */
 	private async hydrateDraftData<T>(
 		result: T,
-		options: { includeStagedSlug?: boolean; strict?: boolean; knownRevision?: Revision } = {},
+		options: {
+			includeStagedSlug?: boolean;
+			strict?: boolean;
+			knownRevision?: Revision;
+			/** The draft revision, already being loaded by the caller. */
+			draftRevision?: Promise<Revision | null>;
+		} = {},
 	): Promise<T> {
 		if (!result || typeof result !== "object") return result;
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- shape probed below
@@ -4005,7 +4036,8 @@ export class EmDashRuntime {
 			const revision =
 				options.knownRevision?.id === draftRevisionId
 					? options.knownRevision
-					: await new RevisionRepository(this.db).findById(draftRevisionId);
+					: await (options.draftRevision ??
+							new RevisionRepository(this.db).findById(draftRevisionId));
 			if (!revision) {
 				if (options.strict) throw new Error(`Draft revision not found: ${draftRevisionId}`);
 				return result;

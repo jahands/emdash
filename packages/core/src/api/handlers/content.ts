@@ -21,8 +21,8 @@ import { EntryLockRepository } from "../../database/repositories/entry-locks.js"
 import { OptionsRepository } from "../../database/repositories/options.js";
 import { RedirectRepository, redirectPathVariants } from "../../database/repositories/redirect.js";
 import { RelationRepository } from "../../database/repositories/relation.js";
-import { RevisionRepository } from "../../database/repositories/revision.js";
-import { SeoRepository } from "../../database/repositories/seo.js";
+import { RevisionRepository, type Revision } from "../../database/repositories/revision.js";
+import { SeoRepository, seoFromRow } from "../../database/repositories/seo.js";
 import { TaxonomyRepository } from "../../database/repositories/taxonomy.js";
 import {
 	ContentCollectionNotFoundError,
@@ -52,12 +52,13 @@ import {
 } from "../../plugins/content-policy.js";
 import { publishRedirectChanges } from "../../redirects/artifacts.js";
 import { invalidateRedirectCache } from "../../redirects/cache.js";
-import { requestCached, setRequestCacheEntry } from "../../request-cache.js";
+import { peekRequestCache, requestCached, setRequestCacheEntry } from "../../request-cache.js";
 import { getRequestContext } from "../../request-context.js";
 import { isStoragelessFieldRow, type Collection } from "../../schema/types.js";
 import { FTSManager } from "../../search/fts-manager.js";
 import { invalidateTermCache } from "../../taxonomies/index.js";
 import { isMissingColumnError, isMissingTableError } from "../../utils/db-errors.js";
+import { settleAll } from "../../utils/settle.js";
 import { decodeRev, encodeRev, validateRev } from "../rev.js";
 import type { ApiResult, ContentListResponse, ContentResponse } from "../types.js";
 import {
@@ -248,6 +249,30 @@ interface CollectionWriteMeta {
 	urlPattern: string | null;
 }
 
+const collectionWriteMetaKey = (collection: string) => `collectionWriteMeta:${collection}`;
+
+function collectionWriteMetaFromRow(
+	row:
+		| {
+				has_seo: number;
+				supports: string | null;
+				routable: number;
+				title_field: string | null;
+				url_pattern: string | null;
+		  }
+		| undefined,
+): CollectionWriteMeta {
+	const supports: unknown = row?.supports ? JSON.parse(row.supports) : [];
+	return {
+		hasSeo: row?.has_seo === 1,
+		supportsRevisions: Array.isArray(supports) && supports.includes("revisions"),
+		supportsScheduling: !Array.isArray(supports) || !supports.includes("no-scheduling"),
+		routable: row?.routable !== 0,
+		titleField: row?.title_field ?? null,
+		urlPattern: row?.url_pattern ?? null,
+	};
+}
+
 /**
  * The collection settings content writes consult, read in one query and
  * cached per request so a write (or a bulk import) reads them once.
@@ -256,21 +281,13 @@ function getCollectionWriteMeta(
 	db: Kysely<Database>,
 	collection: string,
 ): Promise<CollectionWriteMeta> {
-	return requestCached(`collectionWriteMeta:${collection}`, async () => {
+	return requestCached(collectionWriteMetaKey(collection), async () => {
 		const row = await db
 			.selectFrom("_emdash_collections")
 			.select(["has_seo", "supports", "routable", "title_field", "url_pattern"])
 			.where("slug", "=", collection)
 			.executeTakeFirst();
-		const supports: unknown = row?.supports ? JSON.parse(row.supports) : [];
-		return {
-			hasSeo: row?.has_seo === 1,
-			supportsRevisions: Array.isArray(supports) && supports.includes("revisions"),
-			supportsScheduling: !Array.isArray(supports) || !supports.includes("no-scheduling"),
-			routable: row?.routable !== 0,
-			titleField: row?.title_field ?? null,
-			urlPattern: row?.url_pattern ?? null,
-		};
+		return collectionWriteMetaFromRow(row);
 	});
 }
 
@@ -299,7 +316,7 @@ export async function prefetchContentWriteContext(
 
 /** Serve the collection settings content writes read from a row already loaded. */
 export function primeCollectionWriteMeta(collection: string, info: Collection): void {
-	setRequestCacheEntry<CollectionWriteMeta>(`collectionWriteMeta:${collection}`, {
+	setRequestCacheEntry<CollectionWriteMeta>(collectionWriteMetaKey(collection), {
 		hasSeo: info.hasSeo,
 		supportsRevisions: info.supports.includes("revisions"),
 		supportsScheduling: !info.supports.includes("no-scheduling"),
@@ -425,28 +442,102 @@ async function hydrateBylines(
 	item.byline = null;
 }
 
-async function hydrateSeoAndBylines(
+/**
+ * Hydrate SEO on one entry. When the request has not read the collection's
+ * settings yet, they come back in the same query as the entry's SEO row.
+ */
+async function hydrateEntrySeo(
 	db: Kysely<Database>,
 	collection: string,
 	item: ContentItem,
 ): Promise<void> {
-	await Promise.all([
-		collectionHasSeo(db, collection).then((hasSeo) => hydrateSeo(db, collection, item, hasSeo)),
+	const known = peekRequestCache<CollectionWriteMeta>(collectionWriteMetaKey(collection));
+	if (known) {
+		await hydrateSeo(db, collection, item, (await known).hasSeo);
+		return;
+	}
+	const row = await db
+		.selectFrom("_emdash_collections as c")
+		.leftJoin("_emdash_seo as s", (join) =>
+			join.onRef("s.collection", "=", "c.slug").on("s.content_id", "=", item.id),
+		)
+		.select([
+			"c.has_seo",
+			"c.supports",
+			"c.routable",
+			"c.title_field",
+			"c.url_pattern",
+			"s.content_id as seo_content_id",
+			"s.seo_title",
+			"s.seo_description",
+			"s.seo_image",
+			"s.seo_canonical",
+			"s.seo_no_index",
+		])
+		.where("c.slug", "=", collection)
+		.executeTakeFirst();
+	const meta = collectionWriteMetaFromRow(row);
+	setRequestCacheEntry(collectionWriteMetaKey(collection), meta);
+	if (!meta.hasSeo) return;
+	item.seo = seoFromRow(
+		row?.seo_content_id
+			? {
+					seo_title: row.seo_title,
+					seo_description: row.seo_description,
+					seo_image: row.seo_image,
+					seo_canonical: row.seo_canonical,
+					seo_no_index: row.seo_no_index ?? 0,
+				}
+			: undefined,
+	);
+}
+
+/**
+ * Hydrate one entry for a response: SEO, bylines and, when `referenceOptions`
+ * is given, reference selections. The reads are independent and run together.
+ *
+ * `draftRevision` is the entry's draft revision when the caller is already
+ * loading it, so a staged reference selection doesn't read it again.
+ */
+async function hydrateEntry(
+	db: Kysely<Database>,
+	collection: string,
+	item: ContentItem,
+	referenceOptions?: { includeDrafts: boolean },
+	draftRevision?: Promise<Revision | null>,
+): Promise<void> {
+	await settleAll([
+		hydrateEntrySeo(db, collection, item),
 		hydrateBylines(db, collection, item),
+		// Opt-in: hydration is skipped entirely unless the caller passes
+		// `referenceOptions`, since it can leak draft child ids/slugs — see
+		// `hydrateReferences`'s doc comment.
+		referenceOptions
+			? hydrateReferences(db, collection, item, referenceOptions.includeDrafts, draftRevision)
+			: undefined,
 	]);
+	// The reads finish in any order, so fix the serialized key order:
+	// bylines, then SEO, then references.
+	const { seo, references } = item;
+	delete item.seo;
+	delete item.references;
+	if (seo !== undefined) item.seo = seo;
+	if (references !== undefined) item.references = references;
 }
 
 /**
  * Build the response for a row the caller already holds, hydrated the way
- * {@link handleContentGet} hydrates it (without references).
+ * {@link handleContentGet} hydrates it.
  */
 export async function contentResponseForRow(
 	db: Kysely<Database>,
 	collection: string,
 	item: ContentItem,
+	referenceOptions?: { includeDrafts: boolean },
+	draftRevision?: Promise<Revision | null>,
 ): Promise<ApiResult<ContentResponse>> {
 	try {
-		await hydrateSeoAndBylines(db, collection, item);
+		await hydrateEntry(db, collection, item, referenceOptions, draftRevision);
 		return { success: true, data: { item, _rev: encodeRev(item) } };
 	} catch (error) {
 		console.error("Content get error:", error);
@@ -488,22 +579,24 @@ async function hydrateReferences(
 	collection: string,
 	item: ContentItem,
 	includeDrafts: boolean,
+	draftRevision?: Promise<Revision | null>,
 ): Promise<void> {
 	if (!item.translationGroup) return;
 
-	const collectionRow = await db
-		.selectFrom("_emdash_collections")
-		.select("id")
-		.where("slug", "=", collection)
-		.executeTakeFirst();
-	if (!collectionRow) return;
-
-	const fields = await db
-		.selectFrom("_emdash_fields")
-		.select(["slug", "validation"])
-		.where("collection_id", "=", collectionRow.id)
-		.where("type", "=", "reference")
+	// One row per reference field, or a single row with a null slug when the
+	// collection has none; no rows when the collection doesn't exist.
+	const rows = await db
+		.selectFrom("_emdash_collections as c")
+		.leftJoin("_emdash_fields as f", (join) =>
+			join.onRef("f.collection_id", "=", "c.id").on("f.type", "=", "reference"),
+		)
+		.select(["f.slug", "f.validation"])
+		.where("c.slug", "=", collection)
 		.execute();
+	if (rows.length === 0) return;
+	const fields = rows.flatMap((row) =>
+		row.slug === null ? [] : [{ slug: row.slug, validation: row.validation }],
+	);
 
 	const references: NonNullable<ContentItem["references"]> = {};
 	if (fields.length === 0) {
@@ -517,7 +610,8 @@ async function hydrateReferences(
 	const staged =
 		includeDrafts && item.draftRevisionId
 			? readStagedReferences(
-					(await new RevisionRepository(db).findById(item.draftRevisionId))?.data,
+					(await (draftRevision ?? new RevisionRepository(db).findById(item.draftRevisionId)))
+						?.data,
 				)
 			: undefined;
 
@@ -584,6 +678,36 @@ async function hydrateReferences(
 }
 
 /**
+ * Show unpublished entries' pending draft values in a list. They have no live
+ * data to preserve, and the base columns stay untouched so discarding the draft
+ * can still restore them.
+ */
+async function overlayUnpublishedDrafts(
+	db: Kysely<Database>,
+	collection: string,
+	items: ContentItem[],
+): Promise<void> {
+	const unpublishedDrafts = items.filter(
+		(item) => item.status !== "published" && item.liveRevisionId === null && item.draftRevisionId,
+	);
+	const draftIds = unpublishedDrafts.flatMap((item) =>
+		item.draftRevisionId ? [item.draftRevisionId] : [],
+	);
+	if (draftIds.length === 0) return;
+	const revisions = await new RevisionRepository(db).findByIds(collection, draftIds);
+	const byId = new Map(revisions.map((revision) => [revision.id, revision]));
+	for (const item of unpublishedDrafts) {
+		if (!item.draftRevisionId) continue;
+		const revision = byId.get(item.draftRevisionId);
+		if (!revision || revision.entryId !== item.id) continue;
+		const fields = Object.fromEntries(
+			Object.entries(revision.data).filter(([key]) => !key.startsWith("_")),
+		);
+		item.data = { ...item.data, ...fields };
+	}
+}
+
+/**
  * Batch-hydrate bylines for multiple items using two bulk queries instead of N+1.
  *
  * Items may live at different locales (e.g. a list endpoint returning the
@@ -611,52 +735,40 @@ async function hydrateBylinesMany(
 		else localeBuckets.set(key, [item]);
 	}
 
-	// 2. Per-locale: fetch explicit credits. Items whose credits don't
-	//    resolve at this locale go through a locale-agnostic "has any
-	//    junction" check before being considered for author inference —
-	//    explicit editorial intent at any locale beats inferred fallback.
+	// 2. Per locale: fetch explicit credits and, alongside them, the author
+	//    fallback. Only items with no primary credit (`primaryBylineId` null,
+	//    which normally means no junction rows) can fall back, so the
+	//    candidates are known before the credits arrive. An explicit credit
+	//    still wins over the fallback below.
 	const bylinesByItem = new Map<string, ContentBylineCredit[]>();
-	const itemsNeedingAuthorCheck: ContentItem[] = [];
-	for (const [locale, bucket] of localeBuckets) {
-		const localeOpt = locale ? { locale } : undefined;
-		const ids = bucket.map((i) => i.id);
-		const credits = await bylineRepo.getContentBylinesMany(collection, ids, localeOpt);
-		for (const [id, list] of credits) bylinesByItem.set(id, list);
-
-		for (const item of bucket) {
-			if (credits.has(item.id) && credits.get(item.id)!.length > 0) continue;
-			if (item.authorId) itemsNeedingAuthorCheck.push(item);
-		}
-	}
-
-	// 3. Author fallback applies only when no explicit credit exists
-	//    (primaryBylineId null).
 	const fallbackByItem = new Map<string, BylineSummary>();
-	if (itemsNeedingAuthorCheck.length > 0) {
-		const authorBuckets = new Map<string | null, ContentItem[]>();
-		for (const item of itemsNeedingAuthorCheck) {
-			if (item.primaryBylineId) continue;
-			const key = item.locale ?? null;
-			const bucket = authorBuckets.get(key);
-			if (bucket) bucket.push(item);
-			else authorBuckets.set(key, [item]);
-		}
-
-		for (const [locale, bucket] of authorBuckets) {
+	await settleAll(
+		Array.from(localeBuckets, async ([locale, bucket]) => {
 			const localeOpt = locale ? { locale } : undefined;
-			const authorIds = bucket.map((i) => i.authorId).filter((id): id is string => id !== null);
-			const uniqueAuthorIds = [...new Set(authorIds)];
-			if (uniqueAuthorIds.length === 0) continue;
-			const authorMap = await bylineRepo.findByUserIds(uniqueAuthorIds, localeOpt);
+			const authorIds = [
+				...new Set(
+					bucket.flatMap((item) => (!item.primaryBylineId && item.authorId ? [item.authorId] : [])),
+				),
+			];
+			const [credits, authorMap] = await settleAll([
+				bylineRepo.getContentBylinesMany(
+					collection,
+					bucket.map((item) => item.id),
+					localeOpt,
+				),
+				authorIds.length > 0 ? bylineRepo.findByUserIds(authorIds, localeOpt) : undefined,
+			]);
+			for (const [id, list] of credits) bylinesByItem.set(id, list);
+			if (!authorMap) return;
 			for (const item of bucket) {
-				if (!item.authorId) continue;
-				const f = authorMap.get(item.authorId);
-				if (f) fallbackByItem.set(item.id, f);
+				if (item.primaryBylineId || !item.authorId) continue;
+				const fallback = authorMap.get(item.authorId);
+				if (fallback) fallbackByItem.set(item.id, fallback);
 			}
-		}
-	}
+		}),
+	);
 
-	// 4. Assign to each item.
+	// 3. Assign to each item.
 	for (const item of items) {
 		const explicit = bylinesByItem.get(item.id);
 		if (explicit && explicit.length > 0) {
@@ -1045,6 +1157,8 @@ export async function handleContentList(
 		bylinesNone?: boolean;
 		includeInferredBylines?: boolean;
 		fieldFilters?: ContentFieldFilters;
+		/** Field slugs to return in each item's `data`; omit for every field. */
+		fields?: string[];
 	},
 ): Promise<ApiResult<ContentListResponse>> {
 	try {
@@ -1105,43 +1219,43 @@ export async function handleContentList(
 			);
 		}
 
-		const result = await repo.findMany(collection, {
-			cursor: params.cursor,
-			offset,
-			limit,
-			where: Object.keys(where).length > 0 ? where : undefined,
-			orderBy: params.orderBy
-				? { field: params.orderBy, direction: params.order || "desc" }
-				: undefined,
-			sortableExtras,
-		});
+		const writeMeta = getCollectionWriteMeta(db, collection);
+		const [result] = await settleAll([
+			repo.findMany(collection, {
+				cursor: params.cursor,
+				offset,
+				limit,
+				where: Object.keys(where).length > 0 ? where : undefined,
+				orderBy: params.orderBy
+					? { field: params.orderBy, direction: params.order || "desc" }
+					: undefined,
+				sortableExtras,
+			}),
+			writeMeta,
+		]);
+		const { hasSeo } = await writeMeta;
 
-		// Unpublished entries have no live data to preserve in the list. Keep the
-		// base columns untouched so discarding a draft can still restore them.
-		const unpublishedDrafts = result.items.filter(
-			(item) => item.status !== "published" && item.liveRevisionId === null && item.draftRevisionId,
-		);
-		const draftIds = unpublishedDrafts.flatMap((item) =>
-			item.draftRevisionId ? [item.draftRevisionId] : [],
-		);
-		if (draftIds.length > 0) {
-			const revisions = await new RevisionRepository(db).findByIds(collection, draftIds);
-			const byId = new Map(revisions.map((revision) => [revision.id, revision]));
-			for (const item of unpublishedDrafts) {
-				if (!item.draftRevisionId) continue;
-				const revision = byId.get(item.draftRevisionId);
-				if (!revision || revision.entryId !== item.id) continue;
-				const fields = Object.fromEntries(
-					Object.entries(revision.data).filter(([key]) => !key.startsWith("_")),
+		await settleAll([
+			overlayUnpublishedDrafts(db, collection, result.items),
+			hydrateSeoMany(db, collection, result.items, hasSeo),
+			hydrateBylinesMany(db, collection, result.items),
+		]);
+		const selected = params.fields ? new Set(params.fields) : undefined;
+		for (const item of result.items) {
+			// Bylines can finish before SEO; keep the serialized key order fixed.
+			if (item.bylines !== undefined) {
+				const { bylines, byline } = item;
+				delete item.bylines;
+				delete item.byline;
+				item.bylines = bylines;
+				item.byline = byline;
+			}
+			if (selected) {
+				item.data = Object.fromEntries(
+					Object.entries(item.data).filter(([key]) => selected.has(key)),
 				);
-				item.data = { ...item.data, ...fields };
 			}
 		}
-
-		// Hydrate SEO data if the collection has SEO enabled
-		const hasSeo = await collectionHasSeo(db, collection);
-		await hydrateSeoMany(db, collection, result.items, hasSeo);
-		await hydrateBylinesMany(db, collection, result.items);
 
 		return {
 			success: true,
@@ -1282,13 +1396,7 @@ export async function handleContentGet(
 			return { success: true, data: { item, _rev: encodeRev(item) } };
 		}
 
-		await hydrateSeoAndBylines(db, collection, item);
-		// Opt-in: hydration is skipped entirely unless the caller passes
-		// `referenceOptions`, since it can leak draft child ids/slugs — see
-		// `hydrateReferences`'s doc comment.
-		if (referenceOptions) {
-			await hydrateReferences(db, collection, item, referenceOptions.includeDrafts);
-		}
+		await hydrateEntry(db, collection, item, referenceOptions);
 
 		return {
 			success: true,

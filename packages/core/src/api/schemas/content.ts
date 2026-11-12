@@ -43,6 +43,25 @@ const contentDateBound = z
  * ceiling once the rest of the list query's placeholders are counted
  * (`SQL_BATCH_SIZE` is 50 for a query binding nothing else).
  */
+const FIELD_SLUG_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/** Comma-separated field slugs; an empty value selects no fields. */
+const fieldSelectionParam = z
+	.string()
+	.max(2000)
+	.optional()
+	.transform((value) =>
+		value === undefined
+			? undefined
+			: [...new Set(value.split(",").map((slug) => slug.trim()))].filter((slug) => slug.length > 0),
+	)
+	.refine((value) => value === undefined || value.every((slug) => FIELD_SLUG_PATTERN.test(slug)), {
+		message: "fields must be comma-separated field slugs",
+	})
+	.refine((value) => value === undefined || value.length <= 100, {
+		message: "at most 100 fields may be selected",
+	});
+
 const bylineFilterParam = z
 	.string()
 	.trim()
@@ -190,6 +209,12 @@ export const contentListQuery = cursorPaginationQuery
 		includeInferredBylines: booleanParam,
 		/** JSON-encoded indexed custom-field filters, combined with AND semantics. */
 		fieldFilters: contentFieldFiltersQuery.optional(),
+		/**
+		 * Comma-separated field slugs. When set, each item's `data` holds only
+		 * these fields; system fields, SEO and bylines are unaffected. Unknown
+		 * slugs are ignored. Omit it for full entries.
+		 */
+		fields: fieldSelectionParam,
 	})
 	.refine(({ cursor, page }) => cursor === undefined || page === undefined, {
 		message: "cursor and page cannot be used together",
