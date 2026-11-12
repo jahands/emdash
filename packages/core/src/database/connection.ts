@@ -1,6 +1,6 @@
-import { Kysely, SqliteDialect } from "kysely";
+import { Kysely } from "kysely";
 
-import { openNodeSqliteDatabase } from "../db/node-sqlite-compat.js";
+import { NodeSqliteDialect, openNodeSqliteDatabase } from "../db/node-sqlite-compat.js";
 import { EmDashDatabaseError } from "./errors.js";
 import { kyselyLogOption } from "./instrumentation.js";
 import type { Database } from "./types.js";
@@ -31,7 +31,7 @@ export function createDatabase(config: DatabaseConfig): Kysely<Database> {
 				readOnly: config.readOnly,
 			});
 
-			const dialect = new SqliteDialect({
+			const dialect = new NodeSqliteDialect({
 				database: sqlite,
 			});
 

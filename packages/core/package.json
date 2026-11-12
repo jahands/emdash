@@ -298,6 +298,7 @@
     "test:smoke": "vitest run --config vitest.smoke.config.ts",
     "test:integration": "vitest run --config vitest.integration.config.ts",
     "test:repro": "vitest run --config vitest.repro.config.ts",
+    "migrations:baseline": "EMDASH_UPDATE_MIGRATION_BASELINE=1 vitest run tests/integration/database/migration-baseline.test.ts",
     "test:types": "vitest run --config vitest.types.config.ts"
   },
   "dependencies": {

@@ -1,5 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 
+import { SqliteAdapter, SqliteDialect } from "kysely";
+
 export interface NodeSqliteCompatStatement {
 	readonly reader: boolean;
 	all(parameters: ReadonlyArray<unknown>): unknown[];
@@ -102,4 +104,47 @@ function toBindings(parameters: ReadonlyArray<unknown>): SqliteBinding[] {
 		if (value instanceof Uint8Array) return value;
 		throw new TypeError(`Cannot bind ${Object.prototype.toString.call(value)} to SQLite`);
 	});
+}
+
+/**
+ * Adapter for a node:sqlite connection that can run a multi-statement script
+ * as one transaction. The script runs synchronously, so the transaction never
+ * spans an event-loop turn in which another connection in the same process
+ * could wait on its lock and block the thread.
+ */
+export class NodeSqliteAdapter extends SqliteAdapter {
+	readonly #database: NodeSqliteCompatDatabase;
+
+	constructor(database: NodeSqliteCompatDatabase) {
+		super();
+		this.#database = database;
+	}
+
+	executeScript(script: string): void {
+		this.#database.exec("BEGIN IMMEDIATE");
+		try {
+			this.#database.exec(script);
+			this.#database.exec("COMMIT");
+		} catch (error) {
+			try {
+				this.#database.exec("ROLLBACK");
+			} catch {
+				// The failed statement can already have ended the transaction.
+			}
+			throw error;
+		}
+	}
+}
+
+export class NodeSqliteDialect extends SqliteDialect {
+	readonly #database: NodeSqliteCompatDatabase;
+
+	constructor(config: { database: NodeSqliteCompatDatabase }) {
+		super(config);
+		this.#database = config.database;
+	}
+
+	override createAdapter(): SqliteAdapter {
+		return new NodeSqliteAdapter(this.#database);
+	}
 }

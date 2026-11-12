@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { SqliteDialectConfig } from "kysely";
+import type { KyselyConfig, SqliteDialectConfig } from "kysely";
 import {
 	DummyDriver,
 	Kysely,
@@ -23,7 +23,7 @@ import type {
 } from "../../src/database/migrations/runner.js";
 import { FailFastPostgresDialect } from "../../src/database/pg-migration-lock.js";
 import type { Database as DatabaseSchema } from "../../src/database/types.js";
-import { openNodeSqliteDatabase } from "../../src/db/node-sqlite-compat.js";
+import { NodeSqliteDialect, openNodeSqliteDatabase } from "../../src/db/node-sqlite-compat.js";
 import { waitForDeferredTasks } from "../../src/deferred-tasks.js";
 import { resetRegisteredCollectionsCacheForTests } from "../../src/schema/collection-slugs-cache.js";
 import { SchemaRegistry } from "../../src/schema/registry.js";
@@ -72,7 +72,7 @@ export function createTestDatabase(): Kysely<DatabaseSchema> {
 	const sqlite = openNodeSqliteDatabase(":memory:");
 
 	return new Kysely<DatabaseSchema>({
-		dialect: new SqliteDialect({
+		dialect: new NodeSqliteDialect({
 			database: sqlite,
 		}),
 	});
@@ -380,7 +380,9 @@ export interface PgTestContext {
  *
  * Call `teardownTestPostgresDatabase()` in afterEach to drop the schema.
  */
-export async function createTestPostgresDatabase(): Promise<PgTestContext> {
+export async function createTestPostgresDatabase(
+	options: { log?: KyselyConfig["log"] } = {},
+): Promise<PgTestContext> {
 	resetSchemaCachesForTests();
 	const connectionString = await getWorkerConnectionString();
 	const pool = await getSharedPool();
@@ -407,6 +409,7 @@ export async function createTestPostgresDatabase(): Promise<PgTestContext> {
 		// Same dialect as the production Postgres adapters so every PG test
 		// exercises the fail-fast migration lock.
 		dialect: new FailFastPostgresDialect({ pool: testPool }),
+		log: options.log,
 	});
 
 	return { db, schemaName };
