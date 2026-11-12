@@ -402,14 +402,16 @@ describe("ContentEditor mobile action bar", () => {
 		);
 		const toolbar = document.querySelector<HTMLElement>("[data-emdash-editor-bar]")!;
 		const before = actionRects(toolbar).map(({ rect }) => [rect.x, rect.y]);
-		await screen.getByRole("button", { name: "Fail save" }).click();
+		// The notification covers these test-only controls at the top of a phone screen.
+		const press = (name: string) => screen.getByRole("button", { name }).element().click();
+		press("Fail save");
 		await expect.poll(notices).toBe(1);
 		expect(actionRects(toolbar).map(({ rect }) => [rect.x, rect.y])).toEqual(before);
 		expect(document.querySelector('[role="alert"]')).toBeNull();
-		await screen.getByRole("button", { name: "Fail save" }).click();
+		press("Fail save");
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		await expect.poll(notices).toBe(1);
-		await screen.getByRole("button", { name: "Clear error" }).click();
+		press("Clear error");
 		await expect.poll(notices).toBe(0);
 	});
 });
