@@ -344,8 +344,12 @@ export async function runProfile(ctx) {
 			examples: [...new Set(site.serverErrors)].slice(0, 8),
 		};
 		result.failedResponses = failedResponses(result, site.origin);
-		await site.close();
+		// The build is measured with the server stopped, so the synchronous work can't
+		// outlast the server's keep-alive connections, but before close() ends the log
+		// the measurement writes to.
+		await site.stop();
 		measureBuild(ctx, site, result);
+		await site.close();
 		result.seconds = Math.round((Date.now() - startedAt) / 1000);
 	}
 	return result;
