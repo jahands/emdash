@@ -16,6 +16,15 @@ import { render } from "../../utils/render.js";
 const mockFetchSettings = vi.fn<() => Promise<Partial<SiteSettings>>>();
 const mockFetchBackupOverview = vi.fn<() => Promise<BackupOverview>>();
 const mockFetchSiteDomain = vi.fn<() => Promise<SiteDomain>>();
+const manifest: AdminManifest = {
+	version: "test",
+	hash: "test",
+	collections: {},
+	plugins: {},
+	authMode: "passkey",
+	storageAvailable: true,
+};
+const mockFetchManifest = vi.fn<() => Promise<AdminManifest>>();
 
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual("@tanstack/react-router");
@@ -35,14 +44,7 @@ vi.mock("../../../src/lib/api", async () => {
 		...actual,
 		fetchSettings: () => mockFetchSettings(),
 		fetchSiteDomain: () => mockFetchSiteDomain(),
-		fetchManifest: async () =>
-			({
-				version: "test",
-				hash: "test",
-				collections: {},
-				plugins: {},
-				authMode: "passkey",
-			}) as AdminManifest,
+		fetchManifest: () => mockFetchManifest(),
 		fetchEmailSettings: async () => ({ available: false }),
 	};
 });
@@ -88,6 +90,7 @@ const pages = [
 describe("Settings pages while their settings load", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		mockFetchManifest.mockResolvedValue(manifest);
 		mockFetchSiteDomain.mockResolvedValue({
 			configuredUrl: null,
 			siteOrigin: window.location.origin,
@@ -124,6 +127,38 @@ describe("Settings pages while their settings load", () => {
 			expect(largestMovement(contentBefore, { includeSize: false })).toBeLessThanOrEqual(1);
 		},
 	);
+
+	it("keeps the Backups header and content in place at phone width on a site without storage", async () => {
+		const pendingOverview = deferred<BackupOverview>();
+		mockFetchManifest.mockResolvedValue({ ...manifest, storageAvailable: false });
+		mockFetchBackupOverview.mockReturnValue(pendingOverview.promise);
+
+		const screen = await render(
+			<Toasty>
+				<div style={{ width: 358 }}>
+					<BackupSettings />
+				</div>
+			</Toasty>,
+		);
+		await expect.element(screen.getByRole("status").first()).toBeVisible();
+		await vi.waitFor(() => expect(mockFetchManifest).toHaveBeenCalled());
+		await new Promise((resolve) => requestAnimationFrame(resolve));
+		const heading = screen.getByRole("heading", { level: 1 }).element();
+		const header = heading.closest("[data-editor-header]")!;
+		const content = header.nextElementSibling!;
+		const headerBefore = snapshotPositions([heading, header]);
+		const contentBefore = snapshotPositions([content]);
+
+		pendingOverview.resolve({ ...overview, storageAvailable: false });
+		await expect
+			.element(
+				screen.getByText("Automatic backups need a storage backend", { exact: false }).first(),
+			)
+			.toBeVisible();
+
+		expect(largestMovement(headerBefore)).toBeLessThanOrEqual(1);
+		expect(largestMovement(contentBefore, { includeSize: false })).toBeLessThanOrEqual(1);
+	});
 
 	it("keeps the General form in place when the site address answers after the settings", async () => {
 		const siteDomain = deferred<SiteDomain>();

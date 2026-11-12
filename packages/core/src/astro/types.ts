@@ -181,6 +181,8 @@ export interface EmDashManifest {
 	 * Used by the login page to conditionally show the "Sign up" link.
 	 */
 	signupEnabled?: boolean;
+	/** Whether the site has a storage backend for media uploads and backups. */
+	storageAvailable?: boolean;
 	/** Whether the site is in staging (hidden from search engines). */
 	staging?: boolean;
 	/** Whether this host runs co-editing rooms. When false, the editor doesn't ask to join one. */

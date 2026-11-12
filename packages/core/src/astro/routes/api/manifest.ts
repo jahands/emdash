@@ -162,6 +162,7 @@ export const GET: APIRoute = async ({ locals, request }) => {
 					authMode: authMode.type === "external" ? authMode.providerType : "passkey",
 					providerManagedName,
 					signupEnabled,
+					storageAvailable: Boolean(emdash?.storage),
 					admin: adminBranding,
 				}
 			: {
@@ -177,6 +178,7 @@ export const GET: APIRoute = async ({ locals, request }) => {
 					authMode: "passkey",
 					providerManagedName,
 					signupEnabled,
+					storageAvailable: Boolean(emdash?.storage),
 					admin: adminBranding,
 				};
 
