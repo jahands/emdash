@@ -246,7 +246,7 @@ describe("SeoImageField", () => {
 		expect(
 			performance.getEntriesByName(new URL(idFileUrl, window.location.origin).href),
 		).toHaveLength(0);
-		expect(screen.getByRole("note")).toHaveTextContent(SHARING_URL_TITLE);
+		await expect.element(screen.getByRole("note")).toHaveTextContent(SHARING_URL_TITLE);
 		expect(screen.getByRole("note")).toHaveTextContent(SHARING_URL_DESCRIPTION);
 		await expect.element(button(screen, SAVE_IMAGE_URL)).toBeVisible();
 		expect(onChange).not.toHaveBeenCalled();
@@ -407,8 +407,24 @@ describe("SeoImageField", () => {
 		["https://cdn.example.com/og.png", "https://cdn.example.com/og.png"],
 		["data:image/png;base64,AAAA", "data:image/png;base64,AAAA"],
 	])("preserves or normalizes a non-ID image reference (%s)", async (image, expected) => {
+		const requested = new Set<string>();
+		const recordRequested = () => {
+			for (const preview of document.querySelectorAll("img")) {
+				const file = shownFile(preview);
+				if (file) requested.add(file);
+			}
+		};
+		const observer = new MutationObserver(recordRequested);
+		observer.observe(document.body, {
+			attributes: true,
+			attributeFilter: ["src"],
+			childList: true,
+			subtree: true,
+		});
 		const screen = await render(<Field image={image} />);
-		await vi.waitFor(() => expect(shownFile(screen.container.querySelector("img"))).toBe(expected));
+		recordRequested();
+		observer.disconnect();
+		expect([...requested]).toEqual([expected]);
 		await expect.element(button(screen, SAVE_IMAGE_URL)).not.toBeInTheDocument();
 	});
 
