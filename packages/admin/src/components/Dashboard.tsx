@@ -19,7 +19,7 @@ import {
 	CONTENT_STATUS_ICONS,
 	type ContentStatusState,
 } from "./ContentStatusBadge.js";
-import { CoreUpdateBanner } from "./CoreUpdateBanner.js";
+import { CoreUpdateBanner, useCoreUpdateStatus } from "./CoreUpdateBanner.js";
 import { getMutationError } from "./DialogError.js";
 import { MarketplaceMigrationBanner } from "./MarketplaceMigrationBanner.js";
 import { RouterLinkButton } from "./RouterLinkButton";
@@ -67,6 +67,8 @@ export function Dashboard({ manifest }: DashboardProps) {
 	});
 	const hasDashboardData = stats !== undefined;
 	const showDashboardData = !isError || hasDashboardData;
+	const dashboardDataSettled = hasDashboardData || isError;
+	const role = user?.role ?? 0;
 
 	return (
 		<div className="space-y-6">
@@ -76,16 +78,10 @@ export function Dashboard({ manifest }: DashboardProps) {
 				<QuickActions manifest={manifest} />
 			</div>
 
-			<CoreUpdateBanner />
-
 			{isError && <DashboardDataError />}
 
 			{showDashboardData && (
 				<>
-					{stats && (user?.role ?? 0) >= ROLE_ADMIN && <SiteImportHint stats={stats} />}
-					{stats && (
-						<SchedulerWarning stats={stats} canDismissPolicy={(user?.role ?? 0) >= ROLE_EDITOR} />
-					)}
 					<SummaryMetrics
 						stats={stats}
 						loading={isLoading}
@@ -108,8 +104,30 @@ export function Dashboard({ manifest }: DashboardProps) {
 				</>
 			)}
 
-			{/* Plugin widgets */}
-			<PluginWidgets manifest={manifest} />
+			{/* Recent Activity's height changes as its rows load, so widgets below it wait for them. */}
+			{dashboardDataSettled && <PluginWidgets manifest={manifest} />}
+
+			{dashboardDataSettled && <DashboardNotices stats={stats} role={role} />}
+		</div>
+	);
+}
+
+/**
+ * Notices about the site. They come last and appear together once everything
+ * they depend on has loaded, so they never push the dashboard's content or each
+ * other.
+ */
+function DashboardNotices({ stats, role }: { stats: DashboardStats | undefined; role: number }) {
+	const coreUpdate = useCoreUpdateStatus();
+	const siteImportHint = useSiteImportHint(stats, role >= ROLE_ADMIN);
+	const coreUpdateLoading = coreUpdate.isPending && coreUpdate.fetchStatus === "fetching";
+	if (coreUpdateLoading || siteImportHint.pending) return null;
+
+	return (
+		<div className="space-y-6 empty:hidden">
+			{stats && <SchedulerWarning stats={stats} canDismissPolicy={role >= ROLE_EDITOR} />}
+			{siteImportHint.show && <SiteImportHint onDismiss={siteImportHint.dismiss} />}
+			<CoreUpdateBanner status={coreUpdate.data} />
 		</div>
 	);
 }
@@ -250,20 +268,21 @@ function readSiteImportHintDismissed(): boolean {
 	}
 }
 
-function SiteImportHint({ stats }: { stats: DashboardStats }) {
-	const { t } = useLingui();
+/** Whether to suggest importing a site package, and whether that is still being worked out. */
+function useSiteImportHint(stats: DashboardStats | undefined, isAdmin: boolean) {
 	const [dismissed, setDismissed] = React.useState(readSiteImportHintDismissed);
 	// Any content or media rules out an import, so only ask the server when the
 	// counts already loaded for the dashboard leave it possible.
 	const mayBeEmpty =
-		stats.mediaCount === 0 && stats.collections.every((collection) => collection.total === 0);
-	const { data: capabilities } = useQuery({
+		stats !== undefined &&
+		stats.mediaCount === 0 &&
+		stats.collections.every((collection) => collection.total === 0);
+	const enabled = isAdmin && !dismissed && mayBeEmpty;
+	const { data: capabilities, isPending } = useQuery({
 		queryKey: TRANSFER_CAPABILITIES_QUERY_KEY,
 		queryFn: fetchTransferCapabilities,
-		enabled: !dismissed && mayBeEmpty,
+		enabled,
 	});
-
-	if (dismissed || !mayBeEmpty || !capabilities?.portableDomain.empty) return null;
 
 	const dismiss = () => {
 		setDismissed(true);
@@ -273,6 +292,16 @@ function SiteImportHint({ stats }: { stats: DashboardStats }) {
 			// Without storage the hint stays hidden until the next page load.
 		}
 	};
+
+	return {
+		show: enabled && capabilities?.portableDomain.empty === true,
+		pending: enabled && isPending,
+		dismiss,
+	};
+}
+
+function SiteImportHint({ onDismiss }: { onDismiss: () => void }) {
+	const { t } = useLingui();
 
 	return (
 		<Banner
@@ -295,7 +324,7 @@ function SiteImportHint({ stats }: { stats: DashboardStats }) {
 						variant="ghost"
 						size="sm"
 						shape="square"
-						onClick={dismiss}
+						onClick={onDismiss}
 						aria-label={t`Dismiss import suggestion`}
 					>
 						<X className="h-4 w-4" aria-hidden="true" />
