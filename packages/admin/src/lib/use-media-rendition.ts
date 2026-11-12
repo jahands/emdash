@@ -26,7 +26,7 @@ export function useMediaItem(mediaId: string | null) {
  * {@link renditionWidthFor}), or undefined until it has a size. The box
  * measured must take its size from the layout, not from the picture shown.
  * The width only grows, so a box that shrinks keeps the rendition it already
- * has.
+ * has. An image given to the ref stops downloading once React removes it.
  */
 export function useRenditionWidth<T extends HTMLElement>(options: {
 	fit?: "cover" | "contain";
@@ -61,6 +61,17 @@ export function useRenditionWidth<T extends HTMLElement>(options: {
 		observer.observe(parent);
 		return () => observer.disconnect();
 	}, [element, fit, measured, sourceWidth, sourceHeight]);
+
+	// Chromium can keep downloading an image React has removed until its `src` changes, and on
+	// HTTP/1.1 those downloads hold the connections the next screen needs. Passive cleanups
+	// run after React detaches the DOM, so an image still connected is staying (Fast Refresh
+	// re-running effects) and must keep its picture.
+	React.useEffect(() => {
+		if (!(element instanceof HTMLImageElement)) return;
+		return () => {
+			if (!element.isConnected) element.removeAttribute("src");
+		};
+	}, [element]);
 
 	return [setElement, width];
 }

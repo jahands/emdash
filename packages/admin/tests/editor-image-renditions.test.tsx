@@ -179,6 +179,22 @@ describe("admin image renditions", () => {
 		expect(width).toBeLessThanOrEqual(needed * 2);
 	});
 
+	it("stops a thumbnail's download when the grid unmounts", async () => {
+		const item = mediaItem(3);
+		const screenResult = await render(
+			<div style={{ width: 342 }}>
+				<MediaBrowserItem item={item} layout="grid" />
+			</div>,
+		);
+		const image = await screen.findByRole("img", { name: item.filename });
+		await vi.waitFor(() => expect(image).toHaveAttribute("src"));
+
+		await screenResult.unmount();
+
+		expect(image.isConnected).toBe(false);
+		expect(image).not.toHaveAttribute("src");
+	});
+
 	it("sizes a list row thumbnail to its box at the screen's pixel ratio", async () => {
 		vi.spyOn(window, "devicePixelRatio", "get").mockReturnValue(3);
 		const item = mediaItem(2);
