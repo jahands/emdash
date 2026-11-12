@@ -1416,10 +1416,10 @@ async function applySeedWrites(
 		}
 	}
 
-	if (result.redirects.created + result.redirects.updated > 0) {
-		const { publishRedirectChanges } = await import("../redirects/artifacts.js");
-		await publishRedirectChanges(db);
-	}
+	// Publish even when the seed has no redirects, so the first public request
+	// finds a current generation instead of repairing a missing one.
+	const { publishRedirectChanges } = await import("../redirects/artifacts.js");
+	await publishRedirectChanges(db);
 	await invalidateSeedCaches();
 
 	return { result, complete, progress };

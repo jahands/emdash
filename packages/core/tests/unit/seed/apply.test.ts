@@ -19,6 +19,8 @@ import { RelationRepository } from "../../../src/database/repositories/relation.
 import { selectTaxonomyDefs } from "../../../src/database/repositories/taxonomy-def.js";
 import { TaxonomyRepository } from "../../../src/database/repositories/taxonomy.js";
 import type { Database } from "../../../src/database/types.js";
+import { waitForDeferredTasks } from "../../../src/deferred-tasks.js";
+import { createRedirectSource } from "../../../src/redirects/artifacts.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 import { applySeed } from "../../../src/seed/apply.js";
 import type { SeedFile } from "../../../src/seed/types.js";
@@ -1174,6 +1176,19 @@ describe("applySeed", () => {
 	});
 
 	describe("redirects", () => {
+		it("publishes redirect artifacts for a seed without redirects, so readers need no repair", async () => {
+			await applySeed(db, { version: "1", settings: { title: "No redirects" } });
+
+			const recorder = new SqlRecordingPlugin();
+			const rules = await createRedirectSource(db.withPlugin(recorder)).load();
+			await waitForDeferredTasks();
+
+			expect(rules.version).not.toBeNull();
+			expect(recorder.queries.map((query) => query.sql)).toEqual([
+				expect.stringContaining('from "_emdash_redirect_state" as "state"'),
+			]);
+		});
+
 		it("should create redirects", async () => {
 			const seed: SeedFile = {
 				version: "1",
