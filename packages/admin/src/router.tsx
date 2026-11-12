@@ -151,7 +151,7 @@ import {
 } from "./lib/revision-list-cache.js";
 import {
 	lazyRouteModule,
-	prefetchRouteModules,
+	prefetchNextRouteModules,
 	routeLoadsEditor,
 	withRouteModules,
 } from "./lib/route-module.js";
@@ -595,12 +595,22 @@ function RootComponent() {
 	const fetching = useIsFetching();
 	// Loading modules runs them on the main thread, which delays keystrokes in the editor.
 	const editing = useMatches({ select: (matches) => routeLoadsEditor(matches.at(-1)?.fullPath) });
+	const [prefetchRound, nextPrefetchRound] = React.useReducer((round: number) => round + 1, 0);
 
 	React.useEffect(() => {
 		if (!ready || editing || fetching > 0) return;
-		const handle = window.requestIdleCallback(prefetchRouteModules);
-		return () => window.cancelIdleCallback(handle);
-	}, [ready, editing, fetching]);
+		let active = true;
+		const handle = window.requestIdleCallback(() => {
+			void (async () => {
+				const more = await prefetchNextRouteModules();
+				if (more && active) nextPrefetchRound();
+			})();
+		});
+		return () => {
+			active = false;
+			window.cancelIdleCallback(handle);
+		};
+	}, [ready, editing, fetching, prefetchRound]);
 
 	if (!ready) {
 		return <ConfigurationLoadingScreen />;

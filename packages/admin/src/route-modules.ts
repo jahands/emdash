@@ -67,8 +67,9 @@ export type AdminRouteModule = Exclude<
 >;
 
 /**
- * Modules that bring in the rich text editor. They load only when their route
- * is entered or a link to it shows intent, never in the background.
+ * Modules that bring in the rich text editor. While one of their routes is
+ * open, no other module loads in the background: running modules on the main
+ * thread delays keystrokes.
  */
 export const ADMIN_EDITOR_MODULES: ReadonlySet<AdminRouteModule> = new Set<AdminRouteModule>([
 	"components/ContentEditor",

@@ -59,10 +59,16 @@ export function lazyRouteModule<
 	};
 
 	function RouteModule(props: Props & React.JSX.IntrinsicAttributes) {
-		const [, rerender] = React.useReducer((count: number) => count + 1, 0);
+		const [attempt, rerender] = React.useReducer((count: number) => count + 1, 0);
 		if (Component) return <Component {...props} />;
 		if (failed) {
-			return <RouteModuleError module={module} onRetry={() => void preload().then(rerender)} />;
+			return (
+				<RouteModuleError
+					key={attempt}
+					module={module}
+					onRetry={() => void preload().then(rerender)}
+				/>
+			);
 		}
 		throw preload();
 	}
@@ -83,8 +89,6 @@ export function withRouteModules<Page extends (props: never) => React.ReactNode>
 	});
 }
 
-let prefetched = false;
-
 /** Whether the route at `path` (a route path or URL path below the admin base) shows the editor. */
 export function routeLoadsEditor(path: string | undefined): boolean {
 	return (
@@ -92,15 +96,41 @@ export function routeLoadsEditor(path: string | undefined): boolean {
 	);
 }
 
-/** Loads every route module except the editor's, for screens not yet visited. */
-export function prefetchRouteModules(): void {
-	if (prefetched) return;
-	prefetched = true;
-	for (const [module, load] of Object.entries(ROUTE_MODULE_LOADERS)) {
-		if (ADMIN_EDITOR_MODULES.has(module as AdminRouteModule)) continue;
-		load().catch(() => {});
+let prefetchQueue: AdminRouteModule[][] | undefined;
+let prefetching: Promise<boolean> | undefined;
+
+/**
+ * Loads the next route modules for screens not yet visited, and resolves with
+ * whether any are left. The editor's come first, together: they are the
+ * largest and the likeliest next screen. Then one other screen at a time, so
+ * a prefetch never holds the connections a screen's own requests need. With
+ * Data Saver on, screens load when a link to them shows intent instead.
+ */
+export function prefetchNextRouteModules(): Promise<boolean> {
+	if (prefersReducedData()) return Promise.resolve(false);
+	if (!prefetchQueue) {
+		const modules = Object.keys(ROUTE_MODULE_LOADERS) as AdminRouteModule[];
+		prefetchQueue = [
+			modules.filter((module) => ADMIN_EDITOR_MODULES.has(module)),
+			...modules.filter((module) => !ADMIN_EDITOR_MODULES.has(module)).map((module) => [module]),
+		];
 	}
+	const queue = prefetchQueue;
+	prefetching ??= (async () => {
+		const group = queue.shift() ?? [];
+		await Promise.all(group.map((module) => ROUTE_MODULE_LOADERS[module]().catch(() => {})));
+		prefetching = undefined;
+		return queue.length > 0;
+	})();
+	return prefetching;
 }
+
+function prefersReducedData(): boolean {
+	const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
+	return connection?.saveData === true;
+}
+
+type LoadFailure = "offline" | "unreachable" | "outdated";
 
 /**
  * Shown when a route module fails to load. Online, the likeliest cause is a
@@ -108,20 +138,69 @@ export function prefetchRouteModules(): void {
  */
 function RouteModuleError({ module, onRetry }: { module: AdminRouteModule; onRetry: () => void }) {
 	const { t } = useLingui();
+	const [failure, setFailure] = React.useState<LoadFailure | undefined>(() =>
+		navigator.onLine ? undefined : "offline",
+	);
+
 	React.useEffect(() => {
-		if (shouldReload(module)) reloadPage();
+		const goOffline = () => setFailure("offline");
+		const goOnline = () => onRetry();
+		window.addEventListener("offline", goOffline);
+		window.addEventListener("online", goOnline);
+		return () => {
+			window.removeEventListener("offline", goOffline);
+			window.removeEventListener("online", goOnline);
+		};
+	}, [onRetry]);
+
+	React.useEffect(() => {
+		if (!navigator.onLine) return;
+		if (shouldReload(module)) {
+			reloadPage();
+			return;
+		}
+		let active = true;
+		void (async () => {
+			const reachable = await serverReachable();
+			if (active && navigator.onLine) setFailure(reachable ? "outdated" : "unreachable");
+		})();
+		return () => {
+			active = false;
+		};
 	}, [module]);
+
+	const outdated = failure === "outdated";
 	return (
-		<div className="flex items-center justify-center min-h-[50vh]">
-			<div className="text-center" role="alert">
-				<h1 className="text-2xl font-semibold leading-tight">{t`This page couldn't load`}</h1>
-				<p className="mt-2 text-sm text-kumo-subtle">{t`Check your connection, then try again.`}</p>
-				<Button onClick={onRetry} className="mt-4">
-					{t`Try again`}
+		<div className="flex items-center justify-center min-h-[50vh] p-4">
+			<div className="flex flex-col items-center text-center" role="alert">
+				<h1 className="text-2xl font-semibold leading-tight">
+					{failure === "offline" ? t`You're offline` : t`This page couldn't load`}
+				</h1>
+				{failure && (
+					<p className="mt-2 text-sm text-kumo-subtle">
+						{failure === "offline"
+							? t`This page will load when you're back online.`
+							: failure === "unreachable"
+								? t`The server can't be reached. Check your connection, then try again.`
+								: t`The admin may have been updated. Reload the page to get the latest version.`}
+					</p>
+				)}
+				<Button onClick={outdated ? reloadPage : onRetry} className="mt-4">
+					{outdated ? t`Reload page` : t`Try again`}
 				</Button>
 			</div>
 		</div>
 	);
+}
+
+/** Any response, even an error status, means the browser can reach the server. */
+async function serverReachable(): Promise<boolean> {
+	try {
+		await fetch(window.location.href, { method: "HEAD", cache: "no-store" });
+		return true;
+	} catch {
+		return false;
+	}
 }
 
 function shouldReload(module: AdminRouteModule): boolean {
