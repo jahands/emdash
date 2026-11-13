@@ -2,7 +2,7 @@ import type { MessageDescriptor, Messages } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 
 import { resolveLocale } from "./config.js";
-import { loadMessages } from "./loadMessages.js";
+import { loadServerMessages } from "./loadServerMessages.js";
 
 export interface VisualEditingToolbarLabels {
 	publish: string;
@@ -128,10 +128,43 @@ export function translateVisualEditingToolbarLabels(
 	};
 }
 
+export interface AdminBootLabels {
+	/** The accessible name of the spinner the admin page shows until the admin loads. */
+	loading: string;
+	/** Shown in place of the admin when its code or translations fail to load. */
+	error: AdminBootErrorLabels;
+}
+
+export interface AdminBootErrorLabels {
+	title: string;
+	retry: string;
+}
+
+const ADMIN_BOOT_MESSAGES = {
+	loading: msg`Loading`,
+	title: msg`Failed to load admin`,
+	retry: msg`Try again`,
+};
+
+/**
+ * Labels for the admin page before the admin loads. They come from the server
+ * catalog because the admin's own catalog may be what failed to load.
+ */
+export async function loadAdminBootLabels(locale: string): Promise<AdminBootLabels> {
+	const messages = await loadServerMessages(locale);
+	return {
+		loading: resolveToolbarMessage(messages, ADMIN_BOOT_MESSAGES.loading),
+		error: {
+			title: resolveToolbarMessage(messages, ADMIN_BOOT_MESSAGES.title),
+			retry: resolveToolbarMessage(messages, ADMIN_BOOT_MESSAGES.retry),
+		},
+	};
+}
+
 export async function loadVisualEditingToolbarLabels(
 	request: Request,
 ): Promise<VisualEditingToolbarLabels> {
 	const locale = resolveLocale(request);
-	const messages: Messages = await loadMessages(locale);
+	const messages: Messages = await loadServerMessages(locale);
 	return translateVisualEditingToolbarLabels(messages);
 }

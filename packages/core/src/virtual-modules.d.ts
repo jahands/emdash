@@ -30,8 +30,11 @@ declare module "virtual:emdash/config" {
 		astroCspEnabled?: boolean;
 		trailingSlash?: "always" | "never" | "ignore";
 		robotsTxtOverridden?: boolean;
+		sessionCookieName?: string;
 		/** `routePattern` of the image endpoint EmDash installed; absent when it installed none. */
 		imageEndpointRoute?: string;
+		/** Origin to absolutize same-origin media against for Astro's image service; set when the build doesn't know the site origin. */
+		internalMediaOrigin?: string;
 	}
 
 	const config: VirtualConfig;
@@ -216,6 +219,26 @@ declare module "virtual:emdash/scheduler" {
 	 * Trigger drives scheduled work instead.
 	 */
 	export const createScheduler: CreateSchedulerFn | null;
+}
+
+declare module "virtual:emdash/rooms" {
+	import type { CreateRoomHostFn } from "./emdash-runtime.js";
+	/**
+	 * Factory for the room host with co-editing on: in-process on
+	 * `@astrojs/node`, Durable Objects on `@astrojs/cloudflare`. `null`
+	 * otherwise, which gives every join single-editor mode.
+	 */
+	export const createRoomHost: CreateRoomHostFn | null;
+}
+
+declare module "virtual:emdash/admin-messages" {
+	/** URL of each available admin message catalog, keyed by locale code. */
+	export const adminMessageUrls: Record<string, string>;
+}
+
+declare module "virtual:emdash/admin-preloads" {
+	/** The admin's JavaScript files, as JSON for `adminPreloadHrefs()`. Empty in dev. */
+	export const adminPreloadsJson: string;
 }
 
 declare module "virtual:emdash/admin-loader" {

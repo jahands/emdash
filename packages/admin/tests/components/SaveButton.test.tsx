@@ -1,6 +1,7 @@
 import * as React from "react";
 import { describe, it, expect } from "vitest";
 
+import "../../dist/styles.css";
 import { SaveButton } from "../../src/components/SaveButton";
 import { render } from "../utils/render.tsx";
 
@@ -59,24 +60,42 @@ describe("SaveButton", () => {
 		expect(savedWidth).toBeCloseTo(dirtyWidth);
 	});
 
-	it("runs the exit, content swap, and enter sequence", async () => {
+	it("changes its label in place, fading between states without sliding", async () => {
+		const labels = new Set(["Save", "Saving...", "Saved"]);
 		const screen = await render(<SaveButton isDirty={true} isSaving={false} />);
-		const states = screen.container.querySelectorAll("[data-save-button-state]");
-		expect(states).toHaveLength(3);
-		const visibleState = () =>
-			screen.container.querySelector<HTMLElement>("[data-save-button-visible-state]")!;
-		expect(visibleState()).toHaveAttribute("data-save-button-visible-state", "save");
+		const visibleLabels = () =>
+			[...screen.container.querySelectorAll<HTMLElement>("span")].filter(
+				(element) =>
+					labels.has(element.textContent ?? "") &&
+					element.children.length === 0 &&
+					element.getBoundingClientRect().width > 1 &&
+					element.checkVisibility({ opacityProperty: true, visibilityProperty: true }),
+			);
+		const positions = new Map<string, Set<string>>();
+		let sampling = true;
+		const sample = () => {
+			for (const label of visibleLabels()) {
+				const { left, top } = label.getBoundingClientRect();
+				const seen = positions.get(label.textContent!) ?? new Set();
+				seen.add(`${left.toFixed(1)},${top.toFixed(1)}`);
+				positions.set(label.textContent!, seen);
+			}
+			if (sampling) requestAnimationFrame(sample);
+		};
+		sample();
 
 		await screen.rerender(<SaveButton isDirty={true} isSaving={true} />);
-		await expect.element(screen.getByRole("button", { name: "Saving..." })).toBeDisabled();
-		await expect.element(visibleState()).toHaveClass("is-exit");
-		expect(visibleState()).toHaveAttribute("data-save-button-visible-state", "save");
-
 		await expect
-			.element(visibleState())
-			.toHaveAttribute("data-save-button-visible-state", "saving");
-		await expect.element(visibleState()).not.toHaveClass("is-exit");
-		await expect.element(visibleState()).not.toHaveClass("is-enter-start");
+			.poll(() => visibleLabels().map((label) => label.textContent))
+			.toEqual(["Saving..."]);
+		await screen.rerender(<SaveButton isDirty={false} isSaving={false} />);
+		await expect.poll(() => visibleLabels().map((label) => label.textContent)).toEqual(["Saved"]);
+		sampling = false;
+		sample();
+
+		expect([...positions.keys()].toSorted()).toEqual(["Save", "Saved", "Saving..."]);
+		for (const [label, seen] of positions)
+			expect([label, [...seen]]).toEqual([label, [...seen].slice(0, 1)]);
 	});
 
 	it("respects external disabled prop", async () => {

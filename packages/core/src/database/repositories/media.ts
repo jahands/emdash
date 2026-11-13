@@ -424,6 +424,24 @@ export class MediaRepository {
 	}
 
 	/**
+	 * Find media items by id, in one query per JSON bind's worth of ids.
+	 * Unknown ids are left out.
+	 */
+	async findByIds(ids: readonly string[]): Promise<MediaItem[]> {
+		const items: MediaItem[] = [];
+		for (const batch of chunkJsonRows([...new Set(ids)])) {
+			const result = await sql<MediaRow>`
+				WITH requested AS (${jsonTextValues(this.db, batch)})
+				SELECT media.*
+				FROM media
+				INNER JOIN requested ON requested.value = media.id
+			`.execute(this.db);
+			for (const row of result.rows) items.push(this.rowToItem(row));
+		}
+		return items;
+	}
+
+	/**
 	 * Map each storage key to the id of its media item, in one query per JSON
 	 * bind's worth of keys. Unknown keys are left out.
 	 */

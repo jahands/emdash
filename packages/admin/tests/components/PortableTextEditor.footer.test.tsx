@@ -1,13 +1,12 @@
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { screen } from "@testing-library/react";
-import CharacterCount from "@tiptap/extension-character-count";
-import { useEditor } from "@tiptap/react";
+import { useEditor, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import * as React from "react";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
-import { _EditorFooter, countWords } from "../../src/components/PortableTextEditor";
+import { _EditorFooter } from "../../src/components/PortableTextEditor";
 import { render } from "../utils/render.tsx";
 
 // The msg macro hashes to the same message id as the corresponding macro call
@@ -30,14 +29,23 @@ afterAll(() => {
 	i18n.loadAndActivate({ locale: "en", messages: {} });
 });
 
-function FooterHarness({ content, variant }: { content: string; variant?: "boxed" | "document" }) {
+function FooterHarness({
+	content,
+	variant,
+	onEditor,
+}: {
+	content: string;
+	variant?: "boxed" | "document";
+	onEditor?: (editor: Editor) => void;
+}) {
 	const editor = useEditor({
-		extensions: [StarterKit, CharacterCount.configure({ wordCounter: countWords })],
+		extensions: [StarterKit],
 		content,
 		immediatelyRender: true,
 	});
 
 	if (!editor) return null;
+	onEditor?.(editor);
 	return <_EditorFooter editor={editor} variant={variant} />;
 }
 
@@ -72,5 +80,23 @@ describe("EditorFooter in the document layout", () => {
 		await vi.waitFor(() => {
 			expect(screen.getByText("1 Wort")).toBeTruthy();
 		});
+	});
+});
+
+describe("EditorFooter while editing", () => {
+	it("updates the metrics as text is typed into one block of many", async () => {
+		let editor: Editor | undefined;
+		const blocks = "<p>Hallo Welt</p>".repeat(40);
+		void render(<FooterHarness content={blocks} onEditor={(e) => (editor = e)} />);
+		await vi.waitFor(() => {
+			expect(screen.getByText("80 Wörter")).toBeTruthy();
+		});
+
+		const { state, view } = editor!;
+		view.dispatch(state.tr.insertText("日本 und ", state.doc.child(0).nodeSize + 1));
+		await vi.waitFor(() => {
+			expect(screen.getByText("83 Wörter")).toBeTruthy();
+		});
+		expect(screen.getByText("407 Zeichen")).toBeTruthy();
 	});
 });

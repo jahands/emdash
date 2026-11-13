@@ -103,6 +103,11 @@ import * as m092 from "./092_plugin_kv_options.js";
 import * as m093 from "./093_menu_item_orphans.js";
 import * as m094 from "./094_media_usage_file_url_reindex.js";
 import * as m095 from "./095_plugin_storage_unique_scope.js";
+import * as m096 from "./096_revision_kind_and_editors.js";
+import * as m097 from "./097_room_storage.js";
+import * as m098 from "./098_content_live_list_indexes.js";
+import * as m099 from "./099_content_sitemap_indexes.js";
+import { applyMigrationBaseline } from "./baseline.js";
 import { CONTENT_SIZED_MIGRATIONS } from "./content-sized.js";
 
 const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
@@ -200,6 +205,10 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"093_menu_item_orphans": m093,
 	"094_media_usage_file_url_reindex": m094,
 	"095_plugin_storage_unique_scope": m095,
+	"096_revision_kind_and_editors": m096,
+	"097_room_storage": m097,
+	"098_content_live_list_indexes": m098,
+	"099_content_sitemap_indexes": m099,
 });
 
 /** Ordered names from the statically registered migration set. */
@@ -432,18 +441,27 @@ const MIGRATION_TABLE_MISSING_PATTERN = new RegExp(
  * permission errors, or other unexpected driver problems behind a 10s wait
  * and a bogus "we're done" verdict.
  */
-export async function getAppliedMigrationCount(db: Kysely<Database>): Promise<number | null> {
+export async function getAppliedMigrationCount(
+	db: Kysely<Database>,
+	schema?: string,
+): Promise<number | null> {
+	const table = schema ? sql.table(`${schema}.${MIGRATION_TABLE}`) : sql.ref(MIGRATION_TABLE);
 	try {
 		const result = await sql<{ count: number }>`
-			SELECT COUNT(*) as count FROM ${sql.ref(MIGRATION_TABLE)}
+			SELECT COUNT(*) as count FROM ${table}
 		`.execute(db);
 		return Number(result.rows[0]?.count ?? 0);
 	} catch (error) {
-		if (MIGRATION_TABLE_MISSING_PATTERN.test(deepErrorMessage(error))) {
+		if (isMigrationTableMissingError(error)) {
 			return null;
 		}
 		throw error;
 	}
+}
+
+/** Whether `error` says the migration table does not exist. */
+export function isMigrationTableMissingError(error: unknown): boolean {
+	return MIGRATION_TABLE_MISSING_PATTERN.test(deepErrorMessage(error));
 }
 
 /**
@@ -565,6 +583,11 @@ async function assertWithinContentRowLimit(
  * every table in the database (twice!) just to check if the migration
  * tables exist. On D1 with ~57 tables, that's ~116 queries saved per init.
  *
+ * A database without the migration table gets its schema from the squashed
+ * baseline in one atomic step (see `applyMigrationBaseline`), instead of one
+ * round trip per statement; migrations newer than the baseline then run one
+ * by one.
+ *
  * Concurrent-migration safety: the Kysely Migrator's `acquireMigrationLock`
  * is a no-op for SQLite, so two callers running this concurrently against the
  * same database will both try to apply pending migrations. (D1 and Postgres
@@ -583,13 +606,25 @@ export async function runMigrations(
 	// Fast path: check if all migrations are already applied.
 	// A single cheap query vs the Migrator's full schema introspection, or
 	// none when the caller already read the count.
-	if (!options?.migrationTableSchema) {
-		const initialCount =
-			options?.appliedCount !== undefined
-				? options.appliedCount
-				: await getAppliedMigrationCount(db);
-		if (isMigrationCountCurrent(initialCount)) {
-			return { applied: [] };
+	const schema = options?.migrationTableSchema;
+	const initialCount =
+		options?.appliedCount !== undefined && !schema
+			? options.appliedCount
+			: await getAppliedMigrationCount(db, schema);
+	if (!schema && isMigrationCountCurrent(initialCount)) {
+		return { applied: [] };
+	}
+
+	let baselineApplied: string[] = [];
+	if (initialCount === null) {
+		baselineApplied =
+			(await applyMigrationBaseline(db, MIGRATION_NAMES, {
+				migrationTable: MIGRATION_TABLE,
+				lockTable: MIGRATION_LOCK_TABLE,
+				schema,
+			})) ?? [];
+		if (baselineApplied.length === MIGRATION_COUNT) {
+			return { applied: baselineApplied };
 		}
 	}
 
@@ -601,7 +636,10 @@ export async function runMigrations(
 
 	const { error, results } = await migrator.migrateToLatest();
 
-	const applied = results?.filter((r) => r.status === "Success").map((r) => r.migrationName) ?? [];
+	const applied = [
+		...baselineApplied,
+		...(results?.filter((r) => r.status === "Success").map((r) => r.migrationName) ?? []),
+	];
 
 	if (error) {
 		// Walk error.cause to get the underlying driver message — Kysely

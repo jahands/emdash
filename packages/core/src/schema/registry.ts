@@ -51,6 +51,7 @@ import type {
 	ImportCollectionResult,
 } from "../transfer/schema-importer.js";
 import { chunks, SQL_BATCH_SIZE } from "../utils/chunks.js";
+import { settleAll } from "../utils/settle.js";
 import { resetRegisteredCollectionsCache } from "./collection-slugs-cache.js";
 import { MAX_SCHEMA_SLUG_LENGTH, SCHEMA_SLUG_PATTERN } from "./slug.js";
 import {
@@ -396,62 +397,54 @@ export class SchemaRegistry {
 	 * Get a collection with all its fields
 	 */
 	async getCollectionWithFields(slug: string): Promise<CollectionWithFields | null> {
-		const collection = await this.getCollection(slug);
+		const [collection, fieldRows] = await Promise.all([
+			this.getCollection(slug),
+			this.db
+				.selectFrom("_emdash_fields as field")
+				.innerJoin("_emdash_collections as collection", "collection.id", "field.collection_id")
+				.where("collection.slug", "=", slug)
+				.selectAll("field")
+				.orderBy("field.sort_order", "asc")
+				.orderBy("field.created_at", "asc")
+				.execute(),
+		]);
 		if (!collection) return null;
 
-		const fields = await this.listFields(collection.id);
-
-		return { ...collection, fields };
+		return { ...collection, fields: fieldRows.map(this.mapFieldRow) };
 	}
 
 	/**
-	 * List every collection together with its fields in O(1) query shapes
-	 * — one for collections, then one batched query for the fields of every
-	 * returned collection — instead of the N+1 pattern of `listCollections`
-	 * + per-collection `listFields`. The fields query is chunked at
-	 * `SQL_BATCH_SIZE` to stay under D1's bound-parameter limit, so on
-	 * sites with more than `SQL_BATCH_SIZE` collections the field fetch
-	 * becomes `ceil(collectionCount / SQL_BATCH_SIZE)` queries — still
-	 * a constant factor, not N+1. Typical sites have well under
-	 * `SQL_BATCH_SIZE` collections, so this is two queries in practice.
+	 * List every collection together with its fields in two queries that run
+	 * together — every collection and every field — instead of the N+1
+	 * pattern of `listCollections` + per-collection `listFields`. Reading
+	 * every field needs no bound parameters, so no collection count can hit
+	 * D1's bound-parameter limit.
 	 *
-	 * Used by the manifest build, which previously paid N+1 round-trips on
-	 * every admin request. Each round-trip costs ~80–150ms against the D1
-	 * primary on a busy link, so a 10-collection site spent ~1 s rebuilding
-	 * a manifest that is now built fresh per admin request (no cache).
+	 * Used by the manifest build, which is rebuilt per admin request (no cache),
+	 * so each round trip it saves is paid on every admin load.
 	 */
 	async listCollectionsWithFields(): Promise<CollectionWithFields[]> {
-		const collectionRows = await this.db
-			.selectFrom("_emdash_collections")
-			.selectAll()
-			.orderBy(collectionOrder, "asc")
-			.orderBy("slug", "asc")
-			.execute();
-
-		if (collectionRows.length === 0) return [];
-
-		const fieldsByCollection = new Map<string, Field[]>();
-		// Chunk to stay under D1's bound-parameter limit. Typical sites have
-		// well under SQL_BATCH_SIZE collections, so this is a single query
-		// in practice; on larger sites it becomes a small constant number
-		// of queries, never N+1.
-		for (const idChunk of chunks(
-			collectionRows.map((c) => c.id),
-			SQL_BATCH_SIZE,
-		)) {
-			const fieldRows = await this.db
+		const [collectionRows, fieldRows] = await settleAll([
+			this.db
+				.selectFrom("_emdash_collections")
+				.selectAll()
+				.orderBy(collectionOrder, "asc")
+				.orderBy("slug", "asc")
+				.execute(),
+			this.db
 				.selectFrom("_emdash_fields")
-				.where("collection_id", "in", idChunk)
 				.selectAll()
 				.orderBy("collection_id", "asc")
 				.orderBy("sort_order", "asc")
 				.orderBy("created_at", "asc")
-				.execute();
-			for (const row of fieldRows) {
-				const list = fieldsByCollection.get(row.collection_id) ?? [];
-				list.push(this.mapFieldRow(row));
-				fieldsByCollection.set(row.collection_id, list);
-			}
+				.execute(),
+		]);
+
+		const fieldsByCollection = new Map<string, Field[]>();
+		for (const row of fieldRows) {
+			const list = fieldsByCollection.get(row.collection_id) ?? [];
+			list.push(this.mapFieldRow(row));
+			fieldsByCollection.set(row.collection_id, list);
 		}
 
 		return collectionRows.map((c) => ({
@@ -2034,6 +2027,38 @@ export class SchemaRegistry {
 			${createIndex} ${sql.ref(`idx_${tableName}_loc_crt`)}
 			ON ${sql.ref(tableName)} (deleted_at, locale, created_at DESC, id DESC)
 		`.execute(conn);
+
+		// Postgres can't order by the `deleted_at`-led composites above, because
+		// `IS NULL` isn't an equality to its planner; SQLite can. Keep these names
+		// and definitions identical to migration 098.
+		if (isPostgres(conn)) {
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_crt`)}
+				ON ${sql.ref(tableName)} (created_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_upd`)}
+				ON ${sql.ref(tableName)} (updated_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_live_pub`)}
+				ON ${sql.ref(tableName)} (status, published_at DESC, id DESC)
+				WHERE deleted_at IS NULL
+			`.execute(conn);
+
+			// Sitemaps read indexable entries in ID order from this index alone.
+			// Keep the name and definition identical to migration 099.
+			await sql`
+				${createIndex} ${sql.ref(`idx_${tableName}_sitemap`)}
+				ON ${sql.ref(tableName)} (id)
+				INCLUDE (updated_at, translation_group, slug, published_at, locale)
+				WHERE status = 'published' AND deleted_at IS NULL AND slug IS NOT NULL AND TRIM(slug) <> ''
+			`.execute(conn);
+		}
 	}
 
 	private getFieldIndexName(fieldId: string): string {

@@ -72,7 +72,7 @@ describe("handleContentUpdate _rev against an interleaved write", () => {
 		});
 	}
 
-	it("returns CONFLICT instead of staging a draft over a write that landed between the two reads", async () => {
+	it("returns CONFLICT instead of staging a draft over a write that landed after the _rev check", async () => {
 		const created = await runtime.handleContentCreate("posts", {
 			data: { title: "Live" },
 			slug: "live",
@@ -85,12 +85,17 @@ describe("handleContentUpdate _rev against an interleaved write", () => {
 		expect(read.success).toBe(true);
 		const staleRev = read.data!._rev;
 
-		interleaveBeforeSecondRead("findById", async () => {
-			const other = await runtime.handleContentUpdate("posts", id, {
-				data: { title: "Other writer" },
+		const originalStage = ContentRepository.prototype.stageDraftRevision;
+		const stageSpy = vi
+			.spyOn(ContentRepository.prototype, "stageDraftRevision")
+			.mockImplementation(async function (this: ContentRepository, ...args) {
+				stageSpy.mockRestore();
+				const other = await runtime.handleContentUpdate("posts", id, {
+					data: { title: "Other writer" },
+				});
+				expect(other.success).toBe(true);
+				return originalStage.apply(this, args);
 			});
-			expect(other.success).toBe(true);
-		});
 
 		const stale = await runtime.handleContentUpdate("posts", id, {
 			data: { title: "Stale writer" },

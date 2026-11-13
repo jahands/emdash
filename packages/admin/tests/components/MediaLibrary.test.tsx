@@ -438,6 +438,7 @@ describe("MediaLibrary", () => {
 				onOpenFolder,
 			});
 
+			await expect.element(screen.getByRole("button", { name: "photo.jpg" })).toBeVisible();
 			const gridSource = screen.getByRole("button", { name: "photo.jpg" }).element();
 			expect(gridSource.querySelector("img")).toHaveAttribute("draggable", "false");
 			const gridTarget = screen
@@ -504,6 +505,7 @@ describe("MediaLibrary", () => {
 				canMoveMedia: () => true,
 				onMoveMedia,
 			});
+			await expect.element(screen.getByRole("button", { name: "photo.jpg" })).toBeVisible();
 			const source = screen.getByRole("button", { name: "photo.jpg" }).element();
 
 			source.click();
@@ -666,16 +668,51 @@ describe("MediaLibrary", () => {
 			expect(rows[2]?.element()).toHaveTextContent("photo.jpg");
 		});
 
-		it("renders the initial folder loader and error inside the list table", async () => {
-			const onRetryFolders = vi.fn();
+		it("waits for the first folder page before showing the library", async () => {
 			const screen = await renderLibrary({
 				foldersLoading: true,
+				items: [makeMediaItem({ filename: "photo.jpg" })],
+				pagination: makePagination(),
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(screen.getByAltText("photo.jpg").query()).toBeNull();
+			expect(screen.getByRole("searchbox", { name: "Search media" }).query()).toBeNull();
+			expect(
+				screen.getByRole("heading", { name: "Media Library" }).element().closest("[aria-busy]"),
+			).not.toBeNull();
+
+			await screen.rerender(
+				<QueryWrapper>
+					<MediaLibrary
+						items={[makeMediaItem({ filename: "photo.jpg" })]}
+						pagination={makePagination()}
+					/>
+				</QueryWrapper>,
+			);
+			await expect.element(screen.getByAltText("photo.jpg")).toBeVisible();
+			expect(screen.getByRole("heading", { name: "Folders" }).query()).toBeNull();
+		});
+
+		it("renders a later folder loader and error inside the list table", async () => {
+			const onRetryFolders = vi.fn();
+			const screen = await renderLibrary({
 				items: [makeMediaItem({ filename: "photo.jpg" })],
 				pagination: makePagination(),
 				onRetryFolders,
 			});
 
 			await screen.getByRole("tab", { name: "List view" }).click();
+			await screen.rerender(
+				<QueryWrapper>
+					<MediaLibrary
+						foldersLoading
+						items={[makeMediaItem({ filename: "photo.jpg" })]}
+						pagination={makePagination()}
+						onRetryFolders={onRetryFolders}
+					/>
+				</QueryWrapper>,
+			);
 			let rows = screen.getByRole("row").all();
 			expect(rows[1]?.element()).toHaveTextContent("Loading folders");
 			expect(rows[1]?.element().querySelector("td")).toHaveAttribute("colspan", "5");
@@ -739,6 +776,7 @@ describe("MediaLibrary", () => {
 				onLoadMoreFolders: vi.fn(),
 			});
 
+			await expect.element(screen.getByRole("heading", { name: "Folders" })).toBeVisible();
 			const folderSection = screen
 				.getByRole("heading", { name: "Folders" })
 				.element()

@@ -5,7 +5,6 @@ import * as React from "react";
 
 import {
 	decideTransferApproval,
-	fetchTransferApprovals,
 	TRANSFER_APPROVALS_QUERY_KEY,
 	type TransferApproval,
 } from "../../../lib/api/transfer.js";
@@ -13,21 +12,14 @@ import { ConfirmDialog } from "../../ConfirmDialog.js";
 import { getMutationError } from "../../DialogError.js";
 import { SettingRow, SettingsSection } from "../SettingsLayout.js";
 import { shortDigest } from "./labels.js";
+import { pendingTransferApprovalsQueryOptions } from "./queries.js";
 import { useTransferUsers } from "./useTransferUsers.js";
-
-const APPROVALS_REFRESH_MS = 30_000;
 
 export function ApprovalsSection() {
 	const { t, i18n } = useLingui();
 	const queryClient = useQueryClient();
 	const [approving, setApproving] = React.useState<TransferApproval | null>(null);
-	const approvalsQuery = useInfiniteQuery({
-		queryKey: TRANSFER_APPROVALS_QUERY_KEY,
-		queryFn: ({ pageParam }) => fetchTransferApprovals({ status: "pending", cursor: pageParam }),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
-		refetchInterval: APPROVALS_REFRESH_MS,
-	});
+	const approvalsQuery = useInfiniteQuery(pendingTransferApprovalsQueryOptions());
 	const usersQuery = useTransferUsers();
 	const userNames = new Map(
 		(usersQuery.data ?? []).map((user) => [user.id, user.name || user.email]),

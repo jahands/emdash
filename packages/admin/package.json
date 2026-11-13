@@ -1,16 +1,27 @@
 {
   "name": "@emdash-cms/admin",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "description": "Admin UI for EmDash CMS",
   "type": "module",
   "main": "dist/index.js",
   "files": [
     "dist"
   ],
+  "sideEffects": [
+    "*.css"
+  ],
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./app": {
+      "types": "./dist/app.d.ts",
+      "default": "./dist/app.js"
+    },
+    "./route-modules": {
+      "types": "./dist/route-modules.d.ts",
+      "default": "./dist/route-modules.js"
     },
     "./styles.css": "./dist/styles.css",
     "./locales": {
@@ -38,13 +49,33 @@
       "types": "./dist/portable-text-table.d.ts",
       "default": "./dist/portable-text-table.js"
     },
+    "./internal/portable-text": {
+      "types": "./dist/internal/portable-text.d.ts",
+      "default": "./dist/internal/portable-text.js"
+    },
+    "./internal/portable-text-y-sync": {
+      "types": "./dist/internal/portable-text-y-sync.d.ts",
+      "default": "./dist/internal/portable-text-y-sync.js"
+    },
+    "./internal/co-editing": {
+      "types": "./dist/internal/co-editing.d.ts",
+      "default": "./dist/internal/co-editing.js"
+    },
+    "./internal/co-editing/types": {
+      "types": "./dist/internal/co-editing/types.d.ts",
+      "default": "./dist/internal/co-editing/types.js"
+    },
     "./html-block": {
       "types": "./dist/html-block.d.ts",
       "default": "./dist/html-block.js"
+    },
+    "./internal/video-block": {
+      "types": "./dist/internal/video-block.d.ts",
+      "default": "./dist/internal/video-block.js"
     }
   },
   "scripts": {
-    "build": "node --run locale:compile && tsdown && node --run locale:copy && npx @tailwindcss/cli -i src/styles.css -o dist/styles.css --minify",
+    "build": "node --run locale:compile && node ./scripts/compile-server-catalogs.js && tsdown && node --run locale:copy && npx @tailwindcss/cli -i src/styles.css -o dist/styles.css --minify",
     "dev": "tsdown --watch",
     "prepublishOnly": "node --run build",
     "check": "publint && attw --pack --ignore-rules=cjs-resolves-to-esm --ignore-rules=no-resolution",
@@ -81,7 +112,6 @@
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "@tiptap/core": "catalog:",
-    "@tiptap/extension-character-count": "catalog:",
     "@tiptap/extension-code": "catalog:",
     "@tiptap/extension-code-block": "catalog:",
     "@tiptap/extension-code-block-lowlight": "catalog:",
@@ -111,6 +141,7 @@
     "clsx": "^2.1.1",
     "dompurify": "^3.3.2",
     "highlight.js": "catalog:",
+    "lib0": "catalog:",
     "lowlight": "catalog:",
     "marked": "^17.0.3",
     "modern-tar": "^0.7.5",

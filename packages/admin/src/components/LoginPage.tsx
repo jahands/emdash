@@ -23,6 +23,7 @@ import { useAdminBranding } from "../lib/admin-branding-context";
 import { apiFetch, fetchAuthMode } from "../lib/api";
 import { useAuthProviderList } from "../lib/auth-provider-context";
 import { sanitizeRedirectUrl } from "../lib/url";
+import { cn } from "../lib/utils";
 import { SUPPORTED_LOCALES } from "../locales/index.js";
 import { useLocale } from "../locales/useLocale.js";
 import { PasskeyLogin } from "./auth/PasskeyLogin";
@@ -171,7 +172,12 @@ export function LoginPage({ redirectUrl = "/_emdash/admin" }: LoginPageProps) {
 	const { locale, setLocale } = useLocale();
 	const { logo: brandLogo, siteName: brandSiteName } = useAdminBranding();
 	const [method, setMethod] = React.useState<LoginMethod>("passkey");
-	const [urlError, setUrlError] = React.useState<string | null>(null);
+	const [urlError] = React.useState(() => {
+		const params = new URLSearchParams(window.location.search);
+		const error = params.get("error");
+		if (!error) return null;
+		return params.get("message") || t`Authentication error: ${error}`;
+	});
 	const [activeProvider, setActiveProvider] = React.useState<string | null>(null);
 
 	// Auth provider components from virtual module (via context)
@@ -190,18 +196,9 @@ export function LoginPage({ redirectUrl = "/_emdash/admin" }: LoginPageProps) {
 		}
 	}, [authInfo, safeRedirectUrl]);
 
-	// Check for error in URL (from OAuth/provider redirect)
 	React.useEffect(() => {
-		const params = new URLSearchParams(window.location.search);
-		const error = params.get("error");
-		const message = params.get("message");
-
-		if (error) {
-			setUrlError(message || t`Authentication error: ${error}`);
-			// Clean up URL
-			window.history.replaceState({}, "", window.location.pathname);
-		}
-	}, []);
+		if (urlError) window.history.replaceState({}, "", window.location.pathname);
+	}, [urlError]);
 
 	const handleSuccess = () => {
 		// Redirect after successful login
@@ -227,21 +224,12 @@ export function LoginPage({ redirectUrl = "/_emdash/admin" }: LoginPageProps) {
 		helpText = t`Use your registered passkey to sign in securely.`;
 	}
 
-	// Show loading state while checking auth mode
-	if (authModeLoading || (authInfo?.authMode && authInfo.authMode !== "passkey")) {
-		return (
-			<div className="min-h-screen flex items-center justify-center bg-kumo-base p-4">
-				<div className="flex flex-col items-center">
-					<BrandLogo logoUrl={brandLogo} siteName={brandSiteName} className="h-10 mb-4" />
-					<Loader />
-				</div>
-			</div>
-		);
-	}
+	const authModePending =
+		authModeLoading || (authInfo?.authMode !== undefined && authInfo.authMode !== "passkey");
 
 	return (
-		<div className="min-h-screen flex items-center justify-center bg-kumo-base p-4">
-			<div className="w-full max-w-md">
+		<div className="min-h-screen grid grid-rows-[1fr_auto_1fr] justify-items-center bg-kumo-base p-4">
+			<div className="row-start-2 w-full max-w-md">
 				{/* Header */}
 				<div className="text-center mb-8">
 					<BrandLogo logoUrl={brandLogo} siteName={brandSiteName} className="h-10 mx-auto mb-2" />
@@ -254,91 +242,110 @@ export function LoginPage({ redirectUrl = "/_emdash/admin" }: LoginPageProps) {
 					</h1>
 				</div>
 
-				{/* Error from URL (provider failure) */}
-				{urlError && (
-					<div className="mb-6 rounded-lg bg-kumo-danger/10 border border-kumo-danger/20 p-4 text-sm text-kumo-danger">
-						{urlError}
-					</div>
-				)}
-
-				{/* Login Card */}
-				<div className="bg-kumo-base border rounded-lg shadow-sm p-6">
-					{method === "passkey" && !activeProvider && (
-						<div className="space-y-6">
-							{/* Passkey Login */}
-							<PasskeyLogin
-								optionsEndpoint="/_emdash/api/auth/passkey/options"
-								verifyEndpoint="/_emdash/api/auth/passkey/verify"
-								onSuccess={handleSuccess}
-								buttonText={t`Sign in with Passkey`}
-							/>
-
-							{/* Divider */}
-							<div className="relative">
-								<div className="absolute inset-0 flex items-center">
-									<span className="w-full border-t" />
-								</div>
-								<div className="relative flex justify-center text-xs uppercase">
-									<span className="bg-kumo-base px-2 text-kumo-subtle">{t`Or continue with`}</span>
-								</div>
+				<div className="relative">
+					{authModePending && (
+						<div role="status" className="absolute inset-x-0 top-6 flex justify-center">
+							<Loader />
+							<span className="sr-only">{t`Loading...`}</span>
+						</div>
+					)}
+					<div
+						className={cn(authModePending && "invisible")}
+						aria-hidden={authModePending || undefined}
+						inert={authModePending || undefined}
+					>
+						{/* Error from URL (provider failure) */}
+						{urlError && (
+							<div className="mb-6 rounded-lg bg-kumo-danger/10 border border-kumo-danger/20 p-4 text-sm text-kumo-danger">
+								{urlError}
 							</div>
+						)}
 
-							{/* Auth provider buttons */}
-							{buttonProviders.length > 0 && (
-								<div
-									className={`grid gap-3 ${buttonProviders.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
-								>
-									{buttonProviders.map((provider) => {
-										const Btn = provider.LoginButton!;
-										const hasForm = !!provider.LoginForm;
-										const selectProvider = () => setActiveProvider(provider.id);
-										return (
-											<div key={provider.id} onClick={hasForm ? selectProvider : undefined}>
-												<Btn />
-											</div>
-										);
-									})}
+						{/* Login Card */}
+						<div className="bg-kumo-base border rounded-lg shadow-sm p-6">
+							{method === "passkey" && !activeProvider && (
+								<div className="space-y-6">
+									{/* Passkey Login */}
+									<PasskeyLogin
+										optionsEndpoint="/_emdash/api/auth/passkey/options"
+										verifyEndpoint="/_emdash/api/auth/passkey/verify"
+										onSuccess={handleSuccess}
+										buttonText={t`Sign in with Passkey`}
+									/>
+
+									{/* Divider */}
+									<div className="relative">
+										<div className="absolute inset-0 flex items-center">
+											<span className="w-full border-t" />
+										</div>
+										<div className="relative flex justify-center text-xs uppercase">
+											<span className="bg-kumo-base px-2 text-kumo-subtle">{t`Or continue with`}</span>
+										</div>
+									</div>
+
+									{/* Auth provider buttons */}
+									{buttonProviders.length > 0 && (
+										<div
+											className={`grid gap-3 ${buttonProviders.length === 1 ? "grid-cols-1" : "grid-cols-2"}`}
+										>
+											{buttonProviders.map((provider) => {
+												const Btn = provider.LoginButton!;
+												const hasForm = !!provider.LoginForm;
+												const selectProvider = () => setActiveProvider(provider.id);
+												return (
+													<div key={provider.id} onClick={hasForm ? selectProvider : undefined}>
+														<Btn />
+													</div>
+												);
+											})}
+										</div>
+									)}
+
+									{/* Magic Link Option */}
+									<Button
+										variant="ghost"
+										className="w-full justify-center"
+										type="button"
+										onClick={() => setMethod("magic-link")}
+									>
+										{t`Sign in with email link`}
+									</Button>
 								</div>
 							)}
 
-							{/* Magic Link Option */}
-							<Button
-								variant="ghost"
-								className="w-full justify-center"
-								type="button"
-								onClick={() => setMethod("magic-link")}
-							>
-								{t`Sign in with email link`}
-							</Button>
+							{/* Provider form (full card replacement, like magic link) */}
+							{method === "passkey" &&
+								activeProvider &&
+								(() => {
+									const provider = authProviderList.find((p) => p.id === activeProvider);
+									if (!provider?.LoginForm) return null;
+									const Form = provider.LoginForm;
+									return (
+										<div className="space-y-4">
+											<Form />
+											<Button
+												type="button"
+												variant="ghost"
+												className="w-full justify-center"
+												onClick={() => setActiveProvider(null)}
+											>
+												{t`Back to login`}
+											</Button>
+										</div>
+									);
+								})()}
+
+							{method === "magic-link" && <MagicLinkForm onBack={() => setMethod("passkey")} />}
 						</div>
-					)}
-
-					{/* Provider form (full card replacement, like magic link) */}
-					{method === "passkey" &&
-						activeProvider &&
-						(() => {
-							const provider = authProviderList.find((p) => p.id === activeProvider);
-							if (!provider?.LoginForm) return null;
-							const Form = provider.LoginForm;
-							return (
-								<div className="space-y-4">
-									<Form />
-									<Button
-										type="button"
-										variant="ghost"
-										className="w-full justify-center"
-										onClick={() => setActiveProvider(null)}
-									>
-										{t`Back to login`}
-									</Button>
-								</div>
-							);
-						})()}
-
-					{method === "magic-link" && <MagicLinkForm onBack={() => setMethod("passkey")} />}
+					</div>
 				</div>
+			</div>
 
-				{/* Help text */}
+			<div
+				className={cn("row-start-3 w-full max-w-md self-start", authModePending && "invisible")}
+				aria-hidden={authModePending || undefined}
+				inert={authModePending || undefined}
+			>
 				<p className="text-center mt-6 text-sm text-kumo-subtle">{helpText}</p>
 
 				{/* Signup link — only shown when self-signup is enabled */}

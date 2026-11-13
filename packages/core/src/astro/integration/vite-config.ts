@@ -15,7 +15,12 @@ import type { Plugin } from "vite";
 
 import { COMMIT, VERSION } from "../../version.js";
 import { shutdownRuntime } from "../runtime-holder.js";
-import { createAdminLocaleResolverPlugin, readAdminLocaleManifest } from "./admin-locales.js";
+import {
+	createAdminLocaleResolverPlugin,
+	generateAdminMessagesModule,
+	readAdminLocaleManifest,
+} from "./admin-locales.js";
+import { createAdminPreloadsPlugin } from "./admin-preloads.js";
 import type { EmDashConfig, PluginDescriptor } from "./runtime.js";
 import {
 	VIRTUAL_CONFIG_ID,
@@ -52,9 +57,15 @@ import {
 	RESOLVED_VIRTUAL_ENV_ID,
 	VIRTUAL_BUILD_ID,
 	RESOLVED_VIRTUAL_BUILD_ID,
+	VIRTUAL_ROOMS_ID,
+	RESOLVED_VIRTUAL_ROOMS_ID,
+	VIRTUAL_ROOM_ENGINE_ID,
+	RESOLVED_VIRTUAL_ROOM_ENGINE_ID,
 	generateSeedModule,
 	generateWaitUntilModule,
 	generateSchedulerModule,
+	generateRoomsModule,
+	generateRoomEngineModule,
 	generateEnvModule,
 	generateBuildModule,
 	generateConfigModule,
@@ -74,6 +85,8 @@ import {
 const VIRTUAL_ADMIN_LOADER_ID = "virtual:emdash/admin-loader";
 const RESOLVED_ADMIN_LOADER_ID = "\0" + VIRTUAL_ADMIN_LOADER_ID;
 const RESOLVED_ADMIN_ENTRY_ID = "\0virtual:emdash/admin-entry";
+const VIRTUAL_ADMIN_MESSAGES_ID = "virtual:emdash/admin-messages";
+const RESOLVED_ADMIN_MESSAGES_ID = "\0" + VIRTUAL_ADMIN_MESSAGES_ID;
 
 const LOCALE_MESSAGES_RE = /[/\\]([a-z]{2}(?:-[A-Z]{2})?)[/\\]messages\.mjs$/;
 
@@ -229,6 +242,7 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 		resolveId(id: string) {
 			if (id === VIRTUAL_ADMIN_LOADER_ID) return RESOLVED_ADMIN_LOADER_ID;
 			if (id === RESOLVED_ADMIN_ENTRY_ID) return id;
+			if (id === VIRTUAL_ADMIN_MESSAGES_ID) return RESOLVED_ADMIN_MESSAGES_ID;
 			if (id === VIRTUAL_CONFIG_ID) {
 				return RESOLVED_VIRTUAL_CONFIG_ID;
 			}
@@ -280,8 +294,22 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 			if (id === VIRTUAL_BUILD_ID) {
 				return RESOLVED_VIRTUAL_BUILD_ID;
 			}
+			if (id === VIRTUAL_ROOMS_ID) {
+				return RESOLVED_VIRTUAL_ROOMS_ID;
+			}
+			if (id === VIRTUAL_ROOM_ENGINE_ID) {
+				return RESOLVED_VIRTUAL_ROOM_ENGINE_ID;
+			}
 		},
 		load(id: string) {
+			if (id === RESOLVED_ADMIN_MESSAGES_ID) {
+				const adminDistPath = resolveAdminDist();
+				return generateAdminMessagesModule(
+					adminDistPath,
+					readAdminLocaleManifest(adminDistPath),
+					resolvedConfig.admin?.locales,
+				);
+			}
 			if (id === RESOLVED_ADMIN_ENTRY_ID) {
 				return `export const load = () => import("${VIRTUAL_ADMIN_REGISTRY_ID}");`;
 			}
@@ -404,6 +432,21 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 			if (id === RESOLVED_VIRTUAL_BUILD_ID) {
 				return generateBuildModule(buildTime);
 			}
+			if (id === RESOLVED_VIRTUAL_ROOMS_ID) {
+				const adapterName = astroConfig.adapter?.name;
+				const coEditing = resolvedConfig.coEditing === true;
+				const cloudflareRoomsResolves =
+					coEditing &&
+					adapterName === "@astrojs/cloudflare" &&
+					canResolveProjectDependency(
+						fileURLToPath(astroConfig.root),
+						"@emdash-cms/cloudflare/internal/rooms",
+					);
+				return generateRoomsModule(adapterName, coEditing, cloudflareRoomsResolves);
+			}
+			if (id === RESOLVED_VIRTUAL_ROOM_ENGINE_ID) {
+				return generateRoomEngineModule(resolvedConfig.coEditing === true);
+			}
 		},
 	};
 }
@@ -419,6 +462,49 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 const ADMIN_STYLES_ALIAS = /^@emdash-cms\/admin\/styles\.css/;
 
 const NODE_NATIVE_EXTERNALS = ["@libsql/kysely-libsql", "pg"];
+
+/**
+ * The room engine and the editor schema it builds documents with. They load only when a room
+ * first runs, so on Cloudflare the optimizer would discover them mid-session, and the reloads
+ * that follow evaluate `@tiptap/pm/tables` twice ("Duplicate use of selection JSON ID cell").
+ */
+const ROOM_ENGINE_DEPS = [
+	"emdash > yjs",
+	"emdash > @tiptap/y-tiptap",
+	"emdash > @tiptap/starter-kit",
+	"emdash > @tiptap/extension-code",
+	"emdash > @tiptap/extension-code-block",
+	"emdash > @tiptap/extension-list",
+	"emdash > @tiptap/extension-subscript",
+	"emdash > @tiptap/extension-superscript",
+	"emdash > @tiptap/extension-text-align",
+	"emdash > @tiptap/pm/history",
+	"emdash > @tiptap/pm/model",
+	"emdash > @tiptap/pm/state",
+	"emdash > @tiptap/pm/tables",
+	"emdash > @tiptap/pm/transform",
+	"emdash > @emdash-cms/admin > lib0/decoding",
+	"emdash > @emdash-cms/admin > lib0/encoding",
+	"emdash > @emdash-cms/admin > y-protocols/sync",
+	"emdash > @emdash-cms/admin > @tiptap/extension-collaboration",
+	"emdash > @emdash-cms/admin > @tiptap/extension-table",
+	"emdash > @emdash-cms/admin > @tiptap/extension-table-cell",
+	"emdash > @emdash-cms/admin > @tiptap/extension-table-header",
+	"emdash > @emdash-cms/admin > @tiptap/extension-table-row",
+];
+
+/**
+ * What the admin's co-editing chunk imports beyond the editor. It loads on the first room join,
+ * and discovering these then would re-optimize and reload the admin.
+ */
+const ROOM_CLIENT_DEPS = [
+	"emdash > @emdash-cms/admin > @tiptap/extension-collaboration",
+	"emdash > @emdash-cms/admin > yjs",
+	"emdash > @emdash-cms/admin > y-protocols/awareness",
+	"emdash > @emdash-cms/admin > y-protocols/sync",
+	"emdash > @emdash-cms/admin > lib0/decoding",
+	"emdash > @emdash-cms/admin > lib0/encoding",
+];
 
 /**
  * Detect whether the Cloudflare adapter is being used.
@@ -550,6 +636,11 @@ export function createViteConfig(
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Monorepo has both vite 6 (docs) and vite 7 (core). tsgo resolves correctly.
 		plugins: [
 			createVirtualModulesPlugin(options),
+			createAdminPreloadsPlugin({
+				adminDistPath,
+				pluginAdminEntryId: RESOLVED_ADMIN_ENTRY_ID,
+				astroConfig: options.astroConfig,
+			}),
 			...(isDev && !cloudflare
 				? [{ name: "emdash-runtime-shutdown", apply: "serve", closeBundle: shutdownRuntime }]
 				: []),
@@ -699,6 +790,7 @@ export function createViteConfig(
 							// Only imported by the /_image route, so the first image
 							// request would otherwise discover it.
 							"@astrojs/cloudflare/image-transform-endpoint",
+							...(options.resolvedConfig.coEditing ? ROOM_ENGINE_DEPS : []),
 						],
 					},
 				}
@@ -731,6 +823,7 @@ export function createViteConfig(
 						"emdash > @emdash-cms/admin > @lezer/highlight",
 						// Each admin language loads its date locale on first use.
 						"emdash > @emdash-cms/admin > react-day-picker/locale/*",
+						...(options.resolvedConfig.coEditing ? ROOM_CLIENT_DEPS : []),
 					]
 				: [
 						"@emdash-cms/admin",

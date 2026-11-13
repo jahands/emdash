@@ -8,7 +8,7 @@
  */
 
 import { getLocaleDir, resolveLocale } from "@emdash-cms/admin/locales";
-import { Permissions } from "@emdash-cms/auth";
+import { Permissions, toRoleLevel, type RoleLevel } from "@emdash-cms/auth";
 import type { Element } from "@emdash-cms/blocks";
 import {
 	normalizePluginPagePath,
@@ -22,13 +22,15 @@ import { Kysely, type Dialect } from "kysely";
 import virtualConfig from "virtual:emdash/config";
 import { z } from "zod";
 
-import { ErrorCode } from "./api/errors.js";
+import { overlayDraft, saveContent, type ContentWrite } from "./api/content-save.js";
+import { ErrorCode, mapErrorStatus } from "./api/errors.js";
 import { buildManifestCollections } from "./api/handlers/manifest.js";
 import {
 	handleMediaUpload as uploadMedia,
 	type MediaUploadInput,
 } from "./api/handlers/media-upload.js";
 import { resolveReferenceSelection } from "./api/handlers/relations.js";
+import { handleRevisionEditors } from "./api/handlers/revision.js";
 import {
 	liveReferenceData,
 	liveReferenceSelection,
@@ -39,7 +41,12 @@ import {
 	type StagedReferenceBaselines,
 	type StagedReferences,
 } from "./api/handlers/staged-references.js";
-import { validateRev } from "./api/rev.js";
+import {
+	LIST_CONFLICT_MESSAGE,
+	listsMatch,
+	type ListPreconditions,
+} from "./api/list-preconditions.js";
+import { encodeRev, validateRev } from "./api/rev.js";
 import { resolveSiteTitle } from "./api/site-title.js";
 import { getSiteBaseUrl, resolveSiteOrigin } from "./api/site-url.js";
 import type {
@@ -50,9 +57,12 @@ import type {
 import type { EmDashManifest } from "./astro/types.js";
 import { getAuthMode } from "./auth/mode.js";
 import { getTrustedProxyHeaders } from "./auth/trusted-proxy.js";
+import { primeBylineFieldDefs } from "./bylines/field-defs-cache.js";
 import { lookupContentAuthor, sendCommentNotification } from "./comments/notifications.js";
 import type { ContentFieldFilters } from "./content-list-query.js";
 import { keepKnownFields, staleStoredKeys } from "./content/known-fields.js";
+import { readColdStartState, type ColdStartState } from "./database/cold-start-reads.js";
+import { ContentDatetimeNormalizer } from "./database/content-datetime.js";
 import { isSqlite } from "./database/dialect-helpers.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
 import {
@@ -62,6 +72,7 @@ import {
 import {
 	getAppliedMigrationCount,
 	isMigrationCountCurrent,
+	isMigrationTableMissingError,
 	MIGRATION_RACE_WAIT_MS,
 	MigrationFailedError,
 	MigrationLockHeldError,
@@ -72,7 +83,12 @@ import { CommentRepository } from "./database/repositories/comment.js";
 import type { CommentStatus } from "./database/repositories/comment.js";
 import { ContentRepository } from "./database/repositories/content.js";
 import { MediaRepository } from "./database/repositories/media.js";
-import { RevisionRepository } from "./database/repositories/revision.js";
+import {
+	RevisionRepository,
+	type Revision,
+	type RevisionCredit,
+	type RevisionKind,
+} from "./database/repositories/revision.js";
 import { selectTaxonomyDefs } from "./database/repositories/taxonomy-def.js";
 import { ContentMutationConflictError } from "./database/repositories/types.js";
 import type {
@@ -154,6 +170,7 @@ import { AUTO_SEED_COMPLETE_OPTION } from "./seed/ownership.js";
 import { isMissingTableError } from "./utils/db-errors.js";
 import { hashString } from "./utils/hash.js";
 import { createInitLock, type InitLock, initWithLock } from "./utils/init-lock.js";
+import { settleAll } from "./utils/settle.js";
 import { createSingleFlightCache, singleFlightCached } from "./utils/single-flight-cache.js";
 import { COMMIT, VERSION } from "./version.js";
 
@@ -209,7 +226,13 @@ interface PageContributions {
 
 import { after } from "./after.js";
 import { maybeRunScheduledBackup } from "./api/handlers/backup.js";
-import { changedStoragelessDataKeys, storagelessDataKeyError } from "./api/handlers/content.js";
+import {
+	changedStoragelessDataKeys,
+	contentResponseForRow,
+	prefetchContentWriteContext,
+	primeCollectionWriteMeta,
+	storagelessDataKeyError,
+} from "./api/handlers/content.js";
 import {
 	handleContentList,
 	handleContentAuthors,
@@ -312,12 +335,23 @@ import {
 } from "./plugins/storage-indexes.js";
 import { getRegistryConfigInput, resolveManifestRegistryConfig } from "./registry/config.js";
 import { requestCached } from "./request-cache.js";
-import { getRequestContext } from "./request-context.js";
-import { publishDueContent, type PublishedRef } from "./scheduled-publish.js";
+import { getRequestContext, runOutsideRequestContext } from "./request-context.js";
+import { notifyRoom } from "./rooms/notifications.js";
+import { roomId, RoomSaveError, type EntryRef, type RuntimeRoomHost } from "./rooms/types.js";
+import {
+	sweepScheduledContent,
+	type PublishedRef,
+	type ScheduledSweepResult,
+} from "./scheduled-publish.js";
 import { normalizeBlocksData, resolveBlockTypes } from "./schema/block-values.js";
 import { SchemaError, SchemaRegistry } from "./schema/registry.js";
 import { FTSManager } from "./search/fts-manager.js";
-import { invalidateSiteSettingsCache } from "./settings/index.js";
+import {
+	invalidateSiteSettingsCache,
+	primeSiteSettings,
+	SETTINGS_PREFIX,
+	siteSettingsGeneration,
+} from "./settings/index.js";
 import type { Storage } from "./storage/types.js";
 import { assertSiteWriteAllowed } from "./transfer/fence.js";
 
@@ -349,6 +383,22 @@ interface ContentPolicyMutationOptions {
 	actor?: ActorInfo;
 	origin?: ContentActionOrigin;
 	pluginInvocationId?: string;
+}
+
+/** An operation the entry's room refused or couldn't hold for. */
+type RoomOperationFailure = {
+	success: false;
+	error: { code: string; message: string };
+	status?: number;
+};
+
+interface PublishOptions extends ContentPolicyMutationOptions {
+	publishedAt?: string;
+	requireScheduledDue?: boolean;
+	expectedScheduledAt?: string;
+	currentTime?: Date;
+	/** The entry as the caller just read it by `id`, to save reading it again. */
+	existing?: ContentItemInternal;
 }
 
 type ContentPolicyCheck =
@@ -461,6 +511,25 @@ export interface MediaProviderContext {
  */
 export type CreateSchedulerFn = (executor: CronExecutor) => CronScheduler;
 
+/** Options for a request-less scheduled-maintenance run. */
+export interface ScheduledTasksOptions {
+	/** Purges edge-cache tags after each collection batch the sweep publishes. */
+	onPublished?: (refs: PublishedRef[]) => Promise<void>;
+	invalidateContentCache?: PluginContentCacheInvalidator;
+	/**
+	 * Keeps the run open for content scheduled within this many milliseconds and
+	 * publishes each item at its scheduled time instead of on a later run.
+	 * Defaults to 0 (publish only what is already due).
+	 */
+	publishUpcomingWithinMs?: number;
+}
+
+/**
+ * Builds the runtime's co-editing room host. Injected via
+ * `virtual:emdash/rooms`, so only hosts that can run rooms load their code.
+ */
+export type CreateRoomHostFn = (runtime: EmDashRuntime) => RuntimeRoomHost | null;
+
 /**
  * Dependencies injected from virtual modules (middleware reads these)
  */
@@ -496,6 +565,12 @@ export interface RuntimeDependencies {
 	 * integration means core has no adapter-specific runtime checks.
 	 */
 	createScheduler?: CreateSchedulerFn | null;
+	/**
+	 * Factory for the co-editing room host, from the generated
+	 * `virtual:emdash/rooms` module. When absent or null, or when it returns
+	 * null, every join gets single-editor mode.
+	 */
+	createRoomHost?: CreateRoomHostFn | null;
 	/** Media provider entries from virtual module */
 	mediaProviderEntries?: MediaProviderEntry[];
 	sandboxedPluginEntries: SandboxedPluginEntry[];
@@ -503,6 +578,8 @@ export interface RuntimeDependencies {
 	createSandboxRunner: SandboxRunnerFactory | null;
 	/** Clock used by cron scheduling, task execution, and scheduled publishing. */
 	now?: () => Date;
+	/** Timer used to wait for content scheduled to publish within a maintenance tick. */
+	sleep?: (ms: number) => Promise<void>;
 	/** Site values supplied by hosts that do not load Astro's virtual config. */
 	siteInfo?: {
 		name?: string;
@@ -566,6 +643,13 @@ export interface EmDashRuntimeParts {
 	pipelineRef: { current: HookPipeline };
 }
 
+function listConflict() {
+	return {
+		success: false as const,
+		error: { code: "LIST_CONFLICT", message: LIST_CONFLICT_MESSAGE },
+	};
+}
+
 /**
  * A `ContentSaveRejectedError` carries a message the plugin wrote for the
  * editor; every other exception stays internal and is replaced by a generic
@@ -597,6 +681,37 @@ function beforeSaveFailure(error: unknown) {
 			message: "A plugin hook failed while saving content",
 		},
 	};
+}
+
+/**
+ * How a draft save's revision is credited. Only an autosave replaces the draft revision it builds
+ * on, and only when that one is an autosave too. An autosave names the save's editors, then the
+ * names it carries from the replaced autosave (or that revision's author when it names none), once
+ * each and latest first. A kept save names only the editors its caller passed, once each.
+ * `replaced` is the draft revision the save builds on, or null when there is none or it is also
+ * the live revision.
+ */
+function revisionCredit(input: {
+	autosave: boolean;
+	actorId: string | undefined;
+	editedBy: readonly string[] | undefined;
+	replaced: (RevisionCredit & { authorId: string | null }) | null;
+}): { kind: RevisionKind | null; editedBy: string[] | null; replaces: boolean } {
+	const { autosave, actorId, editedBy, replaced } = input;
+	if (!autosave) {
+		return {
+			kind: null,
+			editedBy: editedBy?.length ? [...new Set(editedBy)] : null,
+			replaces: false,
+		};
+	}
+	const replaces = replaced?.kind === "autosave";
+	const own = editedBy ?? (actorId ? [actorId] : []);
+	const carried = replaces
+		? (replaced.editedBy ?? (replaced.authorId ? [replaced.authorId] : []))
+		: [];
+	const names = [...new Set([...own, ...carried])];
+	return { kind: "autosave", editedBy: names.length > 0 ? names : null, replaces };
 }
 
 /**
@@ -658,6 +773,13 @@ interface DbHolder {
 	 * DB_INIT_FAILURE_BACKOFF_MS; a successful init clears them.
 	 */
 	failures: Map<string, { at: number; message: string; cause?: unknown }>;
+	/**
+	 * Databases whose latest init attempt found no migrations table, keyed like
+	 * `cache`. Kept until an attempt finds the table or the init succeeds, so a
+	 * request whose init fails, or backs off, can tell a never-migrated database
+	 * from one that is set up.
+	 */
+	unmigrated: Set<string>;
 }
 const globalSymbolStore = globalThis as Record<symbol, unknown>;
 function getDbHolder(): DbHolder {
@@ -668,12 +790,14 @@ function getDbHolder(): DbHolder {
 			cache: new Map<string, Kysely<Database>>(),
 			lock: createInitLock(),
 			failures: new Map(),
+			unmigrated: new Set(),
 		};
 		globalSymbolStore[DB_HOLDER_KEY] = holder;
 	}
 	// A holder created by an older copy of this module (dev-server HMR keeps
 	// globalThis across reloads) may predate the failures map.
 	holder.failures ??= new Map();
+	holder.unmigrated ??= new Set();
 	return holder;
 }
 
@@ -824,6 +948,7 @@ export class EmDashRuntime {
 	readonly email: EmailPipeline | null;
 
 	private cronScheduler: CronScheduler | null;
+	private _rooms: RuntimeRoomHost | null = null;
 	private enabledPlugins: Set<string>;
 	private pluginStates: Map<string, string>;
 	private readonly activePluginContentActions = new Map<string, number>();
@@ -908,6 +1033,11 @@ export class EmDashRuntime {
 		return this._db;
 	}
 
+	/** Co-editing rooms, or null where co-editing is off or this host can't run rooms. */
+	get rooms(): RuntimeRoomHost | null {
+		return this._rooms;
+	}
+
 	/** Bind the platform cache provider used by plugin actions, including request-less cron hooks. */
 	setPluginContentCacheInvalidator(
 		invalidateContentCache: PluginContentCacheInvalidator | undefined,
@@ -958,15 +1088,17 @@ export class EmDashRuntime {
 	 * Returns the items promoted so callers can invalidate their cache tags.
 	 */
 	async publishScheduled(): Promise<PublishedRef[]> {
-		return this.publishScheduledWithFence();
+		const { published } = await this.publishScheduledWithFence();
+		return published;
 	}
 
 	private async publishScheduledWithFence(
 		onPublished?: (refs: PublishedRef[]) => Promise<void>,
-	): Promise<PublishedRef[]> {
+		upcomingUntil?: Date,
+		currentTime: Date = this.runtimeDeps.now?.() ?? new Date(),
+	): Promise<ScheduledSweepResult> {
 		const recordWrite = await assertSiteWriteAllowed(this.db);
-		const currentTime = this.runtimeDeps.now?.() ?? new Date();
-		const published = await publishDueContent(this.db, {
+		const result = await sweepScheduledContent(this.db, {
 			publish: (collection, id, options) =>
 				this.handleContentPublish(collection, id, {
 					...options,
@@ -974,8 +1106,44 @@ export class EmDashRuntime {
 				}),
 			onPublished,
 			currentTime,
+			upcomingUntil,
 		});
-		if (published.length > 0) await recordWrite();
+		if (result.published.length > 0) await recordWrite();
+		return result;
+	}
+
+	/**
+	 * Waits for each upcoming scheduled time up to `until` and sweeps again at
+	 * that moment, so content goes live on time even when the next platform
+	 * tick starts late. The sweep's fence re-checks every item, so a concurrent
+	 * tick racing for the same item publishes it once.
+	 */
+	private async publishAtScheduledTimes(
+		first: Date,
+		until: Date,
+		onPublished?: (refs: PublishedRef[]) => Promise<void>,
+	): Promise<PublishedRef[]> {
+		const now = () => this.runtimeDeps.now?.() ?? new Date();
+		const sleep =
+			this.runtimeDeps.sleep ??
+			((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+		const published: PublishedRef[] = [];
+		let next: Date | null = first;
+		while (next) {
+			// A timer can fire slightly early, so re-check the clock before sweeping.
+			let currentTime = now();
+			for (let attempt = 0; currentTime < next && attempt < 3; attempt++) {
+				await sleep(next.getTime() - currentTime.getTime());
+				currentTime = now();
+			}
+			if (currentTime < next) break;
+			const result = await this.publishScheduledWithFence(onPublished, until, currentTime);
+			published.push(...result.published);
+			// A `scheduled_at` stored in a non-canonical format can sort after the
+			// current time while parsing to a time at or before it.
+			if (result.nextScheduledAt && result.nextScheduledAt <= currentTime) break;
+			next = result.nextScheduledAt;
+		}
 		return published;
 	}
 
@@ -998,20 +1166,14 @@ export class EmDashRuntime {
 	 * runtime is killed mid-sweep.
 	 */
 	async runScheduledTasks(
-		options: {
-			onPublished?: (refs: PublishedRef[]) => Promise<void>;
-			invalidateContentCache?: PluginContentCacheInvalidator;
-		} = {},
+		options: ScheduledTasksOptions = {},
 	): Promise<{ published: PublishedRef[] }> {
 		const { published } = await this.runScheduledTasksWithStats(options);
 		return { published };
 	}
 
 	async runScheduledTasksWithStats(
-		options: {
-			onPublished?: (refs: PublishedRef[]) => Promise<void>;
-			invalidateContentCache?: PluginContentCacheInvalidator;
-		} = {},
+		options: ScheduledTasksOptions = {},
 	): Promise<{ processed: number; published: PublishedRef[] }> {
 		if (options.invalidateContentCache) {
 			this.pluginContentCacheInvalidator = options.invalidateContentCache;
@@ -1026,24 +1188,39 @@ export class EmDashRuntime {
 			console.error("[plugins] Storage index sync failed:", error);
 		}
 
-		let processed = 0;
-		if (this.cronExecutor) {
-			try {
-				processed = await this.cronExecutor.tick();
-			} catch (error) {
-				console.error("[cron] Tick failed:", error);
-			}
-			try {
-				await this.cronExecutor.recoverStaleLocks();
-			} catch (error) {
-				console.error("[cron] Stale lock recovery failed:", error);
-			}
-		}
-
 		const currentTime = this.runtimeDeps.now?.() ?? new Date();
-		const { published } = await this.runScheduledMaintenanceTick(options, currentTime);
+		const requestedWindowMs = options.publishUpcomingWithinMs ?? 0;
+		const upcomingWindowMs = Number.isFinite(requestedWindowMs) ? requestedWindowMs : 0;
+		const upcomingUntil =
+			upcomingWindowMs > 0 ? new Date(currentTime.getTime() + upcomingWindowMs) : undefined;
+
+		// Plugin cron runs alongside maintenance, as it does on the Node scheduler,
+		// so a slow task cannot hold up a scheduled publication.
+		const [processed, { published }] = await Promise.all([
+			this.runCronTick(),
+			this.runScheduledMaintenanceTick(
+				{ onPublished: options.onPublished, upcomingUntil },
+				currentTime,
+			),
+		]);
 
 		return { processed, published };
+	}
+
+	private async runCronTick(): Promise<number> {
+		if (!this.cronExecutor) return 0;
+		let processed = 0;
+		try {
+			processed = await this.cronExecutor.tick();
+		} catch (error) {
+			console.error("[cron] Tick failed:", error);
+		}
+		try {
+			await this.cronExecutor.recoverStaleLocks();
+		} catch (error) {
+			console.error("[cron] Stale lock recovery failed:", error);
+		}
+		return processed;
 	}
 
 	/**
@@ -1057,15 +1234,34 @@ export class EmDashRuntime {
 	private async runScheduledMaintenanceTick(
 		options: {
 			onPublished?: (refs: PublishedRef[]) => Promise<void>;
+			upcomingUntil?: Date;
 		},
 		currentTime: Date,
 	): Promise<{ published: PublishedRef[] }> {
-		let published: PublishedRef[] = [];
+		let sweep: ScheduledSweepResult = { published: [], nextScheduledAt: null };
 		try {
-			published = await this.publishScheduledWithFence(options.onPublished);
+			sweep = await this.publishScheduledWithFence(
+				options.onPublished,
+				options.upcomingUntil,
+				currentTime,
+			);
 		} catch (error) {
 			console.error("[scheduled-publish] Sweep failed:", error);
 		}
+
+		// Runs alongside the maintenance below so slow cleanup or backups cannot
+		// delay content scheduled within the window.
+		const upcoming =
+			options.upcomingUntil && sweep.nextScheduledAt
+				? this.publishAtScheduledTimes(
+						sweep.nextScheduledAt,
+						options.upcomingUntil,
+						options.onPublished,
+					).catch((error: unknown) => {
+						console.error("[scheduled-publish] Upcoming publication failed:", error);
+						return [];
+					})
+				: undefined;
 
 		await this.runSystemCleanupIfDue(currentTime);
 
@@ -1081,6 +1277,8 @@ export class EmDashRuntime {
 		await maybeRunScheduledBackup(this.db, this.storage ?? undefined);
 		await recordSchedulerHeartbeatSafely(this.db, currentTime);
 
+		const published = [...sweep.published];
+		if (upcoming) published.push(...(await upcoming));
 		return { published };
 	}
 
@@ -1097,6 +1295,13 @@ export class EmDashRuntime {
 			await runSystemCleanup(this.db, this.storage ?? undefined);
 		} catch (error) {
 			console.error("[cleanup] System cleanup failed:", error);
+		}
+		if (this._rooms) {
+			try {
+				await this._rooms.expireIdle();
+			} catch (error) {
+				console.error("[co-editing] Hourly room drop failed:", error);
+			}
 		}
 	}
 
@@ -1250,6 +1455,7 @@ export class EmDashRuntime {
 
 	/** Stop background work and discard loaded sandbox isolates. */
 	async shutdown(): Promise<void> {
+		await this._rooms?.shutdown();
 		await this.stopCron();
 		sandboxRunner?.setCommentModerate?.(null);
 		await sandboxRunner?.terminateAll();
@@ -1938,17 +2144,19 @@ export class EmDashRuntime {
 			}
 		};
 
-		const readSiteInfo = async (readDb: Kysely<Database>) => {
-			const siteOpts = await new OptionsRepository(readDb).getMany([
-				"site:title",
-				"emdash:site_title",
-				"site:url",
-				"emdash:site_url",
-				"emdash:locale",
-				LOCALE_CASING_REPAIR_OPTION,
-				AUTO_SEED_COMPLETE_OPTION,
-				SETUP_COMPLETE_OPTION,
-			]);
+		const siteInfoOptionNames = [
+			"site:title",
+			"emdash:site_title",
+			"site:url",
+			"emdash:site_url",
+			"emdash:locale",
+			LOCALE_CASING_REPAIR_OPTION,
+			AUTO_SEED_COMPLETE_OPTION,
+			SETUP_COMPLETE_OPTION,
+		];
+		const readSiteInfo = async (readDb: Kysely<Database>) =>
+			buildSiteInfo(await new OptionsRepository(readDb).getMany(siteInfoOptionNames));
+		const buildSiteInfo = (siteOpts: Map<string, unknown>) => {
 			const siteTitle = resolveSiteTitle(
 				siteOpts.get("site:title"),
 				siteOpts.get("emdash:site_title"),
@@ -1977,17 +2185,62 @@ export class EmDashRuntime {
 			};
 		};
 
-		// Each pass returns its own results, so a pass that runs again after
-		// migrations replaces the first pass's results whole.
+		// Built-in and sandboxed providers register after these reads, so only
+		// configured plugins' hooks and the always-present comment:moderate and
+		// email:deliver are known here. Hook resolution reads the rest.
+		const exclusiveHookKeys = Array.from(
+			new Set([
+				"comment:moderate",
+				"email:deliver",
+				...deps.plugins.flatMap((plugin) =>
+					Object.entries(plugin.hooks)
+						.filter(([, hook]) => hook?.exclusive)
+						.map(([name]) => name),
+				),
+			]),
+			(name) => `${EXCLUSIVE_HOOK_KEY_PREFIX}${name}`,
+		);
+
+		interface ColdStartReads {
+			pluginStates: Map<string, string>;
+			pluginStatesRead: boolean;
+			installedPluginStates: PluginState[];
+			exclusiveHookSelections?: Map<string, string | undefined>;
+			site?: ReturnType<typeof buildSiteInfo>;
+			seedCollectionsReadable: boolean;
+		}
+
+		const toColdStartReads = (state: ColdStartState): ColdStartReads => {
+			if (ownsConfiguredDb) primeRegisteredCollections(state.collectionSlugs);
+			return {
+				pluginStates: new Map(state.pluginStates.map((s) => [s.plugin_id, s.status])),
+				pluginStatesRead: true,
+				installedPluginStates: state.pluginStates
+					.filter((s) => s.source === "marketplace" || s.source === "registry")
+					.map(rowToPluginState),
+				exclusiveHookSelections: new Map(
+					exclusiveHookKeys.map((key) => {
+						const selection = state.options.get(key);
+						return [key, typeof selection === "string" ? selection : undefined];
+					}),
+				),
+				site: buildSiteInfo(state.options),
+				seedCollectionsReadable: ownsConfiguredDb,
+			};
+		};
+
+		// One statement for every cold-start read. Null when it failed because the
+		// migration table does not exist, undefined when it failed otherwise.
+		const readColdStart = (readDb: Kysely<Database>) =>
+			phase("rt.reads", "Cold-start reads", () =>
+				readColdStartState(readDb, [...siteInfoOptionNames, ...exclusiveHookKeys], SETTINGS_PREFIX),
+			).catch((error: unknown) => (isMigrationTableMissingError(error) ? null : undefined));
+
+		// The same reads as separate queries, so a missing table fails only its
+		// own read. Each pass returns its own results, so a pass that runs again
+		// after migrations replaces the first pass's results whole.
 		const runColdStartReads = async (readDb: Kysely<Database>) => {
-			const reads: {
-				pluginStates: Map<string, string>;
-				pluginStatesRead: boolean;
-				installedPluginStates: PluginState[];
-				exclusiveHookSelections?: Map<string, string | undefined>;
-				site?: Awaited<ReturnType<typeof readSiteInfo>>;
-				seedCollectionsReadable: boolean;
-			} = {
+			const reads: ColdStartReads = {
 				pluginStates: new Map(),
 				pluginStatesRead: false,
 				installedPluginStates: [],
@@ -2016,25 +2269,11 @@ export class EmDashRuntime {
 					}
 				}),
 				phase("rt.hookselections", "Exclusive hook selections", async () => {
-					// Built-in and sandboxed providers register after these reads, so
-					// only configured plugins' hooks and the always-present
-					// comment:moderate and email:deliver are known here. Hook
-					// resolution reads the rest.
-					const keys = Array.from(
-						new Set([
-							"comment:moderate",
-							"email:deliver",
-							...deps.plugins.flatMap((plugin) =>
-								Object.entries(plugin.hooks)
-									.filter(([, hook]) => hook?.exclusive)
-									.map(([name]) => name),
-							),
-						]),
-						(name) => `${EXCLUSIVE_HOOK_KEY_PREFIX}${name}`,
-					);
 					try {
-						const stored = await new OptionsRepository(readDb).getMany<string>(keys);
-						reads.exclusiveHookSelections = new Map(keys.map((key) => [key, stored.get(key)]));
+						const stored = await new OptionsRepository(readDb).getMany<string>(exclusiveHookKeys);
+						reads.exclusiveHookSelections = new Map(
+							exclusiveHookKeys.map((key) => [key, stored.get(key)]),
+						);
 					} catch (error) {
 						captureMissingManualSchema(error);
 						// Hook resolution reads the selections itself when this fails.
@@ -2068,39 +2307,43 @@ export class EmDashRuntime {
 			return reads;
 		};
 
-		// The applied-migration count rides in the cold-start batch on the
-		// coalescing connection instead of costing its own round trip first. In
-		// auto mode the policy uses it for its fast path. Reads in a batch whose
-		// count was current saw a fully migrated schema; otherwise they run again
-		// once the policy has finished.
+		// The cold-start reads carry the applied-migration count, which the
+		// migration policy uses in auto mode instead of reading its own: on the
+		// coalescing connection before the database is initialized, otherwise on
+		// the new database inside its initialization. Reads whose count was
+		// current saw a fully migrated schema; otherwise they run again once the
+		// policy has finished.
+		const settingsGeneration = siteSettingsGeneration();
+		let folded: ColdStartState | undefined;
 		let migrationsCurrent = false;
-		let foldedColdStartReads: ReturnType<typeof runColdStartReads> | undefined;
+		const foldInto = (state: ColdStartState | null | undefined) => {
+			folded = state ?? undefined;
+			migrationsCurrent = isMigrationCountCurrent(state?.appliedMigrationCount);
+			return state === null ? null : state?.appliedMigrationCount;
+		};
+		const autoMigrate = (deps.migrationMode ?? "auto") === "auto";
 		let appliedMigrationCount: Promise<number | null | undefined> | undefined;
 		// Only fold when getDatabase will actually initialize: a cached db needs
 		// no count, and during a backoff getDatabase throws without touching the
 		// database, so neither should the reads.
-		if (
-			coalescingDb &&
-			(deps.migrationMode ?? "auto") === "auto" &&
-			EmDashRuntime.databaseNeedsInit(deps)
-		) {
+		if (coalescingDb && autoMigrate && EmDashRuntime.databaseNeedsInit(deps)) {
 			// A read error leaves the policy to read the count itself.
-			appliedMigrationCount = getAppliedMigrationCount(coalescingDb).catch(() => undefined);
-			foldedColdStartReads = runColdStartReads(coalescingDb);
+			appliedMigrationCount = readColdStart(coalescingDb).then(foldInto);
 		}
 
 		// Initialize the database and enforce its configured migration policy.
 		let db: Kysely<Database>;
 		try {
-			db = await phase("rt.db", "DB init + migration policy", async () => {
-				const count = await appliedMigrationCount;
-				migrationsCurrent = isMigrationCountCurrent(count);
-				return EmDashRuntime.getDatabase(deps, { appliedMigrationCount: count });
-			});
+			db = await phase("rt.db", "DB init + migration policy", async () =>
+				EmDashRuntime.getDatabase(deps, {
+					appliedMigrationCount: await appliedMigrationCount,
+					readAppliedMigrationCount:
+						coalescingDb || !autoMigrate
+							? undefined
+							: async (newDb) => foldInto(await readColdStart(newDb)),
+				}),
+			);
 		} catch (error) {
-			// Drain the folded reads without letting a secondary read failure
-			// replace the migration/init error we want to report.
-			await foldedColdStartReads?.catch(() => undefined);
 			await disposeReadDb();
 			throw error;
 		}
@@ -2122,8 +2365,16 @@ export class EmDashRuntime {
 		};
 
 		const readDb = coalescingDb ?? db;
-		const foldedReads = await foldedColdStartReads;
-		const reads = foldedReads && migrationsCurrent ? foldedReads : await runColdStartReads(readDb);
+		const coldStart = folded && migrationsCurrent ? folded : await readColdStart(readDb);
+		const reads = coldStart ? toColdStartReads(coldStart) : await runColdStartReads(readDb);
+		if (coldStart && ownsConfiguredDb) {
+			primeBylineFieldDefs(coldStart.bylineFieldsVersion, coldStart.bylineFields);
+			try {
+				await primeSiteSettings(coldStart.prefixedOptions, db, settingsGeneration);
+			} catch {
+				// Non-fatal — the first getSiteSettings() call loads them.
+			}
+		}
 		const {
 			pluginStates,
 			pluginStatesRead,
@@ -2573,7 +2824,7 @@ export class EmDashRuntime {
 		// so the timer scheduler's cleanup can route scheduled publishing through
 		// the runtime wrapper (firing content:afterPublish hooks). The first tick
 		// is ≥1s out, well after the synchronous assignment below.
-		await phase("rt.cron", "Cron init (recovery deferred post-response)", async () => {
+		await phase("rt.cron", "Cron init", async () => {
 			try {
 				cronExecutor = new CronExecutor(resolveDb, invokeCronHook, deps.now);
 				// Plugin schedules are always database-backed. On long-lived runtimes this
@@ -2583,25 +2834,7 @@ export class EmDashRuntime {
 					cronReschedule: () => cronScheduler?.reschedule(),
 				});
 
-				// Recover stale locks from previous crashes. Pure bookkeeping
-				// against the _emdash_cron_tasks table — no request needs the
-				// result — so we defer it past the response via after(). On
-				// Cloudflare this goes into waitUntil (extending the worker
-				// lifetime); on Node it's fire-and-forget (the process stays
-				// up anyway). Saves one cold-start write per D1 isolate.
-				const executorForRecovery = cronExecutor;
-				after(async () => {
-					try {
-						const recovered = await executorForRecovery.recoverStaleLocks();
-						if (recovered > 0) {
-							console.log(`[cron] Recovered ${recovered} stale task lock(s)`);
-						}
-					} catch (error) {
-						// Keep the `[cron]` prefix so a failure is easy to trace back
-						// rather than surfacing as a generic deferred-task error.
-						console.error("[cron] Failed to recover stale task locks:", error);
-					}
-				});
+				// Every scheduled tick recovers stale task locks, so startup doesn't.
 
 				// The platform decides whether a long-lived timer heartbeat exists.
 				// `createScheduler` is injected by the generated virtual:emdash/scheduler
@@ -2627,9 +2860,11 @@ export class EmDashRuntime {
 							console.error("[scheduled] Maintenance tick failed:", error);
 						}
 					});
+					// The scheduler outlives this request: its timers must not
+					// inherit the request's context, connection or deferred work.
 					// start() is void on the timer scheduler but the interface
 					// allows a promise (alarm-backed schedulers); we don't block on it.
-					void scheduler.start();
+					runOutsideRequestContext(() => void scheduler.start());
 				}
 			} catch (error) {
 				console.warn("[cron] Failed to initialize cron system:", error);
@@ -2713,6 +2948,7 @@ export class EmDashRuntime {
 			);
 		}
 
+		runtime._rooms = deps.createRoomHost?.(runtime) ?? null;
 		return runtime;
 	}
 
@@ -2741,6 +2977,16 @@ export class EmDashRuntime {
 	}
 
 	/**
+	 * Whether the latest attempt to initialize the configured database found no
+	 * migrations table: it has never been migrated, and the attempt to migrate
+	 * it has not succeeded yet.
+	 */
+	static isDatabaseUnmigrated(config: EmDashConfig): boolean {
+		const entrypoint = config.database?.entrypoint;
+		return entrypoint !== undefined && getDbHolder().unmigrated.has(entrypoint);
+	}
+
+	/**
 	 * Whether getDatabase would initialize the configured database: it isn't
 	 * cached yet and isn't backing off after a failed init.
 	 */
@@ -2758,10 +3004,15 @@ export class EmDashRuntime {
 	 *
 	 * `appliedMigrationCount` is a count the caller already read from this
 	 * database; the migration policy uses it rather than reading its own.
+	 * Otherwise, in auto mode, `readAppliedMigrationCount` reads it from the
+	 * new database, and the policy reads its own when that returns undefined.
 	 */
 	private static async getDatabase(
 		deps: RuntimeDependencies,
-		options?: { appliedMigrationCount?: number | null },
+		options?: {
+			appliedMigrationCount?: number | null;
+			readAppliedMigrationCount?: (db: Kysely<Database>) => Promise<number | null | undefined>;
+		},
 	): Promise<Kysely<Database>> {
 		// Only use the per-request `ctx.db` when it's an isolated instance
 		// (playground / DO preview). Plain D1 Sessions set `ctx.db` on every
@@ -2821,11 +3072,19 @@ export class EmDashRuntime {
 
 				const dialect = deps.createDialect(dbConfig.config);
 				const db = new Kysely<Database>({ dialect, log: kyselyLogOption() });
+				const migrationMode = deps.migrationMode ?? "auto";
 
 				try {
-					await enforceRuntimeMigrationPolicy(db, deps.migrationMode ?? "auto", {
+					let appliedCount = options?.appliedMigrationCount;
+					if (appliedCount === undefined && migrationMode === "auto") {
+						appliedCount = await options?.readAppliedMigrationCount?.(db);
+						if (appliedCount === undefined) appliedCount = await getAppliedMigrationCount(db);
+					}
+					if (appliedCount === null) holder.unmigrated.add(cacheKey);
+					else if (appliedCount !== undefined) holder.unmigrated.delete(cacheKey);
+					await enforceRuntimeMigrationPolicy(db, migrationMode, {
 						contentRowLimit: autoMigrationContentRowLimit(),
-						appliedCount: options?.appliedMigrationCount,
+						appliedCount,
 					});
 				} catch (error) {
 					// Only a failed migration run, a lock its holder left behind, or
@@ -2852,6 +3111,7 @@ export class EmDashRuntime {
 					throw error;
 				}
 				holder.failures.delete(cacheKey);
+				holder.unmigrated.delete(cacheKey);
 
 				// Note: legacy installs may carry a stray `emdash:manifest_cache`
 				// row in the options table from versions that persisted a JSON
@@ -3440,10 +3700,33 @@ export class EmDashRuntime {
 	 * is two queries in practice; never N+1.
 	 */
 	private async _buildManifest(): Promise<EmDashManifest> {
-		// Build collections from the live database.
 		// Use this.db (ALS-aware getter) so playground mode picks up the
-		// per-session DO database instead of the hardcoded singleton.
-		const manifestCollections = await buildManifestCollections({}, this.db);
+		// per-session DO database instead of the hardcoded singleton. The schema,
+		// taxonomy and diagnostic reads are independent and run together; each
+		// handles its own failure.
+		const db = this.db;
+		const taxonomyRows = selectTaxonomyDefs(db).orderBy("d.name").execute();
+		const configuredLocales = virtualConfig?.i18n?.locales ?? getI18nConfig()?.locales ?? [];
+		const [manifestCollections, taxonomyResult] = await Promise.all([
+			buildManifestCollections({}, db),
+			taxonomyRows.then(
+				(rows) => ({ rows }),
+				(error: unknown) => {
+					console.debug("EmDash: Could not load taxonomy definitions:", error);
+					return { rows: [] };
+				},
+			),
+			warnAboutUnconfiguredTaxonomyLocales(
+				db,
+				configuredLocales,
+				taxonomyRows.then(
+					(rows) => rows.map((row) => row.locale),
+					() => [],
+				),
+			).catch((error: unknown) => {
+				console.warn("[i18n] taxonomy locale diagnostic failed:", error);
+			}),
+		]);
 
 		// Build plugins manifest
 		const manifestPlugins: Record<
@@ -3566,44 +3849,16 @@ export class EmDashRuntime {
 		}
 
 		// Build taxonomies from database
-		let manifestTaxonomies: Array<{
-			id: string;
-			name: string;
-			label: string;
-			labelSingular?: string;
-			hierarchical: boolean;
-			collections: string[];
-			locale: string;
-			translationGroup: string;
-		}> = [];
-		let taxonomyDefinitionLocales: string[] = [];
-		try {
-			const rows = await selectTaxonomyDefs(this.db).orderBy("d.name").execute();
-			taxonomyDefinitionLocales = rows.map((row) => row.locale);
-			manifestTaxonomies = rows.map((row) => ({
-				id: row.id,
-				name: row.name,
-				label: row.label,
-				labelSingular: row.label_singular ?? undefined,
-				hierarchical: row.hierarchical === 1,
-				collections: parseStringArray(row.collections).toSorted(),
-				locale: row.locale,
-				translationGroup: row.translation_group ?? row.id,
-			}));
-		} catch (error) {
-			console.debug("EmDash: Could not load taxonomy definitions:", error);
-		}
-
-		try {
-			const configuredLocales = virtualConfig?.i18n?.locales ?? getI18nConfig()?.locales ?? [];
-			await warnAboutUnconfiguredTaxonomyLocales(
-				this.db,
-				configuredLocales,
-				taxonomyDefinitionLocales,
-			);
-		} catch (error) {
-			console.warn("[i18n] taxonomy locale diagnostic failed:", error);
-		}
+		const manifestTaxonomies = taxonomyResult.rows.map((row) => ({
+			id: row.id,
+			name: row.name,
+			label: row.label,
+			labelSingular: row.label_singular ?? undefined,
+			hierarchical: row.hierarchical === 1,
+			collections: parseStringArray(row.collections).toSorted(),
+			locale: row.locale,
+			translationGroup: row.translation_group ?? row.id,
+		}));
 
 		// Build manifest hash
 		const manifestHash = await hashString(
@@ -3734,6 +3989,7 @@ export class EmDashRuntime {
 			bylinesNone?: boolean;
 			includeInferredBylines?: boolean;
 			fieldFilters?: ContentFieldFilters;
+			fields?: string[];
 		},
 	) {
 		return handleContentList(this.db, collection, params);
@@ -3748,10 +4004,40 @@ export class EmDashRuntime {
 		id: string,
 		locale?: string,
 		referenceOptions?: { includeDrafts: boolean },
-		draftOptions?: { includeStagedSlug?: boolean },
+		options: { includeStagedSlug?: boolean; rowOnly?: boolean } = {},
 	) {
-		const result = await handleContentGet(this.db, collection, id, locale, referenceOptions);
-		return this.hydrateDraftData(result, draftOptions);
+		const found = await handleContentGet(this.db, collection, id, locale, undefined, {
+			rowOnly: true,
+		});
+		if (options.rowOnly || !found.success) return found;
+		const { item } = found.data;
+		const draftRevision = item.draftRevisionId
+			? this.readRevisionOfCollection(collection, item.draftRevisionId)
+			: undefined;
+		const [hydrated] = await Promise.allSettled([
+			contentResponseForRow(this.db, collection, item, referenceOptions, draftRevision),
+			draftRevision,
+		]);
+		if (hydrated.status === "rejected") throw hydrated.reason;
+		return this.hydrateDraftData(hydrated.value, { ...options, draftRevision });
+	}
+
+	/**
+	 * Read a revision of `collection`, loading the collection's field metadata
+	 * (which reading a revision needs) at the same time instead of after it.
+	 */
+	private async readRevisionOfCollection(
+		collection: string,
+		revisionId: string,
+	): Promise<Revision | null> {
+		const [revision] = await settleAll([
+			new RevisionRepository(this.db).findById(revisionId),
+			// Shared through the request cache; without a request there is nothing to share.
+			getRequestContext()
+				? new ContentDatetimeNormalizer(this.db).writableFieldSlugs(collection)
+				: undefined,
+		]);
+		return revision;
 	}
 
 	async handleContentGetIncludingTrashed(collection: string, id: string, locale?: string) {
@@ -3771,7 +4057,13 @@ export class EmDashRuntime {
 	 */
 	private async hydrateDraftData<T>(
 		result: T,
-		options: { includeStagedSlug?: boolean; strict?: boolean } = {},
+		options: {
+			includeStagedSlug?: boolean;
+			strict?: boolean;
+			knownRevision?: Revision;
+			/** The draft revision, already being loaded by the caller. */
+			draftRevision?: Promise<Revision | null>;
+		} = {},
 	): Promise<T> {
 		if (!result || typeof result !== "object") return result;
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- shape probed below
@@ -3784,7 +4076,11 @@ export class EmDashRuntime {
 		const draftRevisionId = typeof item.draftRevisionId === "string" ? item.draftRevisionId : null;
 		if (!draftRevisionId) return result;
 		try {
-			const revision = await new RevisionRepository(this.db).findById(draftRevisionId);
+			const revision =
+				options.knownRevision?.id === draftRevisionId
+					? options.knownRevision
+					: await (options.draftRevision ??
+							new RevisionRepository(this.db).findById(draftRevisionId));
 			if (!revision) {
 				if (options.strict) throw new Error(`Draft revision not found: ${draftRevisionId}`);
 				return result;
@@ -3914,6 +4210,7 @@ export class EmDashRuntime {
 		const saveHookDetails = {
 			locale,
 			...(body.translationOf ? { translationOf: body.translationOf } : {}),
+			...(actor ? { editedBy: [actor.id] } : {}),
 		};
 
 		const collectionInfo = await this.schemaRegistry
@@ -3994,6 +4291,7 @@ export class EmDashRuntime {
 		const { validateContentData } = await import("./api/handlers/validation.js");
 		const validation = await validateContentData(this.db, collection, processedData, {
 			partial: false,
+			collectionWithFields: collectionInfo,
 		});
 		if (!validation.ok) {
 			return {
@@ -4017,7 +4315,7 @@ export class EmDashRuntime {
 			bylines: body.bylines,
 		});
 		if (result.success && result.data) {
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 
 		// Run afterSave hooks (fire-and-forget)
@@ -4053,6 +4351,8 @@ export class EmDashRuntime {
 			};
 			taxonomies?: Record<string, string[]>;
 			references?: Record<string, string[]>;
+			/** The lists this save was based on. A stored list that differs fails it with `LIST_CONFLICT`. */
+			expected?: ListPreconditions;
 			publishedAt?: string | null;
 			locale?: string;
 			/** Replace the previous autosave revision after staging this save. */
@@ -4063,16 +4363,26 @@ export class EmDashRuntime {
 			 * passed to content hooks; never changes entry ownership.
 			 */
 			actor?: ActorInfo;
+			/** Users whose edits this save holds, latest first. Defaults to the actor alone. */
+			editedBy?: readonly string[];
 			migrateBlocks?: boolean;
 			replaceBlocks?: boolean;
 		},
+		options: {
+			/** The entry as the caller just read it by `id`, to save reading it again. */
+			existing?: ContentItemInternal;
+		} = {},
 	) {
 		const actor = body.actor ? { ...body.actor } : undefined;
 
 		// Resolve slug → ID if needed (before any lookups)
 		const repo = new ContentRepository(this.db);
-		const resolvedItem = await repo.findByIdOrSlug(collection, id, body.locale);
+		const resolvedItem =
+			options.existing?.id === id
+				? options.existing
+				: await repo.findByIdOrSlug(collection, id, body.locale);
 		const resolvedId = resolvedItem?.id ?? id;
+		const checksLists = Boolean(body.expected?.bylines || body.expected?.references);
 
 		// Validate _rev early — before draft revision writes which modify the version.
 		// The token is checked again against the row the draft UPDATE is conditioned
@@ -4087,6 +4397,7 @@ export class EmDashRuntime {
 			}
 			const revCheck = validateRev(body._rev, resolvedItem);
 			if (!revCheck.valid) {
+				if (checksLists) return listConflict();
 				return {
 					success: false as const,
 					error: { code: "CONFLICT", message: revCheck.message },
@@ -4096,21 +4407,76 @@ export class EmDashRuntime {
 		const {
 			_rev: _discardedRev,
 			actor: _discardedActor,
+			editedBy: passedEditors,
 			migrateBlocks,
 			replaceBlocks,
+			expected,
 			...bodyWithoutRev
 		} = body;
+		// The lists are compared once, so every write below is conditioned on the entry as it was
+		// read before them: a write in between changes its version.
+		let revGuard = body._rev;
+		if (expected && checksLists) {
+			if (!resolvedItem) {
+				return {
+					success: false as const,
+					error: { code: "NOT_FOUND", message: `Content item not found: ${id}` },
+				};
+			}
+			if (!(await listsMatch(this.db, collection, resolvedItem, expected))) return listConflict();
+			revGuard ??= encodeRev(resolvedItem);
+		}
+		const editedBy = passedEditors?.length ? [...new Set(passedEditors)] : undefined;
 		const blockWriteOptions = { migrateBlocks, replaceBlocks };
+		const saveHookEditors: ContentSaveHookDetails = {
+			editedBy: editedBy ?? (actor ? [actor.id] : undefined),
+		};
+
+		const draftRevisions = new Map<string, Promise<(Revision & RevisionCredit) | null>>();
+		const loadDraftRevision = (revisionId: string): Promise<(Revision & RevisionCredit) | null> => {
+			let pending = draftRevisions.get(revisionId);
+			if (!pending) {
+				pending = new RevisionRepository(this.db).findDraftBase(revisionId);
+				void pending.catch(() => draftRevisions.delete(revisionId));
+				draftRevisions.set(revisionId, pending);
+			}
+			return pending;
+		};
+		if (bodyWithoutRev.data && resolvedItem?.draftRevisionId) {
+			void loadDraftRevision(resolvedItem.draftRevisionId).catch(() => {});
+		}
 
 		// Loaded once and threaded through normalization, the stale-key drop and the draft
 		// merge below: each of those needs the field list and the registry does not cache.
 		// A save carrying only a reference selection reaches the draft merge without any
 		// data, so it needs the collection loaded just the same.
-		const collectionInfo =
-			bodyWithoutRev.data || bodyWithoutRev.references
-				? await this.schemaRegistry.getCollectionWithFields(collection).catch(() => null)
-				: null;
+		const loadsCollection = Boolean(bodyWithoutRev.data || bodyWithoutRev.references);
+		const [collectionInfo] = await Promise.all([
+			loadsCollection
+				? this.schemaRegistry.getCollectionWithFields(collection).catch(() => null)
+				: null,
+			prefetchContentWriteContext(this.db, collection, { collectionLoaded: loadsCollection }),
+		]);
+		if (collectionInfo) primeCollectionWriteMeta(collection, collectionInfo);
 		const knownFieldSlugs = new Set((collectionInfo?.fields ?? []).map((f) => f.slug));
+		// Staging a draft and writing live columns are two writes, so a list conflict between them
+		// would leave the draft staged. A save based on a read of the lists makes only one of them.
+		if (
+			checksLists &&
+			collectionInfo?.supports?.includes("revisions") &&
+			Object.entries(bodyWithoutRev).some(
+				([key, value]) => value !== undefined && !DRAFT_ONLY_UPDATE_KEYS.has(key),
+			)
+		) {
+			return {
+				success: false as const,
+				error: {
+					code: "VALIDATION_ERROR",
+					message:
+						"A save with `expected` can't change draft and live values together in a collection with revisions. Send them as two saves.",
+				},
+			};
+		}
 
 		// A collection that keeps drafts merges `data` into a revision instead of
 		// writing columns, so a reference field's slug would land in the revision
@@ -4136,9 +4502,7 @@ export class EmDashRuntime {
 				const hookData = collectionInfo
 					? await inferBlockTypes(collectionInfo, bodyWithoutRev.data, async () => {
 							if (resolvedItem?.draftRevisionId && collectionInfo.supports?.includes("revisions")) {
-								const draft = await new RevisionRepository(this.db).findById(
-									resolvedItem.draftRevisionId,
-								);
+								const draft = await loadDraftRevision(resolvedItem.draftRevisionId);
 								return draft?.data ?? resolvedItem.data;
 							}
 							return resolvedItem?.data;
@@ -4151,7 +4515,9 @@ export class EmDashRuntime {
 						false,
 						resolvedItem?.id,
 						actor,
-						resolvedItem?.locale ? { locale: resolvedItem.locale } : {},
+						resolvedItem?.locale
+							? { ...saveHookEditors, locale: resolvedItem.locale }
+							: saveHookEditors,
 					);
 					processedData = hookResult.content;
 				} catch (error) {
@@ -4175,6 +4541,7 @@ export class EmDashRuntime {
 					processedData,
 					resolvedItem,
 					knownFieldSlugs,
+					loadDraftRevision,
 				);
 			}
 			if (
@@ -4216,6 +4583,7 @@ export class EmDashRuntime {
 				const { validateContentData } = await import("./api/handlers/validation.js");
 				const validation = await validateContentData(this.db, collection, processedData, {
 					partial: true,
+					collectionWithFields: collectionInfo,
 				});
 				if (!validation.ok) {
 					return {
@@ -4231,6 +4599,10 @@ export class EmDashRuntime {
 		// Draft data lives only in the revisions table.
 		let usesDraftRevisions = false;
 		let draftStorageChanged = false;
+		let stagedWrite: ContentWrite | undefined;
+		let stagedRow: ContentItemInternal | null = null;
+		let stagedRevision: Revision | null = null;
+		let supersededCleanup: Promise<unknown> | undefined;
 		if (processedData || bodyWithoutRev.references) {
 			if (collectionInfo?.supports?.includes("revisions")) {
 				usesDraftRevisions = true;
@@ -4268,10 +4640,11 @@ export class EmDashRuntime {
 				}
 
 				const revisionRepo = new RevisionRepository(this.db);
-				let existing = await repo.findById(collection, resolvedId);
-				if (body._rev && existing) {
-					const revCheck = validateRev(body._rev, existing);
+				let existing = resolvedItem;
+				if (revGuard && existing) {
+					const revCheck = validateRev(revGuard, existing);
 					if (!revCheck.valid) {
+						if (checksLists) return listConflict();
 						return {
 							success: false as const,
 							error: { code: "CONFLICT", message: revCheck.message },
@@ -4280,13 +4653,10 @@ export class EmDashRuntime {
 				}
 
 				for (let attempt = 0; existing && attempt < MAX_DRAFT_STAGE_ATTEMPTS; attempt++) {
-					let baseData: Record<string, unknown>;
-					if (existing.draftRevisionId) {
-						const draftRevision = await revisionRepo.findById(existing.draftRevisionId);
-						baseData = draftRevision?.data ?? existing.data;
-					} else {
-						baseData = existing.data;
-					}
+					const draftBase = existing.draftRevisionId
+						? await loadDraftRevision(existing.draftRevisionId)
+						: null;
+					const baseData = draftBase?.data ?? existing.data;
 					let attemptData = processedData ?? {};
 					try {
 						attemptData = await normalizeBlocksData(
@@ -4316,6 +4686,7 @@ export class EmDashRuntime {
 					const { validateContentData } = await import("./api/handlers/validation.js");
 					const validation = await validateContentData(this.db, collection, attemptData, {
 						partial: true,
+						collectionWithFields: collectionInfo,
 					});
 					if (!validation.ok) {
 						return { success: false as const, error: validation.error };
@@ -4344,16 +4715,30 @@ export class EmDashRuntime {
 					await repo.keepStartingRevision(revisionRepo, collection, existing, () =>
 						liveReferenceData(this.db, collection, entryGroup),
 					);
-					const revision = await revisionRepo.create({
-						collection,
-						entryId: resolvedId,
-						data: mergedData,
-						authorId: actor?.id,
+					const credit = revisionCredit({
+						autosave: bodyWithoutRev.skipRevision === true,
+						actorId: actor?.id,
+						editedBy,
+						replaced: existing.draftRevisionId === existing.liveRevisionId ? null : draftBase,
 					});
+					const revision = await revisionRepo.create(
+						{
+							collection,
+							entryId: resolvedId,
+							data: mergedData,
+							authorId: actor?.id,
+							kind: credit.kind,
+							editedBy: credit.editedBy,
+						},
+						{ skipPruneQueue: true },
+					);
 
-					let staged: boolean;
+					let staged: ContentItemInternal | null;
 					try {
-						staged = await repo.replaceDraftRevision(collection, resolvedId, revision.id, existing);
+						[staged] = await Promise.all([
+							repo.stageDraftRevision(collection, resolvedId, revision.id, existing),
+							revisionRepo.queuePruning(collection, resolvedId, revision.id),
+						]);
 					} catch (error) {
 						try {
 							await revisionRepo.deleteIfUnreferenced(collection, resolvedId, revision.id);
@@ -4375,6 +4760,7 @@ export class EmDashRuntime {
 								cleanupError,
 							);
 						}
+						if (checksLists) return listConflict();
 						if (body._rev || attempt === MAX_DRAFT_STAGE_ATTEMPTS - 1) {
 							const error = new ContentMutationConflictError();
 							return {
@@ -4388,20 +4774,27 @@ export class EmDashRuntime {
 
 					draftStorageChanged = true;
 					processedData = attemptData;
+					stagedWrite = {
+						rev: encodeRev(staged),
+						...overlayDraft(existing, revision.data),
+					};
+					stagedRow = staged;
+					stagedRevision = revision;
 
-					if (bodyWithoutRev.skipRevision && existing.draftRevisionId) {
-						try {
-							await revisionRepo.deleteIfUnreferenced(
-								collection,
-								resolvedId,
-								existing.draftRevisionId,
-							);
-						} catch (error) {
-							console.error(
-								`[emdash] Failed to clean up superseded revision ${existing.draftRevisionId}:`,
-								error,
-							);
-						}
+					const supersededRevisionId = existing.draftRevisionId;
+					if (credit.replaces && supersededRevisionId) {
+						// Started now and awaited before the response, so it overlaps the response's
+						// reads, and a revision list read after the save no longer holds the replaced one.
+						supersededCleanup = revisionRepo
+							.deleteIfUnreferenced(collection, resolvedId, supersededRevisionId, {
+								autosaveOnly: true,
+							})
+							.catch((error: unknown) => {
+								console.error(
+									`[emdash] Failed to clean up superseded revision ${supersededRevisionId}:`,
+									error,
+								);
+							});
 					} else {
 						after(async () => {
 							try {
@@ -4429,16 +4822,24 @@ export class EmDashRuntime {
 		// - Otherwise: update everything as before
 		const result =
 			usesDraftRevisions && !liveMetaTouched
-				? await handleContentGet(this.db, collection, resolvedId)
+				? stagedRow
+					? await contentResponseForRow(this.db, collection, stagedRow)
+					: await handleContentGet(this.db, collection, resolvedId)
 				: await handleContentUpdate(this.db, collection, resolvedId, {
 						...bodyWithoutRev,
-						_rev: draftStorageChanged ? undefined : body._rev,
+						// Staging advanced the version a client token holds, so only the lists' own guard
+						// carries over, as the version staging left.
+						_rev: draftStorageChanged ? (checksLists ? stagedWrite?.rev : undefined) : revGuard,
 						data: usesDraftRevisions ? undefined : processedData,
 						slug: usesDraftRevisions ? undefined : bodyWithoutRev.slug,
 						references: usesDraftRevisions ? undefined : bodyWithoutRev.references,
 						authorId: bodyWithoutRev.authorId,
 						bylines: bodyWithoutRev.bylines,
 					});
+		if (!result.success && checksLists && result.error.code === "CONFLICT") return listConflict();
+		if (result.success && bodyWithoutRev.references) {
+			notifyRoom({ collection, id: resolvedId }, ["references"]);
+		}
 
 		const liveContentChanged = usesDraftRevisions
 			? liveMetaTouched
@@ -4453,20 +4854,24 @@ export class EmDashRuntime {
 		// the same effective data the response surfaces — for revision-
 		// supporting collections, that's the just-saved draft, not the live
 		// columns.
-		const hydrated = await this.hydrateDraftData(result);
+		const hydrated = await this.hydrateDraftData(result, {
+			knownRevision: stagedRevision ?? undefined,
+		});
+		await supersededCleanup;
 		if (hydrated.success && hydrated.data) {
-			const contentIdsToRefresh = [resolvedId];
-			if (!usesDraftRevisions && processedData) {
-				contentIdsToRefresh.push(
-					...(await this.findSyncedSiblingsForUsageRefresh(
-						collection,
-						resolvedId,
-						hydrated.data.item.translationGroup,
-						processedData,
-					)),
-				);
-			}
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, contentIdsToRefresh);
+			const translationGroup = hydrated.data.item.translationGroup;
+			const syncedData = !usesDraftRevisions ? processedData : undefined;
+			this.refreshContentUsageAfterSuccessfulWrite(collection, async () => [
+				resolvedId,
+				...(syncedData
+					? await this.findSyncedSiblingsForUsageRefresh(
+							collection,
+							resolvedId,
+							translationGroup,
+							syncedData,
+						)
+					: []),
+			]);
 		} else if (draftStorageChanged) {
 			try {
 				await markContentMediaUsageCollectionStale(this.db, collection, "CONTENT_USAGE_STALE");
@@ -4484,17 +4889,26 @@ export class EmDashRuntime {
 				false,
 				actor,
 				undefined,
-				savedLocale ? { locale: savedLocale } : {},
+				savedLocale ? { ...saveHookEditors, locale: savedLocale } : saveHookEditors,
 			);
 		}
 
 		if (hydrated.success) {
+			// Only the draft path knows its own write: the column handler reads the row again after
+			// writing, outside a transaction on D1, so that read can include another write.
+			if (stagedWrite && !liveMetaTouched) {
+				return { ...hydrated, liveContentChanged, saved: stagedWrite };
+			}
 			return { ...hydrated, liveContentChanged };
 		}
 		return hydrated;
 	}
 
-	async handleContentDelete(collection: string, id: string) {
+	async handleContentDelete(collection: string, id: string, options: { actor?: ActorInfo } = {}) {
+		return this.withRoomHold({ collection, id }, options, () => this.trashEntry(collection, id));
+	}
+
+	private async trashEntry(collection: string, id: string) {
 		// Run beforeDelete hooks (trusted plugins)
 		if (this.hooks.hasHooks("content:beforeDelete")) {
 			const { allowed } = await this.hooks.runContentBeforeDelete(id, collection);
@@ -4515,7 +4929,7 @@ export class EmDashRuntime {
 		const result = await handleContentDelete(this.db, collection, id);
 		if (result.success) {
 			await this.clearScheduledPolicyRejection(collection, result.data.id, policyRejectionRevision);
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.id]);
 		}
 
 		// Run afterDelete hooks (deferred past the response via after())
@@ -4548,7 +4962,7 @@ export class EmDashRuntime {
 	) {
 		const result = await handleContentRestore(this.db, collection, id, { _rev: options._rev });
 		if (result.success && result.data) {
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 
 		// Run afterRestore hooks (fire-and-forget)
@@ -4587,7 +5001,7 @@ export class EmDashRuntime {
 	async handleContentDuplicate(collection: string, id: string, authorId?: string) {
 		const result = await handleContentDuplicate(this.db, collection, id, authorId);
 		if (result.success && result.data) {
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 		return result;
 	}
@@ -4840,15 +5254,94 @@ export class EmDashRuntime {
 		);
 	}
 
+	/**
+	 * Runs a user's operation on an entry while the entry's room, if one is open in this process,
+	 * holds: the room saves a kept checkpoint as the actor first, and merges the entry once the
+	 * operation ends. `run` gets the caller's `_rev`, or else the checkpoint's. Operations that
+	 * replace the draft pass the values they write as `overwrite`: an open room refuses rich text
+	 * it can't represent, and afterwards writes the stored values over its document. Callers pass
+	 * the entry's ID: a slug finds no room.
+	 */
+	private async withRoomHold<T>(
+		entry: EntryRef,
+		options: {
+			_rev?: string;
+			actor?: { id: string };
+			origin?: ContentActionOrigin;
+			overwrite?: () => Promise<Record<string, unknown> | null | undefined>;
+		},
+		run: (rev: string | undefined) => Promise<T>,
+	): Promise<T | RoomOperationFailure> {
+		const rooms = this._rooms;
+		const actorId = options.actor?.id;
+		const source = options.origin?.source;
+		if (!rooms || actorId === undefined || source === "scheduler" || source === "plugin") {
+			return run(options._rev);
+		}
+		const id = roomId(entry);
+		if (options.overwrite && (await rooms.isOpen(id))) {
+			// The editor schema loads only where a room is open.
+			const { findUnsupportedPortableTextMarks } =
+				await import("@emdash-cms/admin/internal/portable-text");
+			const values = await options.overwrite();
+			const collection = await this.schemaRegistry.getCollectionWithFields(entry.collection);
+			for (const field of collection?.fields ?? []) {
+				const value = values?.[field.slug];
+				if (field.type !== "portableText" || !Array.isArray(value)) continue;
+				const marks = findUnsupportedPortableTextMarks(value);
+				if (marks.length === 0) continue;
+				return {
+					success: false,
+					error: {
+						code: "ROOM_UNSUPPORTED_CONTENT",
+						message: `The ${field.slug} field has formatting the editor can't show while the entry is open: ${marks.join(", ")}`,
+					},
+				};
+			}
+		}
+		let held: Awaited<ReturnType<RuntimeRoomHost["save"]>>;
+		try {
+			held = await rooms.save(id, actorId, options._rev);
+		} catch (error) {
+			if (error instanceof RoomSaveError) return roomSaveFailure(error);
+			throw error;
+		}
+		if (held === null) return run(options._rev);
+		if (held === "conflict") {
+			return {
+				success: false,
+				error: { code: "CONFLICT", message: "Revision precondition did not match" },
+			};
+		}
+		try {
+			return await run(options._rev ?? held.rev);
+		} finally {
+			try {
+				await rooms.release(id, held.hold, { overwrite: options.overwrite !== undefined });
+			} catch (error) {
+				console.error(`[co-editing] room ${id} couldn't merge after an operation:`, error);
+			}
+		}
+	}
+
 	private async checkContentPolicy(
 		name: ContentPolicyHookName,
 		collection: string,
 		id: string,
-		options: ContentPolicyMutationOptions,
+		options: ContentPolicyMutationOptions & { expectedScheduledAt?: string },
 		rejectionCode: "PUBLISH_REJECTED" | "SCHEDULE_REJECTED" | "UNPUBLISH_REJECTED",
 		failureCode: "CONTENT_PUBLISH_ERROR" | "CONTENT_SCHEDULE_ERROR" | "CONTENT_UNPUBLISH_ERROR",
 		scheduledAt?: string,
+		existing?: ContentItemInternal,
 	): Promise<ContentPolicyCheck> {
+		if (existing?.id === id && !this.hooks.hasHooks(name)) {
+			const revision = encodeRev(existing);
+			// A different `_rev` can be a room checkpoint saved after `existing` was read, so only a
+			// fresh read can tell a conflict from it.
+			if (options._rev === undefined || options._rev === revision) {
+				return { allowed: true, revision };
+			}
+		}
 		let current = await handleContentGet(this.db, collection, id);
 		if (!current.success) {
 			return {
@@ -4871,6 +5364,18 @@ export class EmDashRuntime {
 				allowed: false,
 				revision,
 				error: { code: "CONFLICT", message: "Revision precondition did not match" },
+			};
+		}
+		// A scheduled publish that another publish or edit already handled must not
+		// run policy hooks: a cancellation would record a rejection for that entry.
+		if (
+			options.expectedScheduledAt !== undefined &&
+			current.data.item.scheduledAt !== options.expectedScheduledAt
+		) {
+			return {
+				allowed: false,
+				revision,
+				error: { code: "NOT_DUE", message: "Content is no longer scheduled to publish" },
 			};
 		}
 
@@ -5002,32 +5507,31 @@ export class EmDashRuntime {
 			);
 			return;
 		}
-		await this.refreshContentUsageAfterSuccessfulWrite(collection, [unscheduled.data.item.id]);
+		this.refreshContentUsageAfterSuccessfulWrite(collection, [unscheduled.data.item.id]);
 		this.runAfterUnscheduleHooks(contentItemToRecord(unscheduled.data.item), collection);
 	}
 
-	async handleContentPublish(
-		collection: string,
-		id: string,
-		options: {
-			publishedAt?: string;
-			requireScheduledDue?: boolean;
-			expectedScheduledAt?: string;
-			_rev?: string;
-			currentTime?: Date;
-			actor?: ActorInfo;
-			origin?: ContentActionOrigin;
-			pluginInvocationId?: string;
-		} = {},
-	) {
-		const policy = await this.checkContentPolicy(
-			"content:beforePublish",
-			collection,
-			id,
-			options,
-			"PUBLISH_REJECTED",
-			"CONTENT_PUBLISH_ERROR",
+	async handleContentPublish(collection: string, id: string, options: PublishOptions = {}) {
+		return this.withRoomHold({ collection, id }, options, (_rev) =>
+			this.publishEntry(collection, id, { ...options, _rev }),
 		);
+	}
+
+	private async publishEntry(collection: string, id: string, options: PublishOptions) {
+		const [policy, policyRejectionRevision] = await Promise.all([
+			this.checkContentPolicy(
+				"content:beforePublish",
+				collection,
+				id,
+				options,
+				"PUBLISH_REJECTED",
+				"CONTENT_PUBLISH_ERROR",
+				undefined,
+				options.existing,
+			),
+			this.getScheduledPolicyRejectionRevision(collection, id),
+			prefetchContentWriteContext(this.db, collection, { referenceConstraints: true }),
+		]);
 		if (!policy.allowed) {
 			if (policy.cancellation && options.origin?.source === "scheduler") {
 				const unscheduled = await handleScheduledPolicyRejection(this.db, collection, id, {
@@ -5035,16 +5539,16 @@ export class EmDashRuntime {
 					rejection: this.createScheduledPolicyRejection(collection, id, policy.cancellation),
 				});
 				if (!unscheduled.success) return unscheduled;
-				await this.refreshContentUsageAfterSuccessfulWrite(collection, [unscheduled.data.item.id]);
+				this.refreshContentUsageAfterSuccessfulWrite(collection, [unscheduled.data.item.id]);
 				this.runAfterUnscheduleHooks(contentItemToRecord(unscheduled.data.item), collection);
 			}
 			return { success: false as const, error: policy.error };
 		}
-		const policyRejectionRevision = await this.getScheduledPolicyRejectionRevision(collection, id);
 		const {
 			actor: _actor,
 			origin: _origin,
 			pluginInvocationId: _pluginInvocationId,
+			existing: _existing,
 			...handlerOptions
 		} = options;
 		const result = await handleContentPublish(this.db, collection, id, {
@@ -5061,7 +5565,7 @@ export class EmDashRuntime {
 				policyRejectionRevision,
 			);
 			const { item } = result.data;
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [
+			this.refreshContentUsageAfterSuccessfulWrite(collection, async () => [
 				item.id,
 				...(await this.findSyncedSiblingsForUsageRefresh(
 					collection,
@@ -5091,6 +5595,16 @@ export class EmDashRuntime {
 		id: string,
 		options: ContentPolicyMutationOptions = {},
 	) {
+		return this.withRoomHold({ collection, id }, options, (_rev) =>
+			this.unpublishEntry(collection, id, { ...options, _rev }),
+		);
+	}
+
+	private async unpublishEntry(
+		collection: string,
+		id: string,
+		options: ContentPolicyMutationOptions,
+	) {
 		const policy = await this.checkContentPolicy(
 			"content:beforeUnpublish",
 			collection,
@@ -5104,7 +5618,7 @@ export class EmDashRuntime {
 			_rev: policy.revision,
 		});
 		if (result.success && result.data) {
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 
 		// Run afterUnpublish hooks (deferred past the response via after())
@@ -5125,6 +5639,17 @@ export class EmDashRuntime {
 		id: string,
 		scheduledAt: string,
 		options: ContentPolicyMutationOptions = {},
+	) {
+		return this.withRoomHold({ collection, id }, options, (_rev) =>
+			this.scheduleEntry(collection, id, scheduledAt, { ...options, _rev }),
+		);
+	}
+
+	private async scheduleEntry(
+		collection: string,
+		id: string,
+		scheduledAt: string,
+		options: ContentPolicyMutationOptions,
 	) {
 		const policy = await this.checkContentPolicy(
 			"content:beforeSchedule",
@@ -5151,7 +5676,7 @@ export class EmDashRuntime {
 				result.data.item.id,
 				policyRejectionRevision,
 			);
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 
 		// Run afterSchedule hooks (fire-and-forget)
@@ -5170,15 +5695,21 @@ export class EmDashRuntime {
 	async handleContentUnschedule(
 		collection: string,
 		id: string,
-		options: {
-			_rev?: string;
-			origin?: ContentActionOrigin;
-			pluginInvocationId?: string;
-		} = {},
+		options: ContentPolicyMutationOptions = {},
+	) {
+		return this.withRoomHold({ collection, id }, options, (_rev) =>
+			this.unscheduleEntry(collection, id, { ...options, _rev }),
+		);
+	}
+
+	private async unscheduleEntry(
+		collection: string,
+		id: string,
+		options: ContentPolicyMutationOptions,
 	) {
 		const result = await handleContentUnschedule(this.db, collection, id, { _rev: options._rev });
 		if (result.success && result.data) {
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 
 		// Run afterUnschedule hooks (fire-and-forget)
@@ -5198,10 +5729,26 @@ export class EmDashRuntime {
 		return handleContentCountScheduled(this.db, collection);
 	}
 
-	async handleContentDiscardDraft(collection: string, id: string, options: { _rev?: string } = {}) {
+	async handleContentDiscardDraft(
+		collection: string,
+		id: string,
+		options: { _rev?: string; actor?: ActorInfo } = {},
+	) {
+		return this.withRoomHold(
+			{ collection, id },
+			{
+				...options,
+				overwrite: async () =>
+					(await new ContentRepository(this.db).findById(collection, id))?.data,
+			},
+			(_rev) => this.discardEntryDraft(collection, id, { _rev }),
+		);
+	}
+
+	private async discardEntryDraft(collection: string, id: string, options: { _rev?: string }) {
 		const result = await handleContentDiscardDraft(this.db, collection, id, options);
 		if (result.success && result.data) {
-			await this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
+			this.refreshContentUsageAfterSuccessfulWrite(collection, [result.data.item.id]);
 		}
 		return result;
 	}
@@ -5562,15 +6109,19 @@ export class EmDashRuntime {
 		return handleRevisionList(this.db, collection, entryId, params);
 	}
 
+	async handleRevisionEditors(collection: string, entryId: string, since: string | null) {
+		return handleRevisionEditors(this.db, collection, entryId, since);
+	}
+
 	async handleRevisionGet(revisionId: string) {
 		return handleRevisionGet(this.db, revisionId);
 	}
 
-	async handleRevisionRestore(revisionId: string, callerUserId: string) {
+	/** Without `role`, reads the caller's current role, which only a recovery revision needs. */
+	async handleRevisionRestore(revisionId: string, callerUserId: string, role?: RoleLevel) {
 		// Discover the parent entry up front so we can branch on whether
 		// the collection uses draft revisions.
-		const revisionRepo = new RevisionRepository(this.db);
-		const revision = await revisionRepo.findById(revisionId);
+		const revision = await new RevisionRepository(this.db).findDraftBase(revisionId);
 		if (!revision) {
 			return {
 				success: false as const,
@@ -5579,6 +6130,23 @@ export class EmDashRuntime {
 					message: `Revision not found: ${revisionId}`,
 				},
 			};
+		}
+		return this.withRoomHold(
+			{ collection: revision.collection, id: revision.entryId },
+			{ actor: { id: callerUserId }, overwrite: async () => revision.data },
+			() => this.restoreRevision(revisionId, revision, callerUserId, role),
+		);
+	}
+
+	private async restoreRevision(
+		revisionId: string,
+		revision: Revision & RevisionCredit,
+		callerUserId: string,
+		role: RoleLevel | undefined,
+	) {
+		const revisionRepo = new RevisionRepository(this.db);
+		if (revision.kind === "recovery") {
+			return this.restoreRecoveryRevision(revision, callerUserId, role);
 		}
 
 		const collectionInfo = await this.schemaRegistry.getCollectionWithFields(revision.collection);
@@ -5590,7 +6158,7 @@ export class EmDashRuntime {
 		if (!usesDraftRevisions) {
 			const result = await handleRevisionRestore(this.db, revisionId, callerUserId);
 			if (result.success) {
-				await this.refreshContentUsageAfterSuccessfulWrite(revision.collection, [revision.entryId]);
+				this.refreshContentUsageAfterSuccessfulWrite(revision.collection, [revision.entryId]);
 			}
 			return this.hydrateDraftData(result);
 		}
@@ -5646,7 +6214,7 @@ export class EmDashRuntime {
 			const refetched = await handleContentGet(this.db, revision.collection, revision.entryId);
 			const hydrated = await this.hydrateDraftData(refetched);
 			if (hydrated.success) {
-				await this.refreshContentUsageAfterSuccessfulWrite(revision.collection, [revision.entryId]);
+				this.refreshContentUsageAfterSuccessfulWrite(revision.collection, [revision.entryId]);
 			}
 			return hydrated;
 		} catch (error) {
@@ -5665,6 +6233,48 @@ export class EmDashRuntime {
 				},
 			};
 		}
+	}
+
+	/**
+	 * Recovery revisions are stored without validation or hooks, so restoring one saves its
+	 * fields and slug as the restoring user, as a kept save.
+	 */
+	private async restoreRecoveryRevision(
+		revision: { collection: string; entryId: string; data: Record<string, unknown> },
+		callerUserId: string,
+		role: RoleLevel | undefined,
+	) {
+		const user =
+			role === undefined ? await this.findEnabledUser(callerUserId) : { id: callerUserId, role };
+		if (!user) {
+			return {
+				success: false as const,
+				error: { code: "FORBIDDEN", message: "Insufficient permissions" },
+			};
+		}
+		const slug = revision.data._slug;
+		return saveContent(this, {
+			collection: revision.collection,
+			id: revision.entryId,
+			user,
+			body: {
+				data: Object.fromEntries(
+					Object.entries(revision.data).filter(([key]) => !key.startsWith("_")),
+				),
+				// A room leaves the slug null when it couldn't read it; that must not clear the entry's.
+				...(typeof slug === "string" ? { slug } : {}),
+			},
+		});
+	}
+
+	private async findEnabledUser(id: string): Promise<{ id: string; role: RoleLevel } | null> {
+		const row = await this.db
+			.selectFrom("users")
+			.select(["role", "disabled"])
+			.where("id", "=", id)
+			.executeTakeFirst();
+		const role = row && !row.disabled ? toRoleLevel(row.role) : null;
+		return role === null ? null : { id, role };
 	}
 
 	private async findSyncedSiblingsForUsageRefresh(
@@ -5701,7 +6311,22 @@ export class EmDashRuntime {
 		}
 	}
 
-	private async refreshContentUsageAfterSuccessfulWrite(
+	/**
+	 * Media usage capture records the work durably with the write itself
+	 * (capture triggers queue it and mark the index stale), so processing it
+	 * here only drains that queue early. Nothing in the response reads usage.
+	 */
+	private refreshContentUsageAfterSuccessfulWrite(
+		collection: string,
+		contentIds: readonly string[] | (() => Promise<readonly string[]>),
+	): void {
+		after(async () => {
+			const ids = typeof contentIds === "function" ? await contentIds() : contentIds;
+			await this.refreshContentUsage(collection, ids);
+		});
+	}
+
+	private async refreshContentUsage(
 		collection: string,
 		contentIds: readonly string[],
 	): Promise<void> {
@@ -6388,14 +7013,14 @@ export class EmDashRuntime {
 		data: Record<string, unknown>,
 		existing: { data: Record<string, unknown>; draftRevisionId?: string | null } | null,
 		knownFieldSlugs: ReadonlySet<string>,
+		loadRevision: (revisionId: string) => Promise<Revision | null> = (revisionId) =>
+			new RevisionRepository(this.db).findById(revisionId),
 	): Promise<Record<string, unknown>> {
 		if (!existing) return data;
 
 		let stored: Record<string, unknown> = existing.data ?? {};
 		if (existing.draftRevisionId) {
-			const draft = await new RevisionRepository(this.db)
-				.findById(existing.draftRevisionId)
-				.catch(() => null);
+			const draft = await loadRevision(existing.draftRevisionId).catch(() => null);
 			// A retired key may survive in the published row while the draft
 			// revision has already shed it, so the baseline has to cover both.
 			if (draft?.data) stored = { ...stored, ...draft.data };
@@ -7008,4 +7633,21 @@ async function normalizePrimaryImageValue(
 		return normalizeMediaValue(value.src, getProvider);
 	}
 	return normalizeMediaValue(value, getProvider);
+}
+
+/** A failed room save fails the operation, with the status its reason gives. */
+function roomSaveFailure(error: RoomSaveError): RoomOperationFailure {
+	return {
+		success: false,
+		error: { code: error.code, message: error.message },
+		status: roomSaveStatus(error),
+	};
+}
+
+function roomSaveStatus({ reason, code }: RoomSaveError): number {
+	if (reason === "CONFLICT") return 409;
+	if (reason === "FORBIDDEN") return 403;
+	if (reason === "NOT_FOUND") return 404;
+	if (code === "UNLOADED" || code === "SITE_UNAVAILABLE") return 503;
+	return mapErrorStatus(code);
 }

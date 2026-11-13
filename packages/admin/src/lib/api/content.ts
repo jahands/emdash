@@ -136,6 +136,11 @@ export interface UpdateContentInput {
 	/** Reference-field edges to replace atomically, keyed by field slug. */
 	references?: Record<string, string[]>;
 	/**
+	 * The bylines and reference selections this save was based on, as a read returned them. The
+	 * server refuses the save with `LIST_CONFLICT` when a stored list differs.
+	 */
+	expected?: { bylines?: BylineCreditInput[]; references?: Record<string, string[]> };
+	/**
 	 * Optimistic-concurrency token from the last read. When present, the
 	 * server rejects the write with 409 if the entry changed since that read,
 	 * preventing a stale editor from silently overwriting a newer draft
@@ -200,6 +205,8 @@ export async function fetchContentList(
 		 * explicit credit. Off by default: the filter matches real credits.
 		 */
 		includeInferredBylines?: boolean;
+		/** Return only these fields in each item's `data`; omit for whole entries. */
+		fields?: string[];
 	},
 ): Promise<FindManyResult<ContentItem>> {
 	const params = new URLSearchParams();
@@ -229,6 +236,7 @@ export async function fetchContentList(
 	if (options?.includeInferredBylines && (options.bylinesNone || options.bylines?.length)) {
 		params.set("includeInferredBylines", "1");
 	}
+	if (options?.fields) params.set("fields", options.fields.join(","));
 
 	const url = `${API_BASE}/content/${collection}${params.toString() ? `?${params}` : ""}`;
 	const response = await apiFetch(url);
@@ -616,6 +624,11 @@ export interface RevisionAuthor {
 export interface RevisionListItem extends Revision {
 	/** `null` when no author was recorded or the account no longer exists. */
 	author: RevisionAuthor | null;
+	/**
+	 * Everyone who edited the revision since the one before it, latest first. An entry is `null`
+	 * when the account no longer exists. `null` means its author alone.
+	 */
+	editedBy: Array<RevisionAuthor | null> | null;
 }
 
 export interface RevisionListResponse {
@@ -637,6 +650,28 @@ export async function fetchRevisions(
 	const url = `${API_BASE}/content/${collection}/${entryId}/revisions${params.toString() ? `?${params}` : ""}`;
 	const response = await apiFetch(url, { signal: options?.signal });
 	return parseApiResponse<RevisionListResponse>(response, i18n._(msg`Failed to fetch revisions`));
+}
+
+/**
+ * Everyone who edited a content item in the revisions newer than `since`, newest first and once
+ * each, or everyone who edited it when `since` is `null`. An entry is `null` when the account no
+ * longer exists.
+ */
+export async function fetchRevisionEditors(
+	collection: string,
+	entryId: string,
+	options: { since: string | null; signal?: AbortSignal },
+): Promise<Array<RevisionAuthor | null>> {
+	const params = new URLSearchParams();
+	if (options.since) params.set("since", options.since);
+
+	const url = `${API_BASE}/content/${collection}/${entryId}/revisions/editors${params.toString() ? `?${params}` : ""}`;
+	const response = await apiFetch(url, { signal: options.signal });
+	const data = await parseApiResponse<{ items: Array<RevisionAuthor | null> }>(
+		response,
+		i18n._(msg`Failed to fetch revision editors`),
+	);
+	return data.items;
 }
 
 /**

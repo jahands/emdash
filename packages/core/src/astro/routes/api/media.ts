@@ -14,6 +14,7 @@ import { canReadMediaUsageCount, requirePerm } from "#api/authorize.js";
 import { apiError, apiSuccess, handleError, unwrapResult } from "#api/error.js";
 import { GLOBAL_UPLOAD_ALLOWLIST, resolveFieldAllowlist } from "#api/handlers/media-allowlist.js";
 import { handleMediaUsageSummaries } from "#api/handlers/media-usage.js";
+import { handleMediaGetMany, type MediaListResponse } from "#api/handlers/media.js";
 import { isParseError, parseQuery } from "#api/parse.js";
 import {
 	DEFAULT_MAX_UPLOAD_SIZE,
@@ -61,26 +62,31 @@ export const GET: APIRoute = async ({ request, locals }) => {
 	const query = parseQuery(url, mediaListQuery);
 	if (isParseError(query)) return query;
 
-	const result = await emdash.handleMediaList({
-		cursor: query.cursor,
-		page: query.page,
-		limit: query.limit,
-		mimeType: query.mimeType,
-		q: query.q,
-		folderId: query.folderId === "unfiled" ? null : query.folderId,
-	});
-
-	if (!result.success) {
-		return unwrapResult(result);
+	let page: MediaListResponse;
+	if (query.ids) {
+		const result = await handleMediaGetMany(emdash.db, query.ids);
+		if (!result.success) return unwrapResult(result);
+		page = result.data;
+	} else {
+		const result = await emdash.handleMediaList({
+			cursor: query.cursor,
+			page: query.page,
+			limit: query.limit,
+			mimeType: query.mimeType,
+			q: query.q,
+			folderId: query.folderId === "unfiled" ? null : query.folderId,
+		});
+		if (!result.success) return unwrapResult(result);
+		page = result.data;
 	}
 
 	// Add URL to each media item (relative URLs for portability)
-	const itemsWithUrl = result.data.items.map((item) => addUrlToMedia(item));
+	const itemsWithUrl = page.items.map((item) => addUrlToMedia(item));
 	if (query.includeUsage !== "1") {
 		return apiSuccess({
 			items: itemsWithUrl,
-			nextCursor: result.data.nextCursor,
-			totalCount: result.data.totalCount,
+			nextCursor: page.nextCursor,
+			totalCount: page.totalCount,
 		});
 	}
 
@@ -101,8 +107,8 @@ export const GET: APIRoute = async ({ request, locals }) => {
 
 	return apiSuccess({
 		items: itemsWithUsage,
-		nextCursor: result.data.nextCursor,
-		totalCount: result.data.totalCount,
+		nextCursor: page.nextCursor,
+		totalCount: page.totalCount,
 	});
 };
 

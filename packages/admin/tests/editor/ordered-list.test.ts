@@ -79,4 +79,41 @@ describe("admin EmDashOrderedList", () => {
 		expect(lists[1]!.attrs.listId).not.toBe("first");
 		expect(lists[1]!.attrs.start).toBe(1);
 	});
+
+	it("keeps counting lists after text before them changes", () => {
+		const nested = (start: number, labels: string[]) =>
+			list({ start, listStart: 1, listId: "nested" }, labels);
+		const editor = createEditor({
+			type: "doc",
+			content: [
+				{ type: "paragraph", content: [{ type: "text", text: "Intro" }] },
+				list({ start: 1, listStart: 1, listId: "shared" }, ["One", "Two"]),
+				{ type: "paragraph", content: [{ type: "text", text: "Between" }] },
+				list({ start: 3, listStart: 1, listId: "shared" }, ["Three"]),
+				{
+					type: "bulletList",
+					content: [
+						{
+							type: "listItem",
+							content: [
+								{ type: "paragraph", content: [{ type: "text", text: "Item" }] },
+								nested(1, ["a", "b"]),
+								{ type: "paragraph", content: [{ type: "text", text: "Aside" }] },
+								nested(3, ["c"]),
+							],
+						},
+					],
+				},
+			],
+		});
+		const starts = () => orderedNodes(editor).map((node) => node.attrs.start);
+		const item = (text: string) => list({}, [text]).content![0]!;
+
+		editor.commands.insertContentAt(6, " grows");
+		expect(starts()).toEqual([1, 3, 1, 3]);
+
+		editor.commands.insertContentAt(orderedNodes(editor)[0]!.pos + 1, item("Zero"));
+		editor.commands.insertContentAt(orderedNodes(editor)[2]!.pos + 1, item("z"));
+		expect(starts()).toEqual([1, 4, 1, 4]);
+	});
 });

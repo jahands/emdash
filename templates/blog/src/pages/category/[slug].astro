@@ -84,10 +84,11 @@ const filteredPosts = posts.map((post) => ({
 				filteredPosts.length > 0 ? (
 					<>
 						<div class="post-grid">
-							{filteredPosts.map(({ post, tags }) => (
+							{filteredPosts.map(({ post, tags }, index) => (
 								<PostCard
 									post={post}
 									tags={tags.map((t) => ({ slug: t.slug, label: t.label }))}
+									priority={index === 0}
 								/>
 							))}
 						</div>

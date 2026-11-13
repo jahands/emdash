@@ -132,7 +132,7 @@ describe("Comment inbox at phone width", () => {
 		await screen.getByRole("checkbox", { name: "Select comment by Sam" }).click();
 		await screen.getByRole("checkbox", { name: "Select comment by Maya Chen" }).click();
 
-		const bar = screen.getByText("2 selected").element().parentElement!;
+		const bar = screen.getByText("2 selected").element().closest("div")!;
 		expectInside(bar, box);
 		expect(bar.scrollWidth).toBeLessThanOrEqual(bar.clientWidth);
 		for (const name of ["Approve", "Spam", "Trash", "Delete", "Clear"]) {

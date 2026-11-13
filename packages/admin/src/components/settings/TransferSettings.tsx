@@ -7,7 +7,7 @@
 
 import { Banner, Loader } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
 import { useCurrentUser } from "../../lib/api/current-user.js";
@@ -20,6 +20,11 @@ import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js"
 import { ApprovalsSection } from "./transfer/ApprovalsSection.js";
 import { ExportSection } from "./transfer/ExportSection.js";
 import { ImportSection } from "./transfer/ImportSection.js";
+import {
+	pendingTransferApprovalsQueryOptions,
+	transferExportsQueryOptions,
+	transferImportsQueryOptions,
+} from "./transfer/queries.js";
 
 const ROLE_ADMIN = 50;
 
@@ -33,8 +38,16 @@ export function TransferSettings({ focusImport = false }: { focusImport?: boolea
 		queryFn: fetchTransferCapabilities,
 		enabled: isAdmin,
 	});
+	const exportsQuery = useQuery({ ...transferExportsQueryOptions(), enabled: isAdmin });
+	const importsQuery = useQuery({ ...transferImportsQueryOptions(), enabled: isAdmin });
+	const approvalsQuery = useInfiniteQuery({
+		...pendingTransferApprovalsQueryOptions(),
+		enabled: isAdmin,
+	});
+	const sectionsPending =
+		exportsQuery.isPending || importsQuery.isPending || approvalsQuery.isPending;
 
-	const ready = isAdmin && !!capabilitiesQuery.data;
+	const ready = isAdmin && !!capabilitiesQuery.data && !sectionsPending;
 	React.useEffect(() => {
 		if (!focusImport || !ready) return;
 		const target = importRef.current;
@@ -46,7 +59,7 @@ export function TransferSettings({ focusImport = false }: { focusImport?: boolea
 	const title = t`Transfer`;
 	const description = t`Move this site to another EmDash installation, or import a site package into this one.`;
 
-	if (userLoading || (isAdmin && capabilitiesQuery.isPending)) {
+	if (userLoading || (isAdmin && (capabilitiesQuery.isPending || sectionsPending))) {
 		return (
 			<SettingsFrame title={title} description={description}>
 				<div

@@ -21,6 +21,7 @@ import {
 	resolveLocale,
 	resolveLocaleChain,
 } from "../i18n/resolve.js";
+import { noteLayoutRead } from "../layout-reads.js";
 import { getDb } from "../loader.js";
 import {
 	cachedQueryWithEpochs,
@@ -66,6 +67,10 @@ const lastResolvedNamespaces: Map<string, string[]> =
  * ```
  */
 export async function getMenu(name: string, options: MenuQueryOptions = {}): Promise<Menu | null> {
+	const { locale: requestedLocale, trailingSlash: requestedTrailingSlash } = options;
+	noteLayoutRead(`menu:${JSON.stringify([name, requestedLocale, requestedTrailingSlash])}`, () =>
+		getMenu(name, { locale: requestedLocale, trailingSlash: requestedTrailingSlash }),
+	);
 	const locale = resolveLocale(options.locale);
 	const trailingSlash = options.trailingSlash ?? (await getHostTrailingSlash());
 	const key = `${name}:${locale ?? "*"}:${trailingSlash}`;

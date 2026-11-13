@@ -71,6 +71,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		autosaveRejectionToken,
 		onQuickCreateByline,
 		onQuickEditByline,
+		saveError,
 	}: {
 		item?: { data?: { title?: string }; slug?: string | null };
 		onSave?: (payload: { data: Record<string, unknown> }) => void;
@@ -87,6 +88,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		autosaveRejectionToken?: number;
 		onQuickCreateByline?: (input: typeof MOCK_BYLINE_VALUES) => Promise<unknown>;
 		onQuickEditByline?: (bylineId: string, input: typeof MOCK_BYLINE_VALUES) => Promise<unknown>;
+		saveError?: { title?: string; message: string };
 	}) => {
 		const [isDirty, setIsDirty] = React.useState(false);
 		const onDirtyChangeRef = React.useRef(onDirtyChange);
@@ -104,6 +106,12 @@ vi.mock("../src/components/ContentEditor", () => ({
 				<div data-testid="autosave-blocked">{isSaving || isAutosaving ? "blocked" : "ready"}</div>
 				<div data-testid="autosave-completion-token">{autosaveCompletionToken ?? 0}</div>
 				<div data-testid="autosave-rejection-token">{autosaveRejectionToken ?? 0}</div>
+				{saveError ? (
+					<div data-testid="save-error">
+						<p>{saveError.title}</p>
+						<p>{saveError.message}</p>
+					</div>
+				) : null}
 				<form
 					onSubmit={(e) => {
 						e.preventDefault();
@@ -368,17 +376,11 @@ function buildRouter() {
 }
 
 describe("ConfigurationLoadingScreen", () => {
-	it("matches the centered EmDash boot loading view", async () => {
+	it("shows only a spinner named Loading, as the page's boot loader does", async () => {
 		const screen = await render(<ConfigurationLoadingScreen />);
-		const loader = screen.getByRole("status", { name: "Loading" });
-		const label = screen.getByText("Loading configuration...");
-		const loadingView = label.element().parentElement?.parentElement;
 
-		expect(loadingView).toHaveClass("emdash-configuration-loader");
-		expect(loader.element().tagName).toBe("DIV");
-		await expect.element(loader).toHaveClass("emdash-configuration-spinner");
-		await expect.element(label).toHaveClass("emdash-configuration-label");
-		expect(label.element().parentElement).toHaveClass("loader-inner");
+		await expect.element(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
+		expect(screen.container.textContent).toBe("");
 	});
 });
 
@@ -1113,7 +1115,7 @@ describe("ContentListPage – hook order is stable when a refetch errors (#1415)
 		mockFetch.restore();
 	});
 
-	it("renders the ErrorScreen instead of crashing when a content refetch fails", async () => {
+	it("shows the list error instead of crashing when a content refetch fails", async () => {
 		const { router, queryClient, TestApp } = buildRouter();
 
 		await router.navigate({
@@ -1127,16 +1129,59 @@ describe("ContentListPage – hook order is stable when a refetch errors (#1415)
 		const addNewLink = screen.getByRole("link", { name: /add new/i });
 		await expect.element(addNewLink).toBeInTheDocument();
 
-		// Make the next content fetch fail, then force a refetch. The component
-		// re-renders with `error` truthy and takes the ErrorScreen early return,
-		// which sits ABOVE the onLoadMore useCallback. If that callback hook is
-		// below the guards, this render runs one fewer hook and React throws #300
-		// — so the ErrorScreen (and its Retry button) never appears.
+		// Make the next content fetch fail, then force a refetch. If a hook sits
+		// below the page's early returns, the error render runs a different number
+		// of hooks and React throws #300, so the error never appears.
 		mockFetch.on("GET", "/_emdash/api/content/posts", { error: { message: "Boom" } }, 500);
 		await queryClient.refetchQueries({ queryKey: ["content", "posts"] });
 
-		const retryButton = screen.getByRole("button", { name: /retry/i });
+		const retryButton = screen.getByRole("button", { name: "Try again" });
 		await expect.element(retryButton).toBeInTheDocument();
+	});
+
+	it("keeps the page and announces the error in the list when the entries fail to load", async () => {
+		mockFetch.on(
+			"GET",
+			"/_emdash/api/content/posts",
+			{ error: { code: "INTERNAL_ERROR", message: "SQLITE_BUSY: database is locked" } },
+			500,
+		);
+		const { router, TestApp } = buildRouter();
+		await router.navigate({ to: "/content/$collection", params: { collection: "posts" } });
+		const screen = await render(<TestApp />);
+
+		await expect
+			.element(screen.getByRole("alert"))
+			.toHaveTextContent("The entries couldn't be loaded.");
+		await expect.element(screen.getByRole("heading", { name: "Posts" })).toBeVisible();
+		await expect.element(screen.getByRole("link", { name: /add new/i })).toBeVisible();
+		expect(document.body.textContent).not.toContain("SQLITE_BUSY");
+
+		mockFetch.on("GET", "/_emdash/api/content/posts", {
+			data: {
+				items: [
+					{
+						id: "post_1",
+						type: "posts",
+						slug: "back-again",
+						status: "draft",
+						locale: "fr",
+						data: { title: "Back again" },
+						authorId: null,
+						createdAt: "2025-01-01T00:00:00Z",
+						updatedAt: "2025-01-01T00:00:00Z",
+						publishedAt: null,
+						scheduledAt: null,
+						liveRevisionId: null,
+						draftRevisionId: null,
+					},
+				],
+				total: 1,
+			},
+		});
+		await screen.getByRole("button", { name: "Try again" }).click();
+		await expect.element(screen.getByText("Back again")).toBeVisible();
+		expect(screen.getByRole("alert").query()).toBeNull();
 	});
 });
 
@@ -1245,6 +1290,13 @@ describe("ContentListPage – numbered pages", () => {
 		expect(
 			requests.some((url) => url.startsWith("/_emdash/api/content/posts?page=2&limit=20&")),
 		).toBe(true);
+	});
+
+	it("asks only for the entry fields the list shows", async () => {
+		await renderPosts();
+
+		const listRequest = requests.find((url) => url.startsWith("/_emdash/api/content/posts?"));
+		expect(new URL(listRequest!, location.origin).searchParams.get("fields")).toBe("title,name");
 	});
 
 	it("starts a changed search at page 1 without requesting the old page for it", async () => {
@@ -1440,7 +1492,7 @@ describe("ContentNewPage – create failure surfaces the server's error", () => 
 		mockFetch.restore();
 	});
 
-	it("shows a toast with the server's message on a slug conflict (and stays on /new)", async () => {
+	it("hands the server's message to the editor on a slug conflict (and stays on /new)", async () => {
 		const { router, TestApp } = buildRouter();
 
 		await router.navigate({
@@ -1457,19 +1509,17 @@ describe("ContentNewPage – create failure surfaces the server's error", () => 
 
 		await screen.getByRole("button", { name: "Save", exact: true }).click();
 
-		// The UI surfaces WHAT happened — the server's human-readable
-		// conflict message.
-		await expect.element(screen.getByText("Failed to save")).toBeInTheDocument();
+		// The editor reports the server's human-readable conflict message, once.
 		await expect
-			.element(screen.getByText("Slug 'test-post' already exists in collection 'posts'"))
+			.element(
+				screen
+					.getByTestId("save-error")
+					.getByText("Slug 'test-post' already exists in collection 'posts'"),
+			)
 			.toBeInTheDocument();
-
-		// And with the error affordance: Kumo styles severity off `variant`
-		// (Base UI's `type` is inert for styling), and the toast icon only
-		// renders for a non-default variant.
-		await expect
-			.poll(() => document.querySelectorAll("[data-toast-icon]").length)
-			.toBeGreaterThan(0);
+		expect(
+			screen.getByRole("region", { name: "Notifications" }).query()?.textContent ?? "",
+		).not.toContain("already exists");
 
 		// And the failed create must not navigate anywhere.
 		expect(router.state.location.pathname).toContain("/content/posts/new");

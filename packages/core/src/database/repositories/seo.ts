@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 
 import { invalidateCollectionCache } from "../../object-cache/index.js";
+import { notifyRoom } from "../../rooms/notifications.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import type { Database } from "../types.js";
 import type { ContentSeo, ContentSeoInput } from "./types.js";
@@ -13,6 +14,27 @@ const SEO_DEFAULTS: ContentSeo = {
 	canonical: null,
 	noIndex: false,
 };
+
+/** The `_emdash_seo` columns {@link seoFromRow} reads. */
+export interface SeoRowColumns {
+	seo_title: string | null;
+	seo_description: string | null;
+	seo_image: string | null;
+	seo_canonical: string | null;
+	seo_no_index: number;
+}
+
+/** An entry's SEO values from its `_emdash_seo` row, or the defaults when it has none. */
+export function seoFromRow(row: SeoRowColumns | undefined): ContentSeo {
+	if (!row) return { ...SEO_DEFAULTS };
+	return {
+		title: row.seo_title ?? null,
+		description: row.seo_description ?? null,
+		image: row.seo_image ?? null,
+		canonical: row.seo_canonical ?? null,
+		noIndex: row.seo_no_index === 1,
+	};
+}
 
 /**
  * Returns true if the input has at least one explicitly-set SEO field.
@@ -62,17 +84,7 @@ export class SeoRepository {
 			.where("content_id", "=", contentId)
 			.executeTakeFirst();
 
-		if (!row) {
-			return { ...SEO_DEFAULTS };
-		}
-
-		return {
-			title: row.seo_title ?? null,
-			description: row.seo_description ?? null,
-			image: row.seo_image ?? null,
-			canonical: row.seo_canonical ?? null,
-			noIndex: row.seo_no_index === 1,
-		};
+		return seoFromRow(row);
 	}
 
 	/**
@@ -103,13 +115,7 @@ export class SeoRepository {
 				.execute();
 
 			for (const row of rows) {
-				result.set(row.content_id, {
-					title: row.seo_title ?? null,
-					description: row.seo_description ?? null,
-					image: row.seo_image ?? null,
-					canonical: row.seo_canonical ?? null,
-					noIndex: row.seo_no_index === 1,
-				});
+				result.set(row.content_id, seoFromRow(row));
 			}
 		}
 
@@ -155,6 +161,7 @@ export class SeoRepository {
 		`.execute(this.db);
 
 		invalidateCollectionCache(collection);
+		notifyRoom({ collection, id: contentId }, ["seo"]);
 		return this.get(collection, contentId);
 	}
 

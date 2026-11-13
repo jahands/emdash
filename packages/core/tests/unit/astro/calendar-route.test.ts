@@ -4,6 +4,7 @@ import type { Kysely } from "kysely";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { GET } from "../../../src/astro/routes/api/calendar.js";
+import { GET as GET_RANGE } from "../../../src/astro/routes/api/calendar/range.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import type { Database } from "../../../src/database/types.js";
 import { setupTestDatabaseWithCollections, teardownTestDatabase } from "../../utils/test-db.js";
@@ -78,5 +79,34 @@ describe("GET /_emdash/api/calendar", () => {
 
 		expect(response.status).toBe(400);
 		await expect(response.json()).resolves.toMatchObject({ error: { code: "INVALID_CURSOR" } });
+	});
+
+	it("serves a range in one response with its truncation", async () => {
+		expect((await GET_RANGE(context(null, march))).status).toBe(401);
+		expect((await GET_RANGE(context(Role.SUBSCRIBER, march))).status).toBe(403);
+		await new ContentRepository(db).create({
+			type: "post",
+			slug: "launch",
+			data: { title: "Launch" },
+			status: "published",
+			publishedAt: "2030-03-05T10:00:00.000Z",
+		});
+
+		const response = await GET_RANGE(context(Role.CONTRIBUTOR, march));
+
+		expect(response.status).toBe(200);
+		await expect(response.json()).resolves.toMatchObject({
+			success: true,
+			data: { items: [{ title: "Launch" }], truncated: false },
+		});
+	});
+
+	it("validates the range bounds like the paginated endpoint", async () => {
+		const response = await GET_RANGE(
+			context(Role.EDITOR, "from=2030-01-01T00:00:00Z&to=2030-03-05T00:00:00Z"),
+		);
+
+		expect(response.status).toBe(400);
+		await expect(response.json()).resolves.toMatchObject({ error: { code: "VALIDATION_ERROR" } });
 	});
 });

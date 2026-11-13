@@ -16,12 +16,16 @@ import type { APIRoute } from "astro";
 import { env } from "cloudflare:workers";
 import type { Storage } from "emdash";
 import {
+	getMediaVersion,
 	getTransformFingerprint,
 	matchInternalMediaKey,
+	mediaCacheControl,
 	MUTABLE_MEDIA_CACHE_CONTROL,
 	originalMediaHeaders,
 	parseTransformParams,
+	resolveOriginalBody,
 	resolveTransformQuality,
+	shouldVerifyMedia,
 	validatorHeaders,
 	isNotModified,
 	type ImageTransformFormat,
@@ -46,31 +50,27 @@ function resolveImagesBinding(): ImagesBinding | undefined {
 	return (env as Record<string, unknown>)[name] as ImagesBinding | undefined;
 }
 
-function streamOriginal(
-	body: ReadableStream<Uint8Array>,
-	contentType: string,
-	size: number,
-	lastModified?: Date,
-): Response {
-	return new Response(body, {
-		status: 200,
-		headers: originalMediaHeaders(contentType, size, lastModified),
-	});
+interface StoredSource {
+	body: ReadableStream<Uint8Array>;
+	contentType: string;
+	size: number;
+	lastModified?: Date;
 }
 
-function notModifiedResponse(
-	contentType: string,
-	size: number,
-	lastModified?: Date,
-	suffix?: string,
-): Response {
+/**
+ * A 304 carries the validators of the 200 it revalidates. It always revalidates
+ * because it is sent without reading the bytes, so it can't verify a pinned
+ * version. A derivative's 304 omits Content-Type so the stored response keeps
+ * its output format's type.
+ */
+function notModifiedResponse(source: StoredSource, suffix?: string): Response {
 	return new Response(null, {
 		status: 304,
 		headers: {
-			"Content-Type": contentType,
+			...(suffix === undefined ? { "Content-Type": source.contentType } : {}),
 			"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
 			"X-Content-Type-Options": "nosniff",
-			...validatorHeaders(size, lastModified, suffix),
+			...validatorHeaders(source.size, source.lastModified, suffix),
 		},
 	});
 }
@@ -84,11 +84,13 @@ function isNotFound(error: unknown): boolean {
 
 export const GET: APIRoute = async (ctx) => {
 	const url = new URL(ctx.request.url);
-	const key = matchInternalMediaKey(url.searchParams.get("href"));
+	const href = url.searchParams.get("href");
+	const key = matchInternalMediaKey(href);
 	// App.Locals.emdash is augmented by `emdash/locals`, not loaded in this
-	// package's compilation; narrow to the field we need.
+	// package's compilation; narrow to the fields we need.
 	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- App.Locals augmentation lives in the emdash package
-	const storage = (ctx.locals as { emdash?: { storage?: Storage | null } }).emdash?.storage;
+	const emdash = (ctx.locals as { emdash?: { storage?: Storage | null } }).emdash;
+	const storage = emdash?.storage;
 
 	// Not EmDash media, or storage unavailable: let the adapter's endpoint handle
 	// it (bundled assets via ASSETS, allowed remote via fetch).
@@ -96,41 +98,40 @@ export const GET: APIRoute = async (ctx) => {
 
 	// An unread download keeps its storage read open even for a bodyless response.
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
-	const serveOriginal = (source: {
-		body: ReadableStream<Uint8Array>;
-		contentType: string;
-		size: number;
-		lastModified?: Date;
-	}): Response => {
-		if (isNotModified(ctx.request, source.size, source.lastModified)) {
-			return notModifiedResponse(source.contentType, source.size, source.lastModified);
-		}
-		if (ctx.request.method === "HEAD") {
-			return new Response(null, {
-				status: 200,
-				headers: originalMediaHeaders(source.contentType, source.size, source.lastModified),
-			});
-		}
-		unusedBody = undefined;
-		return streamOriginal(source.body, source.contentType, source.size, source.lastModified);
-	};
+	const version = getMediaVersion(href);
 
 	try {
 		const source = await storage.download(key);
 		unusedBody = source.body;
 
+		const serveOriginal = async (): Promise<Response> => {
+			if (isNotModified(ctx.request, source.size, source.lastModified)) {
+				return notModifiedResponse(source);
+			}
+			const original = await resolveOriginalBody(version, source.body, source.size);
+			const headers = originalMediaHeaders(
+				source.contentType,
+				source.size,
+				source.lastModified,
+				original.cacheControl,
+			);
+			if (ctx.request.method === "HEAD") return new Response(null, { status: 200, headers });
+			unusedBody = undefined;
+			return new Response(original.body, { status: 200, headers });
+		};
+
 		// Only raster images are transformable; serve anything else unchanged.
-		if (!source.contentType.startsWith("image/")) return serveOriginal(source);
+		if (!source.contentType.startsWith("image/")) return await serveOriginal();
 
 		const images = resolveImagesBinding();
 		const parsed = parseTransformParams(url.searchParams);
 
 		// No binding or unparseable params: serve the original so the URL resolves.
-		if (!images || !parsed.ok) return serveOriginal(source);
+		if (!images || !parsed.ok) return await serveOriginal();
 
 		const fingerprint = getTransformFingerprint(url.searchParams);
 		if (isNotModified(ctx.request, source.size, source.lastModified, fingerprint)) {
-			return notModifiedResponse(source.contentType, source.size, source.lastModified, fingerprint);
+			return notModifiedResponse(source, fingerprint);
 		}
 
 		const { width, height, format, quality } = parsed.options;
@@ -147,7 +148,14 @@ export const GET: APIRoute = async (ctx) => {
 		const effectiveQuality = resolveTransformQuality(format, quality);
 		if (effectiveQuality !== undefined) output.quality = effectiveQuality;
 
-		const result = await images.input(source.body).transform(transform).output(output);
+		let input = source.body;
+		let cacheControl = MUTABLE_MEDIA_CACHE_CONTROL;
+		if (shouldVerifyMedia(version, source.size)) {
+			const bytes = new Uint8Array(await new Response(source.body).arrayBuffer());
+			cacheControl = await mediaCacheControl(version, bytes);
+			input = new Blob([bytes]).stream();
+		}
+		const result = await images.input(input).transform(transform).output(output);
 		unusedBody = undefined;
 		const response = result.response();
 		if (!response.body) return new Response(null, { status: 500 });
@@ -156,7 +164,7 @@ export const GET: APIRoute = async (ctx) => {
 			status: 200,
 			headers: {
 				"Content-Type": response.headers.get("Content-Type") ?? outputMime,
-				"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
+				"Cache-Control": cacheControl,
 				"X-Content-Type-Options": "nosniff",
 				...validatorHeaders(source.size, source.lastModified, fingerprint),
 			},

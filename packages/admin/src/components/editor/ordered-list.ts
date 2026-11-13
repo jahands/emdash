@@ -5,6 +5,8 @@ import { Plugin, Selection, type EditorState, type Transaction } from "@tiptap/p
 import { canJoin, dropPoint } from "@tiptap/pm/transform";
 import type { EditorView } from "@tiptap/pm/view";
 
+import { changedRanges, localOnly } from "../../portable-text/normalize.js";
+
 const ORDERED_LIST_INPUT_REGEX = /^(\d+)\.\s$/;
 
 declare module "@tiptap/core" {
@@ -58,25 +60,66 @@ export interface OrderedListNormalization {
 	attrs: Record<string, unknown>;
 }
 
-function collectLists(doc: ProseMirrorNode): ListDescriptor[] {
-	const lists: ListDescriptor[] = [];
-	doc.descendants((node, pos) => {
-		if (node.type.name !== "orderedList") return;
+/** A list inside a top-level node, with positions from the start of that node. */
+interface ListInTopLevelNode {
+	node: ProseMirrorNode;
+	pos: number;
+	depth: number;
+	contextType: string | null;
+	contextPos: number | null;
+}
+
+const listsByTopLevelNode = new WeakMap<ProseMirrorNode, ListInTopLevelNode[]>();
+
+function listsInTopLevelNode(
+	doc: ProseMirrorNode,
+	child: ProseMirrorNode,
+	offset: number,
+): ListInTopLevelNode[] {
+	const cached = listsByTopLevelNode.get(child);
+	if (cached) return cached;
+	const lists: ListInTopLevelNode[] = [];
+	const visit = (node: ProseMirrorNode, pos: number) => {
+		if (node.type.name !== "orderedList") return !node.isTextblock;
 		const resolved = doc.resolve(pos);
-		let context = "root";
+		let contextType: string | null = null;
 		let contextPos: number | null = null;
 		for (let depth = resolved.depth; depth > 0; depth--) {
 			if (resolved.node(depth).type.name === "listItem") {
-				contextPos = resolved.before(depth);
-				context = `listItem:${contextPos}`;
+				contextType = "listItem";
+				contextPos = resolved.before(depth) - offset;
 				break;
 			}
 		}
 		if (contextPos === null && resolved.depth > 0) {
-			contextPos = resolved.before(resolved.depth);
-			context = `${resolved.node(resolved.depth).type.name}:${contextPos}`;
+			contextType = resolved.node(resolved.depth).type.name;
+			contextPos = resolved.before(resolved.depth) - offset;
 		}
-		lists.push({ node, pos, depth: resolved.depth, context, contextPos });
+		lists.push({ node, pos: pos - offset, depth: resolved.depth, contextType, contextPos });
+		return true;
+	};
+	if (visit(child, offset)) child.descendants((node, pos) => visit(node, offset + 1 + pos));
+	listsByTopLevelNode.set(child, lists);
+	return lists;
+}
+
+/**
+ * Every ordered list in document order. Lists are found once per top-level
+ * node, so a transaction that leaves a node alone doesn't walk it again.
+ */
+function collectLists(doc: ProseMirrorNode): ListDescriptor[] {
+	const lists: ListDescriptor[] = [];
+	doc.forEach((child, offset) => {
+		for (const list of listsInTopLevelNode(doc, child, offset)) {
+			const contextPos = list.contextPos === null ? null : offset + list.contextPos;
+			lists.push({
+				node: list.node,
+				pos: offset + list.pos,
+				depth: list.depth,
+				context: list.contextType === null ? "root" : `${list.contextType}:${contextPos}`,
+				contextPos,
+			});
+		}
 	});
 	return lists;
 }
@@ -139,24 +182,52 @@ export function normalizeOrderedListDocument(doc: ProseMirrorNode): OrderedListN
 	return changes;
 }
 
-function normalizeTransaction(state: EditorState): Transaction | null {
-	const changes = normalizeOrderedListDocument(state.doc);
-	if (changes.length === 0) {
-		const lists = collectLists(state.doc);
-		const hasJoin = lists.some((list, index) => {
-			const next = lists[index + 1];
-			return (
-				next !== undefined &&
-				next.pos === list.pos + list.node.nodeSize &&
-				next.depth === list.depth &&
-				next.context === list.context &&
-				normalizeId(next.node.attrs.listId) === normalizeId(list.node.attrs.listId) &&
-				normalizeStart(next.node.attrs.listStart) === normalizeStart(list.node.attrs.listStart)
-			);
-		});
-		if (!hasJoin) return null;
-	}
-	const transaction = state.tr;
+function orderedListsIn(doc: ProseMirrorNode): Set<ProseMirrorNode> {
+	const lists = new Set<ProseMirrorNode>();
+	doc.descendants((node) => {
+		if (node.type.name === "orderedList") {
+			lists.add(node);
+			return true;
+		}
+		return node.type.name === "bulletList" || node.type.name === "listItem";
+	});
+	return lists;
+}
+
+/** The ids of the lists the edit from `before` to `after` added, removed or changed. */
+function changedListIds(before: ProseMirrorNode, after: ProseMirrorNode): Set<string | undefined> {
+	const beforeLists = orderedListsIn(before);
+	const afterLists = orderedListsIn(after);
+	const ids = new Set<string | undefined>();
+	for (const list of afterLists)
+		if (!beforeLists.has(list)) ids.add(normalizeId(list.attrs.listId));
+	for (const list of beforeLists)
+		if (!afterLists.has(list)) ids.add(normalizeId(list.attrs.listId));
+	return ids;
+}
+
+/**
+ * Renumbers the lists that share an id with a list the transactions changed,
+ * and joins adjacent segments of one list where the transactions changed the
+ * boundary between them.
+ */
+function normalizeTransaction(
+	transactions: readonly Transaction[],
+	oldState: EditorState,
+	newState: EditorState,
+): Transaction | null {
+	if (!transactions.some((transaction) => transaction.docChanged)) return null;
+	const changedIds = changedListIds(oldState.doc, newState.doc);
+	const changes =
+		changedIds.size === 0
+			? []
+			: normalizeOrderedListDocument(newState.doc).filter(
+					(change) =>
+						changedIds.has(normalizeId(newState.doc.nodeAt(change.pos)?.attrs.listId)) ||
+						changedIds.has(normalizeId(change.attrs.listId)),
+				);
+	const ranges = changedRanges(transactions);
+	const transaction = newState.tr;
 	for (const change of changes) transaction.setNodeMarkup(change.pos, undefined, change.attrs);
 	const normalizedLists = collectLists(transaction.doc);
 	const joinPositions = normalizedLists.flatMap((list, index) => {
@@ -166,7 +237,8 @@ function normalizeTransaction(state: EditorState): Transaction | null {
 			next.depth === list.depth &&
 			next.context === list.context &&
 			normalizeId(next.node.attrs.listId) === normalizeId(list.node.attrs.listId) &&
-			normalizeStart(next.node.attrs.listStart) === normalizeStart(list.node.attrs.listStart)
+			normalizeStart(next.node.attrs.listStart) === normalizeStart(list.node.attrs.listStart) &&
+			ranges.some(({ from, to }) => from <= next.pos && next.pos <= to)
 			? [next.pos]
 			: [];
 	});
@@ -415,6 +487,8 @@ function handleMovedDrop(
 }
 
 export const EmDashOrderedList = OrderedList.extend({
+	content: "listItem*",
+
 	addAttributes() {
 		const parent = this.parent?.() ?? {};
 		return {
@@ -491,7 +565,7 @@ export const EmDashOrderedList = OrderedList.extend({
 	addProseMirrorPlugins() {
 		return [
 			new Plugin({
-				appendTransaction: (_transactions, _oldState, newState) => normalizeTransaction(newState),
+				appendTransaction: normalizeTransaction,
 				props: {
 					transformCopied: (slice, view) => prepareCopy(slice, view.state),
 					handleDrop: handleMovedDrop,
@@ -508,6 +582,6 @@ export const EmDashOrderedList = OrderedList.extend({
 					},
 				},
 			}),
-		];
+		].map((plugin) => localOnly(plugin));
 	},
 });

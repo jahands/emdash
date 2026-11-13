@@ -22,6 +22,7 @@ import {
 } from "../../plugins/content-policy.js";
 import type { VersionedValue } from "../../plugins/types.js";
 import { getSchedulerHealth, type SchedulerHealth } from "../../scheduler-health.js";
+import { settleAll } from "../../utils/settle.js";
 import type { ApiResult } from "../types.js";
 
 export interface CollectionStats {
@@ -80,52 +81,34 @@ export async function handleDashboardStats(
 	now = new Date(),
 ): Promise<ApiResult<DashboardStats>> {
 	try {
-		// Discover collections from the system table
-		const collections = await db
-			.selectFrom("_emdash_collections")
-			.select(["slug", "label"])
-			.orderBy("slug", "asc")
-			.execute();
-
-		// Gather per-collection counts in parallel
-		const contentRepo = new ContentRepository(db);
-		const collectionStats: CollectionStats[] = await Promise.all(
-			collections.map(async (col) => {
-				const stats = await contentRepo.getStats(col.slug, now);
-				if (!includeDrafts) {
-					return {
-						slug: col.slug,
-						label: col.label,
-						total: stats.published,
-						published: stats.published,
-						draft: 0,
-						scheduled: 0,
-						overdueScheduled: 0,
-					};
-				}
-				return {
-					slug: col.slug,
-					label: col.label,
-					total: stats.total,
-					published: stats.published,
-					draft: stats.draft,
-					scheduled: stats.scheduled,
-					overdueScheduled: stats.overdueScheduled,
-				};
-			}),
-		);
-
-		// Media and user counts
 		const mediaRepo = new MediaRepository(db);
 		const userRepo = new UserRepository(db);
 		const optionsRepo = new OptionsRepository(db);
 		const [
+			collections,
 			mediaCount,
 			userCount,
 			schedulerHealth,
 			policyRejectedScheduled,
 			versionedPolicyRejectionOptions,
-		] = await Promise.all([
+		] = await settleAll([
+			db
+				.selectFrom("_emdash_collections as c")
+				.select((eb) => [
+					"c.slug",
+					"c.label",
+					eb
+						.exists(
+							eb
+								.selectFrom("_emdash_fields as f")
+								.select("f.id")
+								.whereRef("f.collection_id", "=", "c.id")
+								.where("f.slug", "=", "title"),
+						)
+						.as("has_title"),
+				])
+				.orderBy("c.slug", "asc")
+				.execute(),
 			includeMediaCount ? mediaRepo.count() : undefined,
 			includeUserCount ? userRepo.count() : undefined,
 			getSchedulerHealth(db, now),
@@ -143,8 +126,44 @@ export async function handleDashboardStats(
 			.filter(({ value }) => isScheduledPolicyRejection(value))
 			.map(({ value, revision }) => ({ ...value, _rev: revision }));
 
-		// Recent items across all collections (last 10 updated)
-		const recentItems = await fetchRecentItems(db, collections, includeDrafts);
+		const contentRepo = new ContentRepository(db);
+		const [collectionStats, recentItems] = await settleAll([
+			settleAll(
+				collections.map(async (col): Promise<CollectionStats> => {
+					const stats = await contentRepo.getStats(col.slug, now);
+					if (!includeDrafts) {
+						return {
+							slug: col.slug,
+							label: col.label,
+							total: stats.published,
+							published: stats.published,
+							draft: 0,
+							scheduled: 0,
+							overdueScheduled: 0,
+						};
+					}
+					return {
+						slug: col.slug,
+						label: col.label,
+						total: stats.total,
+						published: stats.published,
+						draft: stats.draft,
+						scheduled: stats.scheduled,
+						overdueScheduled: stats.overdueScheduled,
+					};
+				}),
+			),
+			// Recent items across all collections (last 10 updated)
+			fetchRecentItems(
+				db,
+				collections.map((col) => ({
+					slug: col.slug,
+					label: col.label,
+					hasTitle: Boolean(col.has_title),
+				})),
+				includeDrafts,
+			),
+		]);
 
 		return {
 			success: true,
@@ -188,28 +207,18 @@ interface RecentItemRow {
  * Uses UNION ALL over each ec_* table. The query is safe because
  * collection slugs come from the system table and are validated.
  *
- * `title` is not a standard column — it's a user-defined field. We query
- * `_emdash_fields` to discover which collections have one and fall back
- * to `slug` (which is always present) otherwise.
+ * `title` is not a standard column — it's a user-defined field. Collections
+ * without one fall back to `slug` (which is always present).
  *
  * Without `includeDrafts`, only published entries are considered.
  */
 async function fetchRecentItems(
 	db: Kysely<Database>,
-	collections: Array<{ slug: string; label: string }>,
+	collections: Array<{ slug: string; label: string; hasTitle: boolean }>,
 	includeDrafts: boolean,
 ): Promise<RecentItem[]> {
 	if (collections.length === 0) return [];
 
-	// Discover which collections have a "title" column
-	const titleFields = await db
-		.selectFrom("_emdash_fields as f")
-		.innerJoin("_emdash_collections as c", "c.id", "f.collection_id")
-		.select(["c.slug as collection_slug"])
-		.where("f.slug", "=", "title")
-		.execute();
-
-	const collectionsWithTitle = new Set(titleFields.map((r) => r.collection_slug));
 	const statusFilter = includeDrafts ? sql`` : sql`AND status = 'published'`;
 
 	// Issue one query per collection in parallel, then merge in JS.
@@ -217,11 +226,11 @@ async function fetchRecentItems(
 	// SQLITE_LIMIT_COMPOUND_SELECT cap when N is large enough (#895);
 	// per-collection queries side-step that. Each query fetches at most
 	// 10 rows, so the merge handles at most N * 10 rows before slicing.
-	const perCollection = await Promise.all(
+	const perCollection = await settleAll(
 		collections.map(async (col) => {
 			validateIdentifier(col.slug);
 			const table = `ec_${col.slug}`;
-			const hasTitle = collectionsWithTitle.has(col.slug);
+			const { hasTitle } = col;
 
 			// Use title column if it exists, otherwise fall back to slug, id.
 			// All output uses snake_case to avoid SQLite quoting issues on D1.

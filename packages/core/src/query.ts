@@ -44,7 +44,7 @@ import {
 	FOLDED_BYLINES_EXIST,
 	FOLDED_BYLINE_FIELDS_VERSION,
 	FOLDED_TERMS,
-	loadPublishedDates,
+	loadPublishedDateBuckets,
 	type WhereRange,
 	type WhereValue,
 } from "./loader.js";
@@ -309,40 +309,45 @@ export interface CacheHint {
 	lastModified?: Date;
 }
 
-interface PublishedDatesResult {
-	dates: Date[];
+/** Published entries whose `published_at` falls in one bucket. */
+interface PublishedDateBucket {
+	/** A `published_at` prefix or value; `new Date(bucket)` is an instant in it. */
+	bucket: string;
+	count: number;
+}
+
+interface PublishedDateBucketsResult {
+	buckets: PublishedDateBucket[];
 	cacheHint: CacheHint;
 	error?: Error;
 }
 
-/** @internal Publication dates for the Archives widget. */
-export async function getPublishedDates(
+/**
+ * @internal Published entry counts for the Archives widget, in buckets that
+ * each lie within one calendar month in every time zone, newest first. See
+ * `loadPublishedDateBuckets`.
+ */
+export async function getPublishedDateBuckets(
 	type: string,
 	options?: { locale?: string },
-): Promise<PublishedDatesResult> {
+): Promise<PublishedDateBucketsResult> {
 	const locale = effectiveLocaleKey(options) || undefined;
-	const key = `publishedDates:v2:${JSON.stringify([type, locale])}`;
+	const key = `publishedDateBuckets:${JSON.stringify([type, locale])}`;
 	try {
 		return await requestCached(key, () =>
-			cachedQuery<PublishedDatesResult>({
+			cachedQuery<PublishedDateBucketsResult>({
 				namespace: contentCacheNamespaces(type),
 				key,
 				load: async () => {
-					const rows = await loadPublishedDates(type, locale);
-					const dates: Date[] = [];
-					for (const row of rows) {
-						if (row.published_at) {
-							const date = new Date(row.published_at);
-							if (!Number.isNaN(date.getTime())) dates.push(date);
-						}
-					}
-					return { dates, cacheHint: { tags: [type] } };
+					const rows = await loadPublishedDateBuckets(type, locale);
+					const buckets = rows.map((row) => ({ bucket: row.bucket, count: Number(row.count) }));
+					return { buckets, cacheHint: { tags: [type] } };
 				},
 			}),
 		);
 	} catch (error) {
 		return {
-			dates: [],
+			buckets: [],
 			cacheHint: {},
 			error:
 				isMissingTableError(error) || isMissingColumnError(error)

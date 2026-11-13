@@ -43,6 +43,25 @@ const contentDateBound = z
  * ceiling once the rest of the list query's placeholders are counted
  * (`SQL_BATCH_SIZE` is 50 for a query binding nothing else).
  */
+const FIELD_SLUG_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/** Comma-separated field slugs; an empty value selects no fields. */
+const fieldSelectionParam = z
+	.string()
+	.max(2000)
+	.optional()
+	.transform((value) =>
+		value === undefined
+			? undefined
+			: [...new Set(value.split(",").map((slug) => slug.trim()))].filter((slug) => slug.length > 0),
+	)
+	.refine((value) => value === undefined || value.every((slug) => FIELD_SLUG_PATTERN.test(slug)), {
+		message: "fields must be comma-separated field slugs",
+	})
+	.refine((value) => value === undefined || value.length <= 100, {
+		message: "at most 100 fields may be selected",
+	});
+
 const bylineFilterParam = z
 	.string()
 	.trim()
@@ -190,6 +209,12 @@ export const contentListQuery = cursorPaginationQuery
 		includeInferredBylines: booleanParam,
 		/** JSON-encoded indexed custom-field filters, combined with AND semantics. */
 		fieldFilters: contentFieldFiltersQuery.optional(),
+		/**
+		 * Comma-separated field slugs. When set, each item's `data` holds only
+		 * these fields; system fields, SEO and bylines are unaffected. Unknown
+		 * slugs are ignored. Omit it for full entries.
+		 */
+		fields: fieldSelectionParam,
 	})
 	.refine(({ cursor, page }) => cursor === undefined || page === undefined, {
 		message: "cursor and page cannot be used together",
@@ -209,14 +234,23 @@ const calendarBound = z.iso
 	.datetime({ offset: true, message: "must be an ISO 8601 datetime" })
 	.transform((value) => new Date(value).toISOString());
 
+function refineCalendarRange<T extends z.ZodType<{ from: string; to: string }>>(schema: T) {
+	return schema
+		.refine((query) => query.from < query.to, { message: "to must be after from", path: ["to"] })
+		.refine((query) => Date.parse(query.to) - Date.parse(query.from) <= MAX_CALENDAR_RANGE_MS, {
+			message: "the range can span at most 62 days",
+			path: ["to"],
+		});
+}
+
 /** Calendar range: `from` inclusive, `to` exclusive, at most 62 days apart. */
-export const calendarQuery = cursorPaginationQuery
-	.extend({ from: calendarBound, to: calendarBound })
-	.refine((query) => query.from < query.to, { message: "to must be after from", path: ["to"] })
-	.refine((query) => Date.parse(query.to) - Date.parse(query.from) <= MAX_CALENDAR_RANGE_MS, {
-		message: "the range can span at most 62 days",
-		path: ["to"],
-	});
+export const calendarQuery = refineCalendarRange(
+	cursorPaginationQuery.extend({ from: calendarBound, to: calendarBound }),
+);
+
+export const calendarRangeQuery = refineCalendarRange(
+	z.object({ from: calendarBound, to: calendarBound }),
+);
 
 /** ISO 8601 datetime for `publishedAt` / `createdAt`. Routes gate writes behind `content:publish_any`. */
 const contentDateOverride = contentDateTime.nullish();
@@ -272,6 +306,16 @@ export const contentUpdateBody = z
 			description:
 				"Reference selections as { fieldSlug: [entryId, ...] }, in display order. Written as content-reference links in the same transaction as the entry. A field bound to the child end of its relation selects the entries pointing at this one, which carry no order.",
 		}),
+		expected: z
+			.object({
+				bylines: z.array(contentBylineInputSchema).optional(),
+				references: z.record(z.string(), z.array(z.string()).max(1000)).optional(),
+			})
+			.optional()
+			.meta({
+				description:
+					"The bylines and reference selections this save was based on, as a read of the entry returned them (every page of a reference field). When a stored list no longer matches, nothing is written and the save fails with 409 LIST_CONFLICT, so the client can read the entry again and rebase its change.",
+			}),
 		publishedAt: contentDateOverride,
 		migrateBlocks: z.boolean().optional(),
 		replaceBlocks: z.boolean().optional(),
@@ -330,6 +374,10 @@ export const contentPreviewUrlBody = z
 export const contentTermsBody = z
 	.object({
 		termIds: z.array(z.string()),
+		expected: z.array(z.string()).optional().meta({
+			description:
+				"The term ids this change was based on, as a read of the entry's terms returned them. When the entry's terms no longer match, nothing is written and the request fails with 409 LIST_CONFLICT.",
+		}),
 	})
 	.meta({ id: "ContentTermsBody" });
 

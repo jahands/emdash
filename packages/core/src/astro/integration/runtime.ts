@@ -251,6 +251,18 @@ export interface EmDashConfig {
 	 */
 	images?: boolean;
 	/**
+	 * Compress responses from the `@astrojs/node` standalone server.
+	 *
+	 * The build stores Brotli and gzip copies of the client assets, and the
+	 * server sends them to browsers that accept them. Pages, API responses
+	 * and other text responses are compressed as they are sent. Set to
+	 * `false` to leave compression to a proxy or CDN in front of the server.
+	 * Other adapters and the adapter's middleware mode are unaffected.
+	 *
+	 * @default true
+	 */
+	compression?: boolean;
+	/**
 	 * Trusted plugins to load (run in main isolate)
 	 *
 	 * @example
@@ -368,6 +380,18 @@ export interface EmDashConfig {
 	 * @default true
 	 */
 	mcp?: boolean;
+
+	/**
+	 * Real-time co-editing of entries in collections with revisions.
+	 *
+	 * Runs on `@astrojs/node`, outside `node:cluster` workers, and on
+	 * `@astrojs/cloudflare` with the `EMDASH_ROOMS` Durable Object binding.
+	 * Elsewhere the editor uses single-editor mode with edit locks. Changing
+	 * it needs a rebuild.
+	 *
+	 * @default false
+	 */
+	coEditing?: boolean;
 
 	/**
 	 * Plugin marketplace URL

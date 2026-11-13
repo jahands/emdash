@@ -10,42 +10,27 @@
 import { Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Images, Trash, SlidersHorizontal } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
 import type { NodeViewProps } from "@tiptap/react";
-import { Node } from "@tiptap/react";
 import { ReactNodeViewRenderer, NodeViewWrapper } from "@tiptap/react";
 import * as React from "react";
 
-import { fetchMediaItem } from "../../lib/api/media.js";
 import {
 	canonicalMediaProviderId,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
+	getMediaThumbnailUrl,
 	localMediaFileUrl,
 } from "../../lib/media-utils.js";
+import {
+	useMediaItem,
+	useRenditionFallback,
+	useRenditionWidth,
+} from "../../lib/use-media-rendition.js";
+import type { GalleryImage } from "../../portable-text/convert.js";
+import { GalleryNode } from "../../portable-text/schema.js";
+import { PORTABLE_TEXT_KEY_ATTR } from "./portableTextIdentity.js";
 
-/** One image inside a gallery block — mirrors the Portable Text shape. */
-export interface GalleryImage {
-	_type: "image";
-	_key: string;
-	asset: {
-		_type?: "reference";
-		_ref: string;
-		url?: string;
-		/** Provider ID for external media (e.g., "cloudflare-images") */
-		provider?: string;
-	};
-	alt?: string;
-	caption?: string;
-	width?: number;
-	height?: number;
-	focalX?: number;
-	focalY?: number;
-	/** LQIP blurhash placeholder (images only) */
-	blurhash?: string;
-	/** LQIP dominant-color placeholder, as a CSS color (images only) */
-	dominantColor?: string;
-}
+export type { GalleryImage };
 
 export interface GalleryAttributes {
 	images: GalleryImage[];
@@ -58,8 +43,8 @@ export interface GallerySidebarPanel {
 	/**
 	 * `selectedImageKey` is transient UI state (which image's settings card
 	 * is open) and `nodeKey` identifies which gallery node this panel
-	 * instance belongs to (from `getPos()`) — both must never be written
-	 * into node attrs via `updateAttributes`.
+	 * instance belongs to (the block's key, or its position without one) —
+	 * both must never be written into node attrs via `updateAttributes`.
 	 */
 	attrs: GalleryAttributes & { selectedImageKey?: string; nodeKey?: string };
 	onUpdate: (attrs: Partial<GalleryAttributes>) => void;
@@ -86,25 +71,47 @@ export function galleryImageUrl(image: GalleryImage): string {
 export function GalleryPreviewImage({
 	image,
 	className,
+	fit = "cover",
 }: {
 	image: GalleryImage;
 	className: string;
+	/** `contain` letterboxes the picture in the image's parent, which sets its size. */
+	fit?: "cover" | "contain";
 }) {
 	const mediaId =
 		canonicalMediaProviderId(image.asset.provider) === "local" && image.asset._ref
 			? image.asset._ref
 			: null;
-	const { data: currentMedia } = useQuery({
-		queryKey: mediaId ? ["media", mediaId] : ["media-preview-disabled", image.asset._ref],
-		queryFn: ({ signal }) => fetchMediaItem(mediaId!, { signal }),
-		enabled: false,
+	const { data: currentMedia, isError: mediaFailed } = useMediaItem(mediaId);
+	const [imageRef, renditionWidth] = useRenditionWidth<HTMLImageElement>({
+		fit,
+		measure: fit === "contain" ? "parent" : "self",
+		sourceWidth: currentMedia?.width ?? image.width,
+		sourceHeight: currentMedia?.height ?? image.height,
 	});
+	const fileUrl = galleryImageUrl(image);
+	const previewUrl = getMediaPreviewUrl(fileUrl, currentMedia?.contentHash);
+	let rendition: string | undefined;
+	if (mediaId === null || mediaFailed) rendition = fileUrl;
+	else if (currentMedia && renditionWidth) {
+		rendition = getMediaThumbnailUrl(
+			fileUrl,
+			currentMedia.mimeType,
+			renditionWidth,
+			currentMedia.contentHash,
+		);
+	}
+	const [src, handleRenditionError] = useRenditionFallback(rendition, previewUrl);
 	return (
 		<img
-			src={getMediaPreviewUrl(galleryImageUrl(image), currentMedia?.contentHash)}
+			ref={imageRef}
+			src={src}
 			alt={image.alt || ""}
 			className={className}
 			style={{ objectPosition: getMediaObjectPosition(image) }}
+			loading="lazy"
+			decoding="async"
+			onError={handleRenditionError}
 			draggable={false}
 		/>
 	);
@@ -140,7 +147,11 @@ function GalleryNodeView({
 				// panel instance is for — used by GalleryDetailPanel to key its resync
 				// effect on node identity rather than attrs object identity. Never
 				// written to node attrs via `updateAttributes`.
-				attrs: { ...getAttrs(), selectedImageKey, nodeKey: String(getPos?.() ?? "") },
+				attrs: {
+					...getAttrs(),
+					selectedImageKey,
+					nodeKey: String(node.attrs[PORTABLE_TEXT_KEY_ATTR] || (getPos?.() ?? "")),
+				},
 				onUpdate: (attrs) => updateAttributes(attrs),
 				onReplace: (attrs) => updateAttributes(attrs),
 				onDelete: () => deleteNode(),
@@ -256,15 +267,7 @@ function GalleryNodeView({
 	);
 }
 
-export const GalleryExtension = Node.create({
-	name: "gallery",
-
-	group: "block",
-
-	atom: true,
-
-	draggable: true,
-
+export const GalleryExtension = GalleryNode.extend({
 	addStorage() {
 		return {
 			/** Callback set by PortableTextEditor to open gallery settings in the content sidebar */
@@ -272,25 +275,6 @@ export const GalleryExtension = Node.create({
 			/** Callback set by PortableTextEditor to close the sidebar */
 			onCloseBlockSidebar: null as (() => void) | null,
 		};
-	},
-
-	addAttributes() {
-		return {
-			images: {
-				default: [],
-			},
-			columns: {
-				default: null,
-			},
-		};
-	},
-
-	parseHTML() {
-		return [{ tag: 'div[data-type="gallery"]' }];
-	},
-
-	renderHTML() {
-		return ["div", { "data-type": "gallery" }];
 	},
 
 	addNodeView() {

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
 	type AdminLocaleManifest,
 	createAdminLocaleResolverPlugin,
+	generateAdminMessagesModule,
 	readAdminLocaleManifest,
 	resolveAdminLocales,
 } from "../../../../src/astro/integration/admin-locales.js";
@@ -104,6 +105,34 @@ describe("resolveAdminLocales", () => {
 
 	it("rejects a value that is not an array", () => {
 		expect(() => resolveAdminLocales("de", available)).toThrow("must be an array");
+	});
+});
+
+describe("generateAdminMessagesModule", () => {
+	const IMPORT_RE = /import catalog\d+ from "(.+)\?url";/g;
+
+	function catalogImports(locales?: string[]) {
+		const adminDist = resolveAdminDist();
+		const source = generateAdminMessagesModule(
+			adminDist,
+			readAdminLocaleManifest(adminDist),
+			locales,
+		);
+		return Array.from(source.matchAll(IMPORT_RE), (match) => match[1]!);
+	}
+
+	it("imports a shipped catalog file for every locale as a URL", () => {
+		const imports = catalogImports();
+		expect(imports.length).toBe(Object.keys(readAdminLocaleManifest(resolveAdminDist())).length);
+		for (const path of imports) expect(existsSync(path)).toBe(true);
+		expect(imports).toContainEqual(expect.stringMatching(/\/locales\/ar\/messages\.mjs$/));
+	});
+
+	it("leaves out locales the allowlist excludes", () => {
+		const imports = catalogImports(["en", "de"]);
+		expect(
+			imports.map((path) => path.split("/").at(-2)!).toSorted((a, b) => a.localeCompare(b)),
+		).toEqual(["de", "en"]);
 	});
 });
 

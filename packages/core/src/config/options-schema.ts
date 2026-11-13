@@ -34,6 +34,7 @@ const configShape = {
 	storage: descriptor("a storage adapter such as local() or r2()"),
 	objectCache: descriptor("an object cache adapter such as memoryCache() or kvCache()"),
 	images: z.boolean(),
+	compression: z.boolean(),
 	imagePlaceholders: z.boolean(),
 	plugins: z.array(pluginDescriptor),
 	sandboxed: z.array(pluginDescriptor),
@@ -47,6 +48,7 @@ const configShape = {
 		),
 	),
 	mcp: z.boolean(),
+	coEditing: z.boolean(),
 	marketplace: z.string(),
 	registry: z.unknown(),
 	updateCheck: z.union(

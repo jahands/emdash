@@ -11,8 +11,10 @@ import { MediaRepository } from "#db/repositories/media.js";
 import { contentDisposition } from "#media/content-disposition.js";
 import {
 	IMMUTABLE_IMAGE_CACHE,
+	MEDIA_VERSION_PARAM,
 	MUTABLE_MEDIA_CACHE_CONTROL,
 	isNotModified,
+	resolveOriginalBody,
 	validatorHeaders,
 } from "#media/image-endpoint.js";
 
@@ -85,6 +87,7 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 
 	// An unread download retains its storage connection even for a bodyless response.
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
+	const version = new URL(request.url).searchParams.get(MEDIA_VERSION_PARAM);
 	try {
 		// Range requests that include If-Range are served as whole-file responses
 		// because this route does not compare If-Range validators.
@@ -108,19 +111,27 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 			return response;
 		}
 
-		const cacheControl = result.contentType.startsWith("image/")
-			? MUTABLE_MEDIA_CACHE_CONTROL
-			: IMMUTABLE_IMAGE_CACHE;
+		const isImage = result.contentType.startsWith("image/");
 
 		if (isNotModified(request, result.size, result.lastModified)) {
 			return new Response(null, {
 				status: 304,
 				headers: {
 					"Content-Type": result.contentType,
-					"Cache-Control": cacheControl,
+					"Cache-Control": isImage ? MUTABLE_MEDIA_CACHE_CONTROL : IMMUTABLE_IMAGE_CACHE,
 					...validatorHeaders(result.size, result.lastModified),
 				},
 			});
+		}
+
+		let content: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer> = result.body;
+		let cacheControl = IMMUTABLE_IMAGE_CACHE;
+		if (isImage && served) {
+			cacheControl = MUTABLE_MEDIA_CACHE_CONTROL;
+		} else if (isImage) {
+			const original = await resolveOriginalBody(version, result.body, result.size);
+			content = original.body;
+			cacheControl = original.cacheControl;
 		}
 
 		const headers: Record<string, string> = {
@@ -155,7 +166,7 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 		}
 		headers["Content-Disposition"] = contentDisposition(disposition, filename);
 
-		const body = request.method === "HEAD" ? null : result.body;
+		const body = request.method === "HEAD" ? null : content;
 
 		if (served) {
 			const end = served.offset + served.length - 1;

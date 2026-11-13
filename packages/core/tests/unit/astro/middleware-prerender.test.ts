@@ -84,6 +84,7 @@ const {
 			handleMediaUpdate: ok,
 			handleMediaDelete: ok,
 			handleRevisionList: ok,
+			handleRevisionEditors: ok,
 			handleRevisionGet: ok,
 			handleRevisionRestore: ok,
 			getPluginRouteMeta,
@@ -123,6 +124,7 @@ const {
 });
 
 const mockCreateRuntime = vi.hoisted(() => vi.fn());
+const mockIsDatabaseUnmigrated = vi.hoisted(() => vi.fn(() => false));
 
 vi.mock(
 	"virtual:emdash/config",
@@ -166,6 +168,7 @@ vi.mock("../../../src/emdash-runtime.js", () => ({
 	DB_INIT_DEADLINE_MS: 30_000,
 	EmDashRuntime: {
 		create: mockCreateRuntime,
+		isDatabaseUnmigrated: mockIsDatabaseUnmigrated,
 	},
 }));
 
@@ -194,16 +197,14 @@ import { getDb } from "../../../src/loader.js";
 import { getRequestContext } from "../../../src/request-context.js";
 import { EmDashStorageError } from "../../../src/storage/types.js";
 
-/** Reset the globalThis-backed singletons between tests. */
-const SETUP_VERIFIED_KEY = Symbol.for("emdash:setup-verified");
+/** Reset the globalThis-backed runtime singleton between tests. */
 const RUNTIME_HOLDER_KEY = Symbol.for("emdash:runtime-holder");
-function resetSetupVerified() {
-	delete (globalThis as Record<symbol, unknown>)[SETUP_VERIFIED_KEY];
+function resetRuntime() {
 	delete (globalThis as Record<symbol, unknown>)[RUNTIME_HOLDER_KEY];
 }
 
 beforeEach(() => {
-	resetSetupVerified();
+	resetRuntime();
 	mockCreateRuntime.mockReset().mockResolvedValue(MOCK_RUNTIME);
 	mockGetRuntimePluginSettingsSchema.mockClear();
 	mockHandleMediaUpload.mockClear();
@@ -215,21 +216,6 @@ beforeEach(() => {
 afterEach(() => {
 	vi.unstubAllEnvs();
 });
-
-/** A getDb stub whose migrations-probe query throws `error`. */
-function getDbThatFailsProbe(error: Error) {
-	return {
-		selectFrom: () => ({
-			selectAll: () => ({
-				limit: () => ({
-					execute: async () => {
-						throw error;
-					},
-				}),
-			}),
-		}),
-	};
-}
 
 interface RequestContextOptions {
 	url?: string;
@@ -393,7 +379,7 @@ describe("astro middleware prerendered routes", () => {
 				"/sitemap-post-2.xml",
 				"/robots.txt",
 			]) {
-				resetSetupVerified();
+				resetRuntime();
 				mockCreateRuntime.mockClear();
 				const { context } = createRequestContext({ url: `https://example.com/field-notes${path}` });
 				await onRequest(context as Parameters<typeof onRequest>[0], async () => {
@@ -1038,25 +1024,16 @@ describe("astro middleware request-scoped db", () => {
 	});
 });
 
-describe("astro middleware setup probe", () => {
+describe("astro middleware on a database that was never migrated", () => {
 	beforeEach(() => {
-		// The "setup verified" flag is a globalThis singleton that latches once a
-		// probe (or runtime init) succeeds. Reset it so each test exercises a
-		// fresh probe.
-		resetSetupVerified();
+		resetRuntime();
 		vi.mocked(createRequestScopedDb).mockReset().mockReturnValue(null);
-		vi.mocked(getDb).mockReset();
+		vi.mocked(getDb).mockClear();
+		mockIsDatabaseUnmigrated.mockReset().mockReturnValue(false);
 	});
 
 	/** Anonymous GET to a public frontend page (e.g. a category page). */
 	function anonymousCategoryPageContext() {
-		const cookies = {
-			get: vi.fn((name: string) => {
-				if (name === "astro-session") return undefined;
-				return undefined;
-			}),
-			set: vi.fn(),
-		};
 		const redirect = vi.fn(
 			(location: string) => new Response(null, { status: 302, headers: { Location: location } }),
 		);
@@ -1064,7 +1041,7 @@ describe("astro middleware setup probe", () => {
 			context: {
 				request: new Request("https://example.com/category/news"),
 				url: new URL("https://example.com/category/news"),
-				cookies,
+				cookies: { get: vi.fn(() => undefined), set: vi.fn() },
 				locals: {} as Record<string, unknown>,
 				redirect,
 				isPrerendered: false,
@@ -1074,11 +1051,8 @@ describe("astro middleware setup probe", () => {
 		};
 	}
 
-	it("migrates and renders a public page when the migrations table is genuinely missing", async () => {
-		// Fresh, un-migrated database: the probe query reports a missing table.
-		vi.mocked(getDb).mockResolvedValue(
-			getDbThatFailsProbe(new Error("no such table: _emdash_migrations")) as never,
-		);
+	it("renders the page once runtime init has migrated the database", async () => {
+		mockIsDatabaseUnmigrated.mockReturnValue(true);
 
 		const { context, redirect } = anonymousCategoryPageContext();
 		const next = vi.fn(async () => new Response("page"));
@@ -1091,10 +1065,16 @@ describe("astro middleware setup probe", () => {
 		expect(response.status).toBe(200);
 	});
 
-	it("answers with an uncached 503 when an un-migrated database cannot be initialized", async () => {
-		vi.mocked(getDb).mockResolvedValue(
-			getDbThatFailsProbe(new Error("no such table: _emdash_migrations")) as never,
-		);
+	it("does not read the database before runtime init", async () => {
+		const { context } = anonymousCategoryPageContext();
+
+		await onRequest(context as Parameters<typeof onRequest>[0], async () => new Response("page"));
+
+		expect(getDb).not.toHaveBeenCalled();
+	});
+
+	it("answers with an uncached 503 when runtime init cannot migrate the database", async () => {
+		mockIsDatabaseUnmigrated.mockReturnValue(true);
 		mockCreateRuntime.mockRejectedValue(new Error("migration 001 failed"));
 
 		const { context, redirect } = anonymousCategoryPageContext();
@@ -1109,13 +1089,11 @@ describe("astro middleware setup probe", () => {
 		expect(await response.text()).toContain('href="/_emdash/admin/setup"');
 	});
 
-	it("does NOT redirect to setup on a transient DB error (regression)", async () => {
-		// A set-up site whose probe hits a transient failure (D1 connection
+	it("still renders the page when runtime init fails on a migrated database", async () => {
+		// A set-up site whose init hits a transient failure (D1 connection
 		// loss, replica unavailable, timeout, locked SQLite) must keep serving
-		// the page — never bounce real visitors to the setup wizard.
-		vi.mocked(getDb).mockResolvedValue(
-			getDbThatFailsProbe(new Error("D1_ERROR: Network connection lost")) as never,
-		);
+		// the page, never bounce real visitors to the setup wizard.
+		mockCreateRuntime.mockRejectedValue(new Error("D1_ERROR: Network connection lost"));
 
 		const { context, redirect } = anonymousCategoryPageContext();
 		const next = vi.fn(async () => new Response("page"));
@@ -1127,109 +1105,12 @@ describe("astro middleware setup probe", () => {
 		expect(response.status).toBe(200);
 	});
 
-	it("starts runtime init without waiting for the probe", async () => {
-		let releaseProbe = () => {};
-		const probeHeld = new Promise<void>((resolve) => {
-			releaseProbe = resolve;
-		});
-		vi.mocked(getDb).mockResolvedValue({
-			selectFrom: () => ({
-				selectAll: () => ({
-					limit: () => ({
-						execute: async () => {
-							await probeHeld;
-							return [];
-						},
-					}),
-				}),
-			}),
-		} as never);
-
-		const { context } = anonymousCategoryPageContext();
-		const pending = onRequest(
-			context as Parameters<typeof onRequest>[0],
-			async () => new Response("page"),
-		);
-		await vi.waitFor(() => expect(mockCreateRuntime).toHaveBeenCalledTimes(1));
-
-		releaseProbe();
-		expect((await pending).status).toBe(200);
-		expect(typeof (context.locals as Record<string, unknown>).emdash).toBe("object");
-	});
-
-	it("does not wait for runtime init after the probe failed to reach the database", async () => {
-		vi.mocked(getDb).mockResolvedValue(
-			getDbThatFailsProbe(new Error("D1_ERROR: Network connection lost")) as never,
-		);
-		let releaseInit = () => {};
-		mockCreateRuntime.mockReturnValue(
-			new Promise((resolve) => {
-				releaseInit = () => resolve(MOCK_RUNTIME);
-			}),
-		);
-
-		const { context } = anonymousCategoryPageContext();
-		const next = vi.fn(async () => new Response("page"));
-
-		const response = await onRequest(context as Parameters<typeof onRequest>[0], next);
-
-		try {
-			expect((context.locals as Record<string, unknown>).emdash).toBeUndefined();
-			expect(next).toHaveBeenCalledTimes(1);
-			expect(response.status).toBe(200);
-		} finally {
-			releaseInit();
-		}
-	});
-
-	it("still uses an already-running runtime when the probe fails", async () => {
-		vi.mocked(getDb).mockResolvedValueOnce({
-			selectFrom: () => ({
-				selectAll: () => ({ limit: () => ({ execute: async () => [] }) }),
-			}),
-		} as never);
-		const first = anonymousCategoryPageContext();
-		await onRequest(first.context as Parameters<typeof onRequest>[0], async () => new Response());
-		delete (globalThis as Record<symbol, unknown>)[SETUP_VERIFIED_KEY];
-		vi.mocked(getDb).mockResolvedValue(
-			getDbThatFailsProbe(new Error("D1_ERROR: Network connection lost")) as never,
-		);
-
-		const second = anonymousCategoryPageContext();
-		await onRequest(second.context as Parameters<typeof onRequest>[0], async () => new Response());
-
-		expect(mockCreateRuntime).toHaveBeenCalledTimes(1);
-		expect(typeof (second.context.locals as Record<string, unknown>).emdash).toBe("object");
-	});
-
-	it("serves the next request from the runtime a failed-probe request started", async () => {
-		vi.mocked(getDb).mockResolvedValueOnce(
-			getDbThatFailsProbe(new Error("D1_ERROR: Network connection lost")) as never,
-		);
-		const first = anonymousCategoryPageContext();
-		await onRequest(first.context as Parameters<typeof onRequest>[0], async () => new Response());
-
-		vi.mocked(getDb).mockResolvedValue({
-			selectFrom: () => ({
-				selectAll: () => ({ limit: () => ({ execute: async () => [] }) }),
-			}),
-		} as never);
-		const second = anonymousCategoryPageContext();
-		await onRequest(second.context as Parameters<typeof onRequest>[0], async () => new Response());
-
-		expect(mockCreateRuntime).toHaveBeenCalledTimes(1);
-		expect(typeof (second.context.locals as Record<string, unknown>).emdash).toBe("object");
-	});
-
-	it("does NOT redirect to setup during prerender even when migrations are missing (regression)", async () => {
-		// A prerendered route is built to static HTML. If the setup probe ran at
-		// build time it would see CI's legitimately-empty database, report a
-		// missing migrations table, and bake context.redirect("/_emdash/admin/setup")
-		// into every prerendered page -- shipping that redirect to production. The
-		// probe must be skipped entirely when prerendering.
-		vi.mocked(getDb).mockResolvedValue(
-			getDbThatFailsProbe(new Error("no such table: _emdash_migrations")) as never,
-		);
+	it("renders the page during prerender even when the database was never migrated (regression)", async () => {
+		// A prerendered route is built to static HTML from CI's legitimately
+		// empty database; an unmigrated-database response would be baked into
+		// every prerendered page and shipped to production.
+		mockIsDatabaseUnmigrated.mockReturnValue(true);
+		mockCreateRuntime.mockRejectedValue(new Error("migration 001 failed"));
 
 		const { context, redirect } = anonymousCategoryPageContext();
 		context.isPrerendered = true;
@@ -1238,7 +1119,6 @@ describe("astro middleware setup probe", () => {
 		const response = await onRequest(context as Parameters<typeof onRequest>[0], next);
 
 		expect(redirect).not.toHaveBeenCalled();
-		expect(getDb).not.toHaveBeenCalled();
 		expect(next).toHaveBeenCalledTimes(1);
 		expect(response.status).toBe(200);
 	});

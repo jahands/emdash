@@ -12,6 +12,7 @@
  * precompiled package and can be unit-tested directly.
  */
 
+import { computeContentHash } from "../utils/hash.js";
 import { INTERNAL_MEDIA_PREFIX } from "./normalize.js";
 
 /** Output formats the wrapped endpoint can produce on Cloudflare. */
@@ -31,8 +32,18 @@ export const DEFAULT_TRANSFORM_FORMAT: ImageTransformFormat = "webp";
  */
 export const DEFAULT_TRANSFORM_QUALITY = 85;
 
-/** Upper bound for a requested dimension; caps the work a single request asks for. */
+/**
+ * Largest output dimension a transform produces. A request for more is scaled
+ * down to fit, keeping its aspect ratio, rather than refused. Also caps the
+ * work a single request asks for.
+ */
 export const MAX_TRANSFORM_DIMENSION = 4000;
+
+/**
+ * Query parameter that pins a media URL to one version of the file: its
+ * `content_hash`. Replacing the file changes the hash, and so the URL.
+ */
+export const MEDIA_VERSION_PARAM = "_emdash_media";
 
 /** Weak prefix on an ETag, stripped for weak comparison per RFC 7232. */
 const WEAK_ETAG_PREFIX = /^W\//;
@@ -66,6 +77,65 @@ export const IMMUTABLE_IMAGE_CACHE = "public, max-age=31536000, immutable";
 
 /** Cache policy for media keys that Replace original may overwrite. */
 export const MUTABLE_MEDIA_CACHE_CONTROL = "public, max-age=0, must-revalidate";
+
+/**
+ * Largest file read into memory just to check it against the version its URL
+ * is pinned to. A larger file streams and revalidates instead.
+ */
+export const MAX_VERIFIED_MEDIA_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Cache policy for media bytes served under a URL pinned to `version`. The
+ * response is immutable only when the bytes themselves hash to `version`.
+ * Neither the media row nor the file size proves what storage holds: Replace
+ * original writes storage before the row, and a replacement can be the same
+ * size. Anything else must revalidate.
+ */
+export async function mediaCacheControl(
+	version: string | null,
+	bytes: Uint8Array,
+): Promise<string> {
+	if (version && (await computeContentHash(bytes)) === version) return IMMUTABLE_IMAGE_CACHE;
+	return MUTABLE_MEDIA_CACHE_CONTROL;
+}
+
+/**
+ * Whether a stored file of `size` bytes, requested under a URL pinned to
+ * `version`, is read into memory to verify it. A size of 0 may be unknown.
+ */
+export function shouldVerifyMedia(version: string | null, size: number): boolean {
+	return !!version && size > 0 && size <= MAX_VERIFIED_MEDIA_BYTES;
+}
+
+/**
+ * The body and cache policy for an original file. A file pinned to a version
+ * and small enough to verify is read into memory and checked; any other file
+ * streams unchanged and revalidates.
+ */
+export async function resolveOriginalBody(
+	version: string | null,
+	body: ReadableStream<Uint8Array>,
+	size: number,
+): Promise<{ body: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer>; cacheControl: string }> {
+	if (!shouldVerifyMedia(version, size)) {
+		return { body, cacheControl: MUTABLE_MEDIA_CACHE_CONTROL };
+	}
+	const bytes = new Uint8Array(await new Response(body).arrayBuffer());
+	return { body: bytes, cacheControl: await mediaCacheControl(version, bytes) };
+}
+
+/**
+ * The version a media URL is pinned to (`?_emdash_media=`), or `null`. Accepts
+ * absolute and relative URLs.
+ */
+export function getMediaVersion(href: string | null | undefined): string | null {
+	if (!href) return null;
+	try {
+		return new URL(href, "http://localhost").searchParams.get(MEDIA_VERSION_PARAM) || null;
+	} catch {
+		return null;
+	}
+}
 
 /**
  * Format a Date as an HTTP-date (RFC 7231).
@@ -177,10 +247,11 @@ export function originalMediaHeaders(
 	contentType: string,
 	size?: number,
 	lastModified?: Date,
+	cacheControl: string = MUTABLE_MEDIA_CACHE_CONTROL,
 ): Record<string, string> {
 	return {
 		"Content-Type": contentType,
-		"Cache-Control": MUTABLE_MEDIA_CACHE_CONTROL,
+		"Cache-Control": cacheControl,
 		"X-Content-Type-Options": "nosniff",
 		"Content-Security-Policy":
 			"sandbox; default-src 'none'; img-src 'self'; style-src 'unsafe-inline'",
@@ -257,8 +328,9 @@ export function resolveTransformQuality(
 
 /**
  * Parse and validate `?w=&h=&f=&q=` query params. Width is required (it sizes
- * the rendition); dimensions are bounded so a request can't ask for an
- * unbounded or nonsensical transform. Format falls back to
+ * the rendition). Dimensions beyond {@link MAX_TRANSFORM_DIMENSION} are scaled
+ * down together, so an oversized responsive candidate still gets the largest
+ * rendition the endpoint makes instead of the original. Format falls back to
  * {@link DEFAULT_TRANSFORM_FORMAT} when not requested. `q` accepts Astro presets
  * or finite numbers rounded and clamped to 1-100. It is otherwise left
  * `undefined` so the caller can apply a per-format
@@ -272,6 +344,8 @@ export function parseTransformParams(params: URLSearchParams): ParsedTransformPa
 
 	const height = parseDimension(params.get("h"));
 	if (height === null) return { ok: false, message: "Invalid 'h' (height)" };
+
+	const bounded = fitWithinTransformLimit(width, height);
 
 	const formatRaw = params.get("f");
 	let format: ImageTransformFormat = DEFAULT_TRANSFORM_FORMAT;
@@ -296,19 +370,76 @@ export function parseTransformParams(params: URLSearchParams): ParsedTransformPa
 		}
 	}
 
-	return { ok: true, options: { width, height, format, quality } };
+	return {
+		ok: true,
+		options: { width: bounded.width, height: bounded.height, format, quality },
+	};
+}
+
+/** Path prefix of Cloudflare's URL-based image transformations. */
+export const CLOUDFLARE_IMAGE_RESIZING_PREFIX = "/cdn-cgi/image/";
+
+/**
+ * Build the Cloudflare URL-mode transformation URL (`/cdn-cgi/image/...`) for an
+ * EmDash media key. The source is always the site's own media file route,
+ * pinned to `version` when given, so the edge cache keys each rendition to one
+ * version of the file. `onerror=redirect` sends the browser to that source when
+ * Cloudflare can't fetch or transform it.
+ *
+ * Options mirror the Images binding path: width and height fit within the box
+ * (Cloudflare's default `scale-down`, which never upscales), and lossy formats
+ * get {@link DEFAULT_TRANSFORM_QUALITY}. PNG is left to keep the source format,
+ * as `format` has no PNG value.
+ *
+ * Returns `null` for a key that isn't safe to put in a media URL.
+ */
+export function buildImageResizingUrl(
+	key: string,
+	options: ImageTransformOptions,
+	version?: string | null,
+): string | null {
+	if (!isSafeTransformKey(key)) return null;
+	const bounded = options.width
+		? fitWithinTransformLimit(options.width, options.height)
+		: { width: undefined, height: options.height };
+	const parts: string[] = [];
+	if (bounded.width) parts.push(`width=${bounded.width}`);
+	if (bounded.height) parts.push(`height=${bounded.height}`);
+	if (options.format !== "png") parts.push(`format=${options.format}`);
+	const quality = resolveTransformQuality(options.format, options.quality);
+	if (quality !== undefined) parts.push(`quality=${quality}`);
+	parts.push("onerror=redirect");
+	const source = `${INTERNAL_MEDIA_PREFIX}${key}`;
+	const query = version ? `?${MEDIA_VERSION_PARAM}=${encodeURIComponent(version)}` : "";
+	return `${CLOUDFLARE_IMAGE_RESIZING_PREFIX}${parts.join(",")}${source}${query}`;
+}
+
+/**
+ * Scale a requested size down, keeping its aspect ratio, so neither side
+ * exceeds `max`. Sizes already within the limit are returned unchanged.
+ */
+export function fitWithinTransformLimit(
+	width: number,
+	height: number | undefined,
+	max: number = MAX_TRANSFORM_DIMENSION,
+): { width: number; height: number | undefined } {
+	const largest = Math.max(width, height ?? 0);
+	if (largest <= max) return { width, height };
+	const scale = max / largest;
+	const fit = (n: number) => Math.min(max, Math.max(1, Math.round(n * scale)));
+	return { width: fit(width), height: height === undefined ? undefined : fit(height) };
 }
 
 /**
  * Parse a dimension query value.
  * - `undefined`: param absent
- * - `null`: present but invalid (non-integer, out of range)
- * - `number`: valid, within [1, MAX_TRANSFORM_DIMENSION]
+ * - `null`: present but invalid (not a positive safe integer)
+ * - `number`: valid, possibly above {@link MAX_TRANSFORM_DIMENSION}
  */
 function parseDimension(raw: string | null): number | undefined | null {
 	if (raw === null) return undefined;
 	if (!DECIMAL_DIGITS.test(raw)) return null;
 	const n = Number(raw);
-	if (n < 1 || n > MAX_TRANSFORM_DIMENSION) return null;
+	if (n < 1 || !Number.isSafeInteger(n)) return null;
 	return n;
 }

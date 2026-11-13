@@ -22,7 +22,7 @@ vi.mock("../../../src/loader.js", () => ({
 	getDb: vi.fn(),
 }));
 
-import { prefetchLayoutData } from "../../../src/astro/prefetch.js";
+import { resetLayoutPrefetchForTests } from "../../../src/astro/prefetch.js";
 import { getDb } from "../../../src/loader.js";
 import {
 	getTaxonomyTerms,
@@ -30,6 +30,9 @@ import {
 	invalidateTermCache,
 	resetTaxonomyDefsCacheForTests,
 } from "../../../src/taxonomies/index.js";
+import { prefetchLayoutReads, renderWithLayoutPrefetch } from "../../utils/layout-prefetch.js";
+
+const ROUTE = "/category/[slug]";
 
 /** SQL of every query executed against the test database. */
 let queries: string[] = [];
@@ -58,6 +61,7 @@ describe("visible term counts are only computed on demand", () => {
 		vi.mocked(getDb).mockResolvedValue(db);
 		resetTaxonomyDefsCacheForTests();
 		invalidateTermCache();
+		resetLayoutPrefetchForTests();
 
 		// Migrations seed the `category` (hierarchical) and `tag` defs declaring
 		// a `posts` collection; point them at the collection this test creates so
@@ -112,20 +116,29 @@ describe("visible term counts are only computed on demand", () => {
 		vi.restoreAllMocks();
 	});
 
-	it("does not aggregate counts during the layout prefetch", async () => {
+	it("does not aggregate counts when prefetching a count-free term list", async () => {
+		await renderWithLayoutPrefetch(ROUTE, async () => {
+			await getTaxonomyTerms("tag", { includeCounts: false });
+			await getTaxonomyTerms("category", { includeCounts: false });
+		});
+
 		await runWithContext({ editMode: false }, async () => {
 			queries = [];
-			await prefetchLayoutData();
+			await prefetchLayoutReads(ROUTE);
 
 			expect(countAggregateQueries()).toEqual([]);
-			// The term lists themselves are still warmed, one query per taxonomy.
 			expect(termListQueries()).toHaveLength(2);
 		});
 	});
 
 	it("reuses the prefetched term list and aggregates once for a caller that wants counts", async () => {
+		await renderWithLayoutPrefetch(ROUTE, async () => {
+			await getTaxonomyTerms("tag", { includeCounts: false });
+			await getTaxonomyTerms("category", { includeCounts: false });
+		});
+
 		await runWithContext({ editMode: false }, async () => {
-			await prefetchLayoutData();
+			await prefetchLayoutReads(ROUTE);
 			queries = [];
 
 			const tags = await getTaxonomyTerms("tag", { includeCounts: false });
@@ -154,17 +167,12 @@ describe("visible term counts are only computed on demand", () => {
 		expect(root!.children[0]).not.toHaveProperty("count");
 	});
 
-	it("recomputes counts per request with no object-cache backend, and never without", async () => {
+	it("recomputes counts once per request with no object-cache backend, prefetched or not", async () => {
 		for (const run of [1, 2]) {
-			await runWithContext({ editMode: false }, async () => {
-				queries = [];
-				await prefetchLayoutData();
-				expect(countAggregateQueries(), `prefetch run ${run}`).toEqual([]);
-
-				const categories = await getTaxonomyTerms("category");
-				expect(categories[0]!.count, `counted run ${run}`).toBe(2);
-				expect(countAggregateQueries(), `aggregate run ${run}`).toHaveLength(1);
-			});
+			queries = [];
+			const categories = await renderWithLayoutPrefetch(ROUTE, () => getTaxonomyTerms("category"));
+			expect(categories[0]!.count, `counted run ${run}`).toBe(2);
+			expect(countAggregateQueries(), `aggregate run ${run}`).toHaveLength(1);
 		}
 	});
 

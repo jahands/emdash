@@ -13,9 +13,8 @@
 
 import { Label, Loader } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
-import { useQuery } from "@tanstack/react-query";
 
-import { fetchMediaItem } from "../lib/api";
+import { useMediaItem } from "../lib/use-media-rendition.js";
 import { ImageFieldRenderer, type ImageFieldValue } from "./ImageFieldRenderer";
 import { OptionalLabel } from "./OptionalLabel.js";
 
@@ -32,11 +31,7 @@ export function BylineAvatarField({ value, onChange }: BylineAvatarFieldProps) {
 	// Resolve the stored id into a media item for display. Local media is
 	// served from a storageKey-keyed URL (not the id), so we can't build a
 	// usable preview URL until this lands.
-	const { data: media, isLoading } = useQuery({
-		queryKey: ["media", value],
-		queryFn: () => (value ? fetchMediaItem(value) : Promise.resolve(null)),
-		enabled: !!value,
-	});
+	const { data: media, isLoading } = useMediaItem(value || null);
 
 	// Show a placeholder while resolving an existing avatar so the wrong
 	// (id-keyed) local URL isn't requested and flashed as a broken image
@@ -63,6 +58,7 @@ export function BylineAvatarField({ value, onChange }: BylineAvatarFieldProps) {
 					// its URL from meta.storageKey inside ImageFieldRenderer.
 					previewUrl: media.provider && media.provider !== "local" ? media.url : undefined,
 					alt: media.alt ?? "",
+					mimeType: media.mimeType,
 					width: media.width,
 					height: media.height,
 					meta: media.storageKey ? { storageKey: media.storageKey } : undefined,

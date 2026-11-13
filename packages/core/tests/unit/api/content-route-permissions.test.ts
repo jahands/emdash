@@ -262,6 +262,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 				"post",
 				"c1",
 				expect.objectContaining({ publishedAt: "2019-03-15T10:30:00.000Z" }),
+				expect.anything(),
 			);
 		});
 
@@ -320,7 +321,9 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 			} as Parameters<typeof updateContent>[0]);
 
 			expect(response.status).toBe(200);
-			expect(handleContentGet).toHaveBeenCalledWith("post", "shared", "fr");
+			expect(handleContentGet).toHaveBeenCalledWith("post", "shared", "fr", undefined, {
+				rowOnly: true,
+			});
 			expect(handleContentUpdate).toHaveBeenCalledWith(
 				"post",
 				"fr-id",
@@ -328,6 +331,7 @@ describe("content route — publishedAt / createdAt permission gate", () => {
 					data: { title: "FR" },
 					locale: "fr",
 				}),
+				{ existing: expect.objectContaining({ id: "fr-id" }) },
 			);
 		});
 	});

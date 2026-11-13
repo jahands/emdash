@@ -4,7 +4,7 @@
  * Displays all menus with ability to create, edit, and delete.
  */
 
-import { Button, Input, LayerCard, LayerDialog, Toast } from "@cloudflare/kumo";
+import { Banner, Button, Input, LayerCard, LayerDialog, Loader, Toast } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -74,7 +74,13 @@ export function MenuList() {
 		if (i18n && !activeLocale) setActiveLocale(i18n.defaultLocale);
 	}, [i18n, activeLocale]);
 
-	const { data: menus, isLoading } = useQuery({
+	const {
+		data: menus,
+		isLoading,
+		error: menusError,
+		refetch: refetchMenus,
+		isRefetching: menusRefetching,
+	} = useQuery({
 		queryKey: ["menus", activeLocale],
 		queryFn: () => fetchMenus({ locale: activeLocale }),
 	});
@@ -143,14 +149,6 @@ export function MenuList() {
 		}
 		submitCreate({ name: createName.trim(), label: createLabel.trim(), locale: activeLocale });
 	};
-
-	if (isLoading) {
-		return (
-			<div className="flex items-center justify-center h-64">
-				<div className="text-kumo-subtle">{t`Loading menus...`}</div>
-			</div>
-		);
-	}
 
 	return (
 		<div className="space-y-6">
@@ -249,7 +247,34 @@ export function MenuList() {
 				</div>
 			</header>
 
-			{!menus || menus.length === 0 ? (
+			{isLoading ? (
+				<div
+					role="status"
+					className="flex items-center justify-center gap-2 py-16 text-sm text-kumo-subtle"
+				>
+					<span aria-hidden="true">
+						<Loader size="sm" />
+					</span>
+					{t`Loading menus...`}
+				</div>
+			) : menusError && !menus ? (
+				<Banner
+					variant="error"
+					role="alert"
+					title={t`Menus could not be loaded`}
+					description={getMutationError(menusError) ?? undefined}
+					action={
+						<Button
+							variant="secondary"
+							size="sm"
+							loading={menusRefetching}
+							onClick={() => void refetchMenus()}
+						>
+							{t`Retry`}
+						</Button>
+					}
+				/>
+			) : !menus || menus.length === 0 ? (
 				<LayerCard className="flex flex-col items-center px-6 py-16 text-center">
 					<span className="mb-5 flex size-14 items-center justify-center rounded-xl bg-kumo-tint text-kumo-brand">
 						<ADMIN_NAV_ICONS.menus size={28} aria-hidden="true" />

@@ -31,6 +31,7 @@ import {
 	PluginMcpConsentRequiredError,
 	type PluginMcpConsentTool,
 } from "../lib/api/marketplace.js";
+import { fetchPlugins } from "../lib/api/plugins.js";
 import {
 	artifactProxyUrl,
 	canonicalCapabilitiesForDriftCheck,
@@ -84,10 +85,7 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 	// refresh.
 	const { data: installedPlugins } = useQuery({
 		queryKey: ["plugins"],
-		queryFn: async () => {
-			const { fetchPlugins } = await import("../lib/api/plugins.js");
-			return fetchPlugins();
-		},
+		queryFn: fetchPlugins,
 		refetchOnMount: "always",
 		refetchOnWindowFocus: "always",
 	});

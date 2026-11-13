@@ -166,3 +166,24 @@ export function createAdminLocaleResolverPlugin(options: AdminLocaleResolverOpti
 		},
 	};
 }
+
+/**
+ * Source of `virtual:emdash/admin-messages`: the URL of each available admin
+ * catalog, emitted as a hashed client asset. The admin page preloads the
+ * active catalog and the admin client imports it, so the catalog is cached
+ * instead of being inlined into every admin response.
+ */
+export function generateAdminMessagesModule(
+	adminDistPath: string,
+	manifest: AdminLocaleManifest,
+	locales: readonly string[] | undefined,
+): string {
+	const allowed = locales ? new Set([SOURCE_LOCALE, ...locales]) : undefined;
+	const codes = Object.keys(manifest).filter((code) => !allowed || allowed.has(code));
+	const imports = codes.map((code, index) => {
+		const path = toVitePath(resolve(adminDistPath, "locales", code, "messages.mjs"));
+		return `import catalog${index} from ${JSON.stringify(`${path}?url`)};`;
+	});
+	const entries = codes.map((code, index) => `\t${JSON.stringify(code)}: catalog${index},`);
+	return `${imports.join("\n")}\nexport const adminMessageUrls = {\n${entries.join("\n")}\n};\n`;
+}

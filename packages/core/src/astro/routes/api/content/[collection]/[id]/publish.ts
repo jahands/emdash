@@ -19,6 +19,7 @@ import { claimEntryLockForWrite } from "#api/handlers/entry-lock.js";
 import { isParseError, parseOptionalBody } from "#api/parse.js";
 import { contentPublishBody } from "#api/schemas.js";
 import { invalidateRouteCache } from "#cache/route-cache.js";
+import type { ContentItem } from "#db/repositories/types.js";
 
 export const prerender = false;
 
@@ -42,7 +43,9 @@ export async function publishContent(
 	const locale = url.searchParams.get("locale") || undefined;
 
 	// Fetch item to check ownership
-	const existing = await emdash.handleContentGet(collection, id, locale);
+	const existing = await emdash.handleContentGet(collection, id, locale, undefined, {
+		rowOnly: true,
+	});
 	if (!existing.success) {
 		return apiError(
 			existing.error?.code ?? "UNKNOWN_ERROR",
@@ -95,6 +98,8 @@ export async function publishContent(
 		_rev: body?._rev,
 		actor: { id: user!.id, role: user!.role },
 		origin: { source: originSource },
+		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- the row-only read returns the stored ContentItem
+		existing: existingItem as unknown as ContentItem | undefined,
 	});
 
 	if (!result.success) return unwrapResult(result);

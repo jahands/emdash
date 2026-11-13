@@ -2,6 +2,8 @@ import { transformAsync } from "@babel/core";
 import type { Plugin } from "rolldown";
 import { defineConfig } from "tsdown";
 
+import { ADMIN_ROUTE_MODULES } from "./src/route-modules.ts";
+
 const JS_TS_RE = /\.[jt]sx?$/;
 const LOCALE_CATALOG_RE = /[/\\]src[/\\]locales[/\\]([^/\\]+)[/\\]messages\.mjs$/;
 
@@ -51,18 +53,34 @@ function localeManifestPlugin(): Plugin {
 	};
 }
 
+const routeModuleEntries = Array.from(
+	new Set(Object.values(ADMIN_ROUTE_MODULES).flat()),
+	(module) => `src/${module}.tsx`,
+);
+
 export default defineConfig({
 	// locales/config and locales/emails are separate server-safe entries:
 	// EmDash core imports them from API routes, where the locales barrel's
-	// React/Kumo graph must not be pulled into the server bundle.
+	// React/Kumo graph must not be pulled into the server bundle. Likewise,
+	// internal/co-editing/types keeps Yjs out of core code that only needs room types.
+	// Each route module is an entry so it keeps a stable file name that EmDash
+	// core can find in the site's client build and preload.
 	entry: [
 		"src/index.ts",
+		"src/app.ts",
+		"src/route-modules.ts",
+		...routeModuleEntries,
 		"src/locales/index.ts",
 		"src/locales/server.ts",
 		"src/locales/config.ts",
 		"src/locales/emails.ts",
 		"src/portable-text-table.ts",
+		"src/internal/portable-text.ts",
+		"src/internal/portable-text-y-sync.ts",
+		"src/internal/co-editing.ts",
+		"src/internal/co-editing/types.ts",
 		"src/html-block.ts",
+		"src/internal/video-block.ts",
 		"src/slugify.ts",
 	],
 	format: ["esm"],

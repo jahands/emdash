@@ -4,7 +4,7 @@
  * Defines all admin routes and their components.
  */
 
-import { Banner, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Loader, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { msg, plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type { QueryClient } from "@tanstack/react-query";
@@ -12,6 +12,8 @@ import {
 	keepPreviousData,
 	useQuery,
 	useInfiniteQuery,
+	useIsFetching,
+	useIsMutating,
 	useMutation,
 	useQueryClient,
 } from "@tanstack/react-query";
@@ -25,61 +27,24 @@ import {
 	useNavigate,
 	useSearch,
 	useMatches,
+	useRouterState,
 } from "@tanstack/react-router";
 import * as React from "react";
 
-import { BlockTypeList } from "./components/BlockTypeList.js";
+import type { OutsideValue } from "./co-editing/types.js";
 import { EMPTY_BYLINE_FILTER, type BylineFilterState } from "./components/BylineFilter";
 import type { BylineFormValues } from "./components/BylineFormDialog.js";
-import { CommentInbox } from "./components/comments/CommentInbox";
-import { ContentEditor, type ReferenceEntryRow } from "./components/ContentEditor";
-import {
-	CONTENT_LIST_PAGE_SIZES,
-	ContentList,
-	EMPTY_DATE_FILTER,
-	type ContentDateFilter,
-	type ContentListSort,
-	type ContentStatusFilter,
+import type { SyncProblem } from "./components/co-editing/SyncStatus.js";
+import { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER } from "./components/content-list-options.js";
+import type { ReferenceEntryRow } from "./components/ContentEditor";
+import type {
+	ContentDateFilter,
+	ContentListSort,
+	ContentStatusFilter,
 } from "./components/ContentList";
-import { ContentTypeEditor } from "./components/ContentTypeEditor";
-import { ContentTypeList } from "./components/ContentTypeList";
-import { Dashboard } from "./components/Dashboard";
-import { DeviceAuthorizePage } from "./components/DeviceAuthorizePage";
 import { EntryLockNotice } from "./components/EntryLockNotice";
-import { InviteAcceptPage } from "./components/InviteAcceptPage";
-import { LoginPage } from "./components/LoginPage";
-import { MagicLinkConfirmPage } from "./components/MagicLinkConfirmPage";
-import { MediaLibrary } from "./components/MediaLibrary";
-import { MenuEditor } from "./components/MenuEditor";
-import { MenuList } from "./components/MenuList";
-import { PluginManager } from "./components/PluginManager";
-import { PluginSettings } from "./components/PluginSettings";
-import { Redirects } from "./components/Redirects";
-import { RegistryBrowse } from "./components/RegistryBrowse";
-import { RegistryPluginDetail } from "./components/RegistryPluginDetail";
-import { RelationList } from "./components/RelationList";
 import { RequireAdmin } from "./components/RequireAdmin.js";
-import { SandboxedPluginPage } from "./components/SandboxedPluginPage";
-import { SectionEditor } from "./components/SectionEditor";
-import { Sections } from "./components/Sections";
-import { Settings } from "./components/Settings";
-import { AllowedDomainsSettings } from "./components/settings/AllowedDomainsSettings";
-import { ApiTokenSettings } from "./components/settings/ApiTokenSettings";
-import { BackupSettings } from "./components/settings/BackupSettings";
-import { EmailSettings } from "./components/settings/EmailSettings";
-import { GeneralSettings } from "./components/settings/GeneralSettings";
-import { MediaUsageSettings } from "./components/settings/MediaUsageSettings";
-import { SecuritySettings } from "./components/settings/SecuritySettings";
-import { SeoSettings } from "./components/settings/SeoSettings";
-import { SidebarsSettings } from "./components/settings/SidebarsSettings";
-import { SocialSettings } from "./components/settings/SocialSettings";
-import { TransferSettings } from "./components/settings/TransferSettings";
-import { SetupWizard } from "./components/SetupWizard";
 import { Shell } from "./components/Shell";
-import { SignupPage } from "./components/SignupPage";
-import { TaxonomyManager } from "./components/TaxonomyManager";
-import { Widgets } from "./components/Widgets";
-import { WordPressImport } from "./components/WordPressImport";
 import { useAdminBranding } from "./lib/admin-branding-context.js";
 import {
 	apiFetch,
@@ -135,8 +100,10 @@ import {
 	renameMediaFolder,
 	deleteMediaFolder,
 	ApiResponseError,
+	isListConflict,
 	isTerminalRequestError,
 	useCurrentUser,
+	fetchPlugins,
 	type AdminManifest,
 	type CreateCollectionInput,
 	type UpdateCollectionInput,
@@ -144,11 +111,13 @@ import {
 	type BylineCreditInput,
 	type ContentSeoInput,
 	type ContentItem,
+	type UpdateContentInput,
 	type CurrentUser,
 	type MediaUploadOptions,
 	type Revision,
 	type RevisionListItem,
 	type RevisionListResponse,
+	type UserListItem,
 } from "./lib/api";
 import { useAdminLayout } from "./lib/api/admin-layout.js";
 import {
@@ -159,20 +128,110 @@ import {
 	bulkCommentAction,
 	type CommentStatus,
 } from "./lib/api/comments";
+import { saveRecoveryRevision, type RecoveryInput } from "./lib/api/rooms.js";
 import { runBulkAction } from "./lib/bulk";
 import { parseCalendarSearch } from "./lib/calendar";
+import { copyEditsText } from "./lib/co-editing/copy-edits.js";
+import { useCoEditing } from "./lib/co-editing/hooks.js";
+import { RoomOperationsContext } from "./lib/co-editing/operations.js";
+import { whenOutsideValuesUnfocused } from "./lib/co-editing/outside-values.js";
+import {
+	RoomSaveError,
+	type CoEditing,
+	type RoomEditing,
+	type RoomEvent,
+} from "./lib/co-editing/types.js";
+import { useContentListFields } from "./lib/content-list-fields";
 import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/content-permissions";
 import { describeContentValidationError } from "./lib/content-validation-errors";
 import { usePluginPage } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
-import { withAutosavedDraft } from "./lib/revision-list-cache.js";
+import {
+	autosavedDraftKey,
+	lastAutosavedDrafts,
+	withAutosavedDraft,
+} from "./lib/revision-list-cache.js";
+import { lazyRouteModule, routeLoadsEditor, withRouteModules } from "./lib/route-module.js";
+import { setScreenIdle } from "./lib/route-prefetch.js";
 import { sanitizeRedirectUrl } from "./lib/url";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
-import { BylineSchemaPage } from "./routes/byline-schema";
-import { BylinesPage } from "./routes/bylines";
-import { CalendarPage } from "./routes/calendar";
-import { UsersPage } from "./routes/users";
+import { useDateLocaleReady } from "./locales/date-locale.js";
+
+const SetupWizard = lazyRouteModule("components/SetupWizard", "SetupWizard");
+const LoginPage = lazyRouteModule("components/LoginPage", "LoginPage");
+const MagicLinkConfirmPage = lazyRouteModule(
+	"components/MagicLinkConfirmPage",
+	"MagicLinkConfirmPage",
+);
+const SignupPage = lazyRouteModule("components/SignupPage", "SignupPage");
+const InviteAcceptPage = lazyRouteModule("components/InviteAcceptPage", "InviteAcceptPage");
+const DeviceAuthorizePage = lazyRouteModule(
+	"components/DeviceAuthorizePage",
+	"DeviceAuthorizePage",
+);
+const Dashboard = lazyRouteModule("components/Dashboard", "Dashboard");
+const CalendarPage = lazyRouteModule("routes/calendar", "CalendarPage");
+const ContentList = lazyRouteModule("components/ContentList", "ContentList");
+const ContentEditor = lazyRouteModule("components/ContentEditor", "ContentEditor");
+const ContentTypeList = lazyRouteModule("components/ContentTypeList", "ContentTypeList");
+const BlockTypeList = lazyRouteModule("components/BlockTypeList", "BlockTypeList");
+const ContentTypeEditor = lazyRouteModule("components/ContentTypeEditor", "ContentTypeEditor");
+const RelationList = lazyRouteModule("components/RelationList", "RelationList");
+const MediaLibrary = lazyRouteModule("components/MediaLibrary", "MediaLibrary");
+const CommentInbox = lazyRouteModule("components/comments/CommentInbox", "CommentInbox");
+const MenuList = lazyRouteModule("components/MenuList", "MenuList");
+const MenuEditor = lazyRouteModule("components/MenuEditor", "MenuEditor");
+const PluginManager = lazyRouteModule("components/PluginManager", "PluginManager");
+const PluginSettings = lazyRouteModule("components/PluginSettings", "PluginSettings");
+const RegistryBrowse = lazyRouteModule("components/RegistryBrowse", "RegistryBrowse");
+const RegistryPluginDetail = lazyRouteModule(
+	"components/RegistryPluginDetail",
+	"RegistryPluginDetail",
+);
+const SandboxedPluginPage = lazyRouteModule(
+	"components/SandboxedPluginPage",
+	"SandboxedPluginPage",
+);
+const Redirects = lazyRouteModule("components/Redirects", "Redirects");
+const Sections = lazyRouteModule("components/Sections", "Sections");
+const SectionEditor = lazyRouteModule("components/SectionEditor", "SectionEditor");
+const TaxonomyManager = lazyRouteModule("components/TaxonomyManager", "TaxonomyManager");
+const UsersPage = lazyRouteModule("routes/users", "UsersPage");
+const BylinesPage = lazyRouteModule("routes/bylines", "BylinesPage");
+const BylineSchemaPage = lazyRouteModule("routes/byline-schema", "BylineSchemaPage");
+const Widgets = lazyRouteModule("components/Widgets", "Widgets");
+const Settings = lazyRouteModule("components/Settings", "Settings");
+const MediaUsageSettings = lazyRouteModule(
+	"components/settings/MediaUsageSettings",
+	"MediaUsageSettings",
+);
+const GeneralSettings = lazyRouteModule("components/settings/GeneralSettings", "GeneralSettings");
+const SocialSettings = lazyRouteModule("components/settings/SocialSettings", "SocialSettings");
+const SeoSettings = lazyRouteModule("components/settings/SeoSettings", "SeoSettings");
+const SecuritySettings = lazyRouteModule(
+	"components/settings/SecuritySettings",
+	"SecuritySettings",
+);
+const AllowedDomainsSettings = lazyRouteModule(
+	"components/settings/AllowedDomainsSettings",
+	"AllowedDomainsSettings",
+);
+const ApiTokenSettings = lazyRouteModule(
+	"components/settings/ApiTokenSettings",
+	"ApiTokenSettings",
+);
+const EmailSettings = lazyRouteModule("components/settings/EmailSettings", "EmailSettings");
+const BackupSettings = lazyRouteModule("components/settings/BackupSettings", "BackupSettings");
+const TransferSettings = lazyRouteModule(
+	"components/settings/TransferSettings",
+	"TransferSettings",
+);
+const SidebarsSettings = lazyRouteModule(
+	"components/settings/SidebarsSettings",
+	"SidebarsSettings",
+);
+const WordPressImport = lazyRouteModule("components/WordPressImport", "WordPressImport");
 
 // Router context type
 interface RouterContext {
@@ -188,6 +247,7 @@ interface ContentUpdateChanges {
 	skipRevision?: boolean;
 	seo?: ContentSeoInput;
 	references?: Record<string, string[]>;
+	expected?: UpdateContentInput["expected"];
 	/** Optimistic-concurrency token from the latest response. */
 	_rev?: string;
 }
@@ -195,9 +255,19 @@ interface ContentUpdateChanges {
 interface ContentUpdateMutationInput {
 	targetId: string;
 	targetLocale?: string;
-	source: "editor" | "auxiliary";
+	/** `outside`: a value outside a room's document, saved at once without `_rev`. */
+	source: "editor" | "auxiliary" | "outside";
 	changes: ContentUpdateChanges;
 }
+
+/** The values outside a room's document that save through the entry's update route. */
+type OutsideValueChanges = Pick<
+	ContentUpdateChanges,
+	"seo" | "authorId" | "bylines" | "references" | "expected"
+>;
+
+/** How many times a list change is rebased on a fresh read before its failure shows. */
+const LIST_SAVE_ATTEMPTS = 3;
 
 interface AutosaveMutationInput {
 	targetId: string;
@@ -312,7 +382,13 @@ function patchAutosaveQueries(
 			authorId: me?.id ?? savedItem.authorId,
 			createdAt,
 			author: me ? { id: me.id, name: me.name?.trim() || null } : null,
+			editedBy: null,
 		};
+		const autosaved = lastAutosavedDrafts(queryClient);
+		const autosavedKey = autosavedDraftKey(collection, id);
+		const previousIsAutosave =
+			previousDraftId !== null && autosaved.get(autosavedKey) === previousDraftId;
+		autosaved.set(autosavedKey, draftRevisionId);
 		for (const [queryKey, list] of lists) {
 			if (!list) continue;
 			queryClient.setQueryData(
@@ -320,6 +396,7 @@ function patchAutosaveQueries(
 				withAutosavedDraft(list, {
 					draft,
 					previousDraftId,
+					previousIsAutosave,
 					liveRevisionId: savedItem.liveRevisionId ?? null,
 					limit: revisionListLimit(queryKey),
 				}),
@@ -332,9 +409,10 @@ function patchAutosaveQueries(
 				.cancelQueries({ queryKey: listsKey })
 				.then(() => queryClient.invalidateQueries({ queryKey: listsKey }));
 		} else {
-			// The patched lists stay on screen; the next list that mounts, or view that opens,
-			// reads the exact server copy.
-			void queryClient.invalidateQueries({ queryKey: listsKey, refetchType: "none" });
+			// The patch is a guess: the server keeps a previous draft that wasn't an autosave, and
+			// the new draft can name people this client doesn't know about. Open lists read the
+			// server's copy now, and the rest when they next mount.
+			void queryClient.invalidateQueries({ queryKey: listsKey, refetchType: "active" });
 		}
 	}
 
@@ -428,7 +506,7 @@ const loginRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	path: "/login",
 	staticData: { pageTitle: msg`Log in` },
-	component: LoginPageWrapper,
+	component: withRouteModules(LoginPageWrapper, LoginPage),
 });
 
 function LoginPageWrapper() {
@@ -442,7 +520,7 @@ const magicLinkConfirmRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	path: "/login/magic-link",
 	staticData: { pageTitle: msg`Confirm magic link` },
-	component: MagicLinkConfirmPageWrapper,
+	component: withRouteModules(MagicLinkConfirmPageWrapper, MagicLinkConfirmPage),
 	validateSearch: (search: Record<string, unknown>) => ({
 		token: typeof search.token === "string" ? search.token : undefined,
 		redirect: typeof search.redirect === "string" ? search.redirect : undefined,
@@ -496,7 +574,7 @@ if (typeof window !== "undefined" && typeof window.requestIdleCallback === "unde
 }
 
 function RootComponent() {
-	const { t } = useLingui();
+	const { t, i18n } = useLingui();
 	const {
 		data: manifest,
 		isLoading,
@@ -510,8 +588,22 @@ function RootComponent() {
 	const currentUser = useCurrentUser();
 	const [userSettled, setUserSettled] = React.useState(false);
 	if (!userSettled && !currentUser.isLoading) setUserSettled(true);
+	const dateLocaleReady = useDateLocaleReady(i18n.locale);
+	const ready = !isLoading && userSettled && dateLocaleReady;
+	const fetching = useIsFetching();
+	const mutating = useIsMutating();
+	const navigating = useRouterState({ select: (state) => state.status !== "idle" });
+	// Loading modules runs them on the main thread, which delays keystrokes in the editor.
+	const editing = useMatches({ select: (matches) => routeLoadsEditor(matches.at(-1)?.fullPath) });
+	const screenIdle = ready && !editing && !navigating && fetching === 0 && mutating === 0;
 
-	if (isLoading || !userSettled) {
+	React.useEffect(() => {
+		if (!screenIdle) return;
+		setScreenIdle(true);
+		return () => setScreenIdle(false);
+	}, [screenIdle]);
+
+	if (!ready) {
 		return <ConfigurationLoadingScreen />;
 	}
 
@@ -531,7 +623,7 @@ function RootComponent() {
 const dashboardRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/",
-	component: DashboardPage,
+	component: withRouteModules(DashboardPage, Dashboard),
 	staticData: { pageTitle: msg`Dashboard` },
 });
 
@@ -558,7 +650,7 @@ const calendarRoute = createRoute({
 const contentListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection",
-	component: ContentListPage,
+	component: withRouteModules(ContentListPage, ContentList),
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
 	}),
@@ -639,6 +731,7 @@ function ContentListPage() {
 		enabled: !!manifest,
 	});
 
+	const listFields = useContentListFields(collection, manifest);
 	const contentList = usePagedQuery({
 		scope: ["content", collection],
 		queryKey: [
@@ -650,10 +743,12 @@ function ContentListPage() {
 				author: authorFilter,
 				date: dateApiParams,
 				byline: bylineApiParams,
+				fields: listFields,
 			},
 		],
 		queryFn: ({ page, perPage }) =>
 			fetchContentList(collection, {
+				fields: listFields,
 				locale: activeLocale,
 				page,
 				limit: perPage,
@@ -802,17 +897,13 @@ function ContentListPage() {
 	// guard (e.g. `error`) must run the same number of hooks as a full render,
 	// or React throws #300 "Rendered fewer hooks than expected" (#1415).
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <RouteLoading />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
 
 	if (!collectionConfig) {
 		return <NotFoundPage message={t`Collection "${collection}" not found`} />;
-	}
-
-	if (contentList.query.error) {
-		return <ErrorScreen error={contentList.query.error.message} />;
 	}
 
 	const listColumns = (collectionConfig.listColumns ?? []).flatMap((slug) => {
@@ -847,6 +938,8 @@ function ContentListPage() {
 			trashedItems={trash.items}
 			trashPagination={trash.pagination}
 			isLoading={contentList.query.isLoading}
+			loadFailed={contentList.query.isError && contentList.items.length === 0}
+			onRetry={() => void contentList.query.refetch()}
 			isTrashedLoading={trash.query.isLoading}
 			trashedCount={trash.pagination.totalCount}
 			onDelete={(id) => deleteMutation.mutateAsync(id)}
@@ -890,7 +983,8 @@ function ContentListPage() {
 const contentNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/new",
-	component: ContentNewPage,
+	component: withRouteModules(ContentNewPage, ContentEditor),
+	pendingComponent: EditorSkeleton,
 	staticData: { fullBleed: true, pageTitle: msg`New content` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
@@ -903,7 +997,6 @@ function ContentNewPage() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const { t } = useLingui();
-	const toastManager = useKumoToastManager();
 	const [selectedBylines, setSelectedBylines] = React.useState<BylineCreditInput[]>([]);
 	const { data: currentUser } = useCurrentUser();
 	const adminLayout = useAdminLayout();
@@ -935,17 +1028,6 @@ function ContentNewPage() {
 				params: { collection, id: result.id },
 				search: { locale: result.locale },
 				ignoreBlocker: true,
-			});
-		},
-		onError: (error) => {
-			toastManager.add({
-				title: t`Failed to save`,
-				description:
-					describeContentValidationError(
-						error,
-						manifest?.collections[collection]?.fields ?? EMPTY_FIELDS,
-					) ?? (error instanceof Error ? error.message : t`An error occurred`),
-				variant: "error",
 			});
 		},
 	});
@@ -1005,7 +1087,7 @@ function ContentNewPage() {
 	);
 
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <EditorSkeleton />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -1054,7 +1136,8 @@ function ContentNewPage() {
 const contentEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/$id",
-	component: ContentEditPage,
+	component: withRouteModules(ContentEditPage, ContentEditor),
+	pendingComponent: EditorSkeleton,
 	staticData: { fullBleed: true, pageTitle: msg`Edit content` },
 	validateSearch: (search) => ({
 		...(typeof search.field === "string" && { field: search.field }),
@@ -1068,6 +1151,11 @@ const ROLE_AUTHOR = 30;
 const ROLE_EDITOR = 40;
 
 const EMPTY_FIELDS: AdminManifest["collections"][string]["fields"] = {};
+/**
+ * How long opening an entry keeps its loading state while it joins the entry's room. After that
+ * the stored entry shows read-only until the room is ready.
+ */
+const CO_EDITING_LOADING_CAP_MS = 1500;
 
 function ContentEditPage() {
 	const { t } = useLingui();
@@ -1123,19 +1211,345 @@ function ContentEditPage() {
 	// refuses what the role can't do.
 	const editAccess = rawItem && currentUser ? entryEditAccess(currentUser, rawItem) : "full";
 	const canPublish = !rawItem || !currentUser || canPublishEntry(currentUser, rawItem);
+	const revisionIdentity = `${collection}:${id}:${activeLocale ?? ""}`;
+	// The room repeats a refused save at every update, so each refusal shows once until a save works.
+	const refusedSavesRef = React.useRef(new Set<string>());
+	const roomRef = React.useRef<RoomEditing | null>(null);
+	const reloadOutsideValues = (values: readonly OutsideValue[]) => {
+		const terms = values.filter((value) => value === "terms");
+		const others = values.filter((value) => value !== "terms");
+		if (terms.length > 0) {
+			void whenOutsideValuesUnfocused(terms).then(() =>
+				queryClient.invalidateQueries({ queryKey: ["entry-terms", collection, id] }),
+			);
+		}
+		if (others.length > 0) {
+			void whenOutsideValuesUnfocused(others).then(() =>
+				queryClient.invalidateQueries({ queryKey: ["content", collection, id] }),
+			);
+		}
+	};
+	const handleRoomEvent = (event: RoomEvent) => {
+		switch (event.kind) {
+			case "outdated": {
+				// The form stays, but a room holding the entry grants no lock to save it with.
+				const snapshot = joinSnapshotRef.current;
+				joinSnapshotRef.current = null;
+				const updated = (description: string) =>
+					toastManager.add({ title: t`The admin was updated`, description, variant: "info" });
+				const stillHere = t`Your edits are still on this page. Reload it to edit with others.`;
+				if (!snapshot || snapshot.identity !== revisionIdentity) {
+					updated(stillHere);
+					return;
+				}
+				void saveRecoveryRevision({ collection, id, locale: activeLocale }, snapshot.form).then(
+					() =>
+						updated(
+							t`Your unsaved edits are in a recovery revision. Reload the page to edit with others.`,
+						),
+					(error: unknown) => {
+						toastManager.add({
+							title: t`Your unsaved edits couldn’t be kept`,
+							description: error instanceof Error ? error.message : t`An error occurred`,
+							variant: "error",
+						});
+						updated(stillHere);
+					},
+				);
+				return;
+			}
+			case "recovered":
+				toastManager.add({
+					title: t`Your unsaved edits are in a recovery revision`,
+					description: t`Find it in this entry’s revisions.`,
+					variant: "info",
+				});
+				return;
+			case "refused": {
+				const key = `${revisionIdentity}\n${event.code}\n${event.message}`;
+				if (refusedSavesRef.current.has(key)) return;
+				refusedSavesRef.current.add(key);
+				toastManager.add({
+					title: t`Your latest edits couldn’t be saved`,
+					description: event.message,
+					variant: "error",
+				});
+				return;
+			}
+			case "checkpoint":
+				refusedSavesRef.current.clear();
+				if (event.editedBy.length > 0) {
+					void queryClient.invalidateQueries({ queryKey: ["revisions", collection, id] });
+					void queryClient.invalidateQueries({ queryKey: ["publishEditedBy", collection, id] });
+					// Only the first save after a publish or discard gives the entry a draft of its own.
+					if (!rawItem?.draftRevisionId || rawItem.draftRevisionId === rawItem.liveRevisionId) {
+						void queryClient.invalidateQueries({ queryKey: ["content", collection, id] });
+					}
+				}
+				return;
+			case "values":
+				reloadOutsideValues(event.values);
+				return;
+			case "reconnected":
+			case "operation": {
+				void queryClient.invalidateQueries({ queryKey: ["content", collection, id] });
+				void queryClient.invalidateQueries({ queryKey: ["revisions", collection, id] });
+				void queryClient.invalidateQueries({ queryKey: ["publishEditedBy", collection, id] });
+				if (event.kind === "reconnected" || event.by === currentUser?.id) return;
+				const name =
+					roomRef.current?.presence.getUsers().find((user) => user.id === event.by)?.name ??
+					queryClient
+						.getQueryData<{ items: UserListItem[] }>(["users"])
+						?.items.find((user) => user.id === event.by)?.name ??
+					t`Someone`;
+				toastManager.add({
+					title: t`${name} changed this entry`,
+					description: t`They changed its publishing or schedule, or replaced its draft.`,
+				});
+				return;
+			}
+			default:
+				return;
+		}
+	};
+	const coEditing = useCoEditing({
+		collection,
+		entryId: id,
+		locale: activeLocale,
+		manifest,
+		onEvent: handleRoomEvent,
+	});
+	// The mode the session last settled in. A Take over or Join from single-editor mode keeps the
+	// edit lock running while its join is in flight, so the lock's own takeover can follow.
+	const [settledCoEditing, setSettledCoEditing] = React.useState<{
+		identity: string;
+		mode: Exclude<CoEditing["mode"], "pending">;
+	} | null>(null);
+	const coEditingMode =
+		coEditing.mode !== "pending"
+			? coEditing.mode
+			: settledCoEditing?.identity === revisionIdentity
+				? settledCoEditing.mode
+				: null;
+	// A room owns the document, so after one the form still holds the entry as the page loaded
+	// it. The fields wait until the entry's current item replaces it.
+	const [leftRoomEntry, setLeftRoomEntry] = React.useState<string | null>(null);
+	if (
+		coEditing.mode !== "pending" &&
+		(settledCoEditing?.identity !== revisionIdentity || settledCoEditing.mode !== coEditing.mode)
+	) {
+		if (
+			settledCoEditing?.identity === revisionIdentity &&
+			settledCoEditing.mode === "room" &&
+			coEditing.mode === "single-editor"
+		) {
+			setLeftRoomEntry(revisionIdentity);
+		}
+		setSettledCoEditing({ identity: revisionIdentity, mode: coEditing.mode });
+	}
+	const leavingRoom = leftRoomEntry === revisionIdentity;
+	React.useEffect(() => {
+		if (!leavingRoom) return;
+		const identity = revisionIdentity;
+		const draftRevisionId = rawItem?.draftRevisionId;
+		void Promise.all([
+			queryClient.invalidateQueries({ queryKey: ["content", collection, id] }),
+			draftRevisionId
+				? queryClient.invalidateQueries({ queryKey: ["revision", draftRevisionId] })
+				: undefined,
+		]).then(() => {
+			resetEditorItem(id);
+			setLeftRoomEntry((current) => (current === identity ? null : current));
+			return undefined;
+		});
+	}, [leavingRoom]);
+	const [loadingCapEntry, setLoadingCapEntry] = React.useState<string | null>(null);
+	// The editor stays mounted across a switch to a cached entry, so only one that isn't showing
+	// yet waits for the room.
+	const editorShownRef = React.useRef(false);
+	// A reset drops the replica. Until the next one syncs, the form would show the entry as the
+	// page loaded it, so the fields wait for it. Values outside the document still save as they do
+	// in the room.
+	const lastRoomRef = React.useRef<RoomEditing | null>(null);
+	if (coEditing.mode === "room") lastRoomRef.current = coEditing.room;
+	const resetting = coEditing.mode === "pending" && coEditingMode === "room";
+	const waitingForRoom =
+		coEditingMode === null && !editorShownRef.current && loadingCapEntry !== revisionIdentity;
+	React.useEffect(() => {
+		if (!waitingForRoom) return;
+		const timer = window.setTimeout(
+			setLoadingCapEntry,
+			CO_EDITING_LOADING_CAP_MS,
+			revisionIdentity,
+		);
+		return () => window.clearTimeout(timer);
+	}, [waitingForRoom, revisionIdentity]);
+	// A reload the user turns down in the browser's prompt leaves the tab as it was.
+	const lastRoomViewRef = React.useRef<Extract<CoEditing, { mode: "room" }> | null>(null);
+	if (coEditing.mode === "room") lastRoomViewRef.current = coEditing;
+	else if (coEditing.mode !== "reloading") lastRoomViewRef.current = null;
+	const roomView =
+		coEditing.mode === "room"
+			? coEditing
+			: coEditing.mode === "reloading"
+				? lastRoomViewRef.current
+				: null;
+	roomRef.current = roomView?.room ?? (resetting ? lastRoomRef.current : null);
+	const roomBlocked = roomView
+		? roomView.offline || !roomView.editable || roomView.kept !== null
+		: resetting || leavingRoom;
+	/** Edits from before joining whose recovery revision failed, which the person can copy or keep again. */
+	const [unkeptEdits, setUnkeptEdits] = React.useState<{
+		identity: string;
+		form: RecoveryInput;
+		/** Null until a recovery revision has failed. */
+		error: string | null;
+		retrying: boolean;
+	} | null>(null);
+	if (unkeptEdits && unkeptEdits.identity !== revisionIdentity) setUnkeptEdits(null);
+	const shownIdentityRef = React.useRef(revisionIdentity);
+	shownIdentityRef.current = revisionIdentity;
+	// A recovery that lands after a switch to another entry leaves that entry's edits alone.
+	const keepEdits = async (identity: string, form: RecoveryInput) => {
+		try {
+			await saveRecoveryRevision({ collection, id, locale: activeLocale }, form);
+		} catch (error) {
+			const message = error instanceof Error ? error.message : t`An error occurred`;
+			setUnkeptEdits((current) =>
+				current?.identity === identity ||
+				(current === null && shownIdentityRef.current === identity)
+					? { identity, form, error: message, retrying: false }
+					: current,
+			);
+			return;
+		}
+		setUnkeptEdits((current) => (current?.identity === identity ? null : current));
+		if (shownIdentityRef.current === identity) handleRoomEvent({ kind: "recovered" });
+	};
+	let roomSync: SyncProblem | null | undefined;
+	if (coEditing.mode === "pending") {
+		roomSync = { kind: "joining", waiting: coEditing.waiting };
+	} else if (roomView && unkeptEdits?.error != null) {
+		const { identity, form, error } = unkeptEdits;
+		roomSync = {
+			kind: "not-kept",
+			error,
+			retrying: unkeptEdits.retrying,
+			copy: () => copyEditsText(collectionFields, (name) => form.data[name]),
+			retry: () => {
+				setUnkeptEdits({ ...unkeptEdits, retrying: true });
+				void keepEdits(identity, form);
+			},
+		};
+	} else if (roomView?.kept) {
+		roomSync = {
+			kind: "not-saved",
+			reason: roomView.kept,
+			reload: coEditing.mode === "room" ? roomView.reload : () => window.location.reload(),
+		};
+	} else if (roomView) {
+		roomSync = roomView.offline ? { kind: "offline", unreachable: roomView.unreachable } : null;
+	}
+	const sendReferencesRef = React.useRef<(() => Promise<boolean>) | null>(null);
+	/** With `draft`, for an operation that takes the draft, which a reference change saves to. */
+	const prepareRoomOperation = React.useCallback(
+		async ({ draft = false }: { draft?: boolean } = {}) => {
+			const room = roomRef.current;
+			if (!room) return;
+			const notSaved = t`Your edits couldn’t be saved, so this didn’t run. Try again.`;
+			if (draft && !(await (sendReferencesRef.current?.() ?? true))) throw new Error(notSaved);
+			try {
+				await room.whenCovered({ save: true });
+			} catch (error) {
+				throw new Error(
+					error instanceof RoomSaveError && error.reason === "refused" ? error.message : notSaved,
+					{ cause: error },
+				);
+			}
+		},
+		[t],
+	);
+	const inRoom = roomView !== null;
+	const roomOperations = React.useMemo(
+		() => ({ prepare: prepareRoomOperation, blocked: roomBlocked, inRoom }),
+		[prepareRoomOperation, roomBlocked, inRoom],
+	);
+	const toastManagerRef = React.useRef(toastManager);
+	toastManagerRef.current = toastManager;
+	/** Shows a failure the operation's control has nowhere to show, and passes it on. */
+	const failWithToast = React.useCallback(
+		(title: string) =>
+			(error: unknown): never => {
+				toastManagerRef.current.add({
+					title,
+					description: error instanceof Error ? error.message : t`An error occurred`,
+					variant: "error",
+				});
+				throw error;
+			},
+		[t],
+	);
+	const handlePreviewNotSaved = React.useCallback(() => {
+		toastManagerRef.current.add({
+			title: t`Preview opens once your edits are saved`,
+			description: t`Try again in a moment.`,
+			variant: "error",
+		});
+	}, [t]);
+	const entryDeleted = coEditing.mode === "single-editor" && coEditing.deleted;
+	const showsEditor =
+		Boolean(manifest?.collections[collection]) &&
+		!isLoading &&
+		!(itemError && !rawItem) &&
+		!waitingForRoom &&
+		!(coEditing.mode === "reloading" && !roomView);
+	React.useLayoutEffect(() => {
+		editorShownRef.current = showsEditor;
+	});
 	const entryLock = useEntryLock({
 		collection,
 		entryId: id,
 		locale: activeLocale,
-		ready: Boolean(rawItem) && editAccess !== null,
+		ready:
+			Boolean(rawItem) && editAccess !== null && coEditingMode === "single-editor" && !entryDeleted,
 	});
+	const readFormRef = React.useRef<(() => RecoveryInput) | null>(null);
+	/**
+	 * Unsaved single-editor edits as a Take over or Join found them. A room's document replaces
+	 * the form, so a room keeps them in a recovery revision. In single-editor mode the lock's
+	 * takeover keeps the form, which autosaves them.
+	 */
+	const joinSnapshotRef = React.useRef<{
+		from: CoEditing;
+		identity: string;
+		form: RecoveryInput;
+	} | null>(null);
+	const takeOverOrJoin = () => {
+		if (coEditing.mode !== "single-editor") return;
+		const form = isEditorDirtyRef.current ? readFormRef.current?.() : undefined;
+		joinSnapshotRef.current = form ? { from: coEditing, identity: revisionIdentity, form } : null;
+		coEditing.takeOver(entryLock.takeOver, { unsaved: Boolean(form) });
+	};
+	React.useEffect(() => {
+		const snapshot = joinSnapshotRef.current;
+		// Until the session answers the click, it shows the view the click came from.
+		if (!snapshot || coEditing === snapshot.from || coEditing.mode === "pending") return;
+		joinSnapshotRef.current = null;
+		if (coEditing.mode !== "room" || snapshot.identity !== revisionIdentity) return;
+		setUnkeptEdits({
+			identity: snapshot.identity,
+			form: snapshot.form,
+			error: null,
+			retrying: true,
+		});
+		void keepEdits(snapshot.identity, snapshot.form);
+	}, [coEditing]);
 	const revisionTokensRef = React.useRef(new Map<string, string | undefined>());
 	const revisionVersionsRef = React.useRef(new Map<string, number>());
 	// The draft revision of the entry version each token names, which an autosave sent with that
 	// token replaces.
 	const tokenDraftRevisionsRef = React.useRef(new Map<string, string | null>());
 	const activeRevisionEntryRef = React.useRef("");
-	const revisionIdentity = `${collection}:${id}:${activeLocale ?? ""}`;
 	if (activeRevisionEntryRef.current !== revisionIdentity) {
 		activeRevisionEntryRef.current = revisionIdentity;
 		revisionTokensRef.current.delete(id);
@@ -1258,7 +1672,7 @@ function ContentEditPage() {
 	}, [rawItem, draftRevision]);
 
 	// Fetch users list for author selector (only if user is editor+)
-	const { data: usersData } = useQuery({
+	const { data: usersData, isLoading: usersLoading } = useQuery({
 		queryKey: ["users"],
 		queryFn: () => fetchUsers({ limit: 100 }),
 		enabled: !!currentUser && currentUser.role >= ROLE_EDITOR,
@@ -1399,20 +1813,25 @@ function ContentEditPage() {
 		(
 			error: unknown,
 			targetId: string,
-			source: "editor" | "autosave" | "auxiliary",
+			source: "editor" | "autosave" | "auxiliary" | "outside",
 			toastTitle = t`Failed to save`,
 		) => {
 			if (editorShows(targetId) && entryLock.reportWriteError(error, targetId)) return;
 			const message =
 				describeContentValidationError(error, collectionFields) ??
 				(error instanceof Error ? error.message : t`An error occurred`);
-			if (source !== "auxiliary" && editorShows(targetId)) {
-				setEditorSaveError((current) => ({
-					entryId: targetId,
-					message,
-					title: toastTitle,
-					token: (current?.token ?? 0) + 1,
-				}));
+			if ((source === "editor" || source === "autosave") && editorShows(targetId)) {
+				// An autosave retried every few seconds keeps its error's token, so the
+				// writer is told once per failure rather than once per retry.
+				setEditorSaveError((current) =>
+					source === "autosave" &&
+					current?.entryId === targetId &&
+					current.message === message &&
+					current.title === toastTitle
+						? current
+						: { entryId: targetId, message, title: toastTitle, token: (current?.token ?? 0) + 1 },
+				);
+				return;
 			}
 			toastManager.add({ title: toastTitle, description: message, variant: "error" });
 		},
@@ -1420,11 +1839,14 @@ function ContentEditPage() {
 	);
 
 	const updateMutation = useMutation({
-		mutationFn: async ({ targetId, targetLocale, changes }: ContentUpdateMutationInput) => {
+		mutationFn: async ({ targetId, targetLocale, source, changes }: ContentUpdateMutationInput) => {
 			const savedItem = await updateContent(
 				collection,
 				targetId,
-				{ ...changes, _rev: revisionTokensRef.current.get(targetId) },
+				{
+					...changes,
+					_rev: source === "outside" ? undefined : revisionTokensRef.current.get(targetId),
+				},
 				{ locale: targetLocale },
 			);
 			recordWriteRevision(targetId, savedItem);
@@ -1453,6 +1875,8 @@ function ContentEditPage() {
 		},
 		onError: async (error, variables) => {
 			if (await recoverInEditor(error, variables.targetId)) return;
+			// The outside save reads the entry again and retries, and reports the last failure.
+			if (variables.source === "outside" && isListConflict(error)) return;
 			handleContentUpdateError(error, variables.targetId, variables.source);
 		},
 		onSettled: (_, __, variables) => {
@@ -1466,7 +1890,10 @@ function ContentEditPage() {
 			const savedItem = await updateContent(
 				collection,
 				id,
-				{ publishedAt, _rev: revisionTokensRef.current.get(id) },
+				{
+					publishedAt,
+					_rev: roomRef.current ? undefined : revisionTokensRef.current.get(id),
+				},
 				{ locale: rawItem?.locale ?? activeLocale },
 			);
 			recordWriteRevision(id, savedItem);
@@ -1541,7 +1968,10 @@ function ContentEditPage() {
 				locale: rawItem?.locale ?? activeLocale,
 				_rev: revision,
 			}),
-		onSuccess: (publishedItem, { savedReferences }) => {
+		onSuccess: async (publishedItem, { savedReferences }) => {
+			// The preceding save's refetch can still be on its way with the entry as it was
+			// before publishing, and would land over the published item.
+			await queryClient.cancelQueries({ queryKey: ["content", collection, id] });
 			recordWriteRevision(id, publishedItem);
 			// A selection the preceding save sent is in no cached page yet, so the
 			// entry is read again instead of keeping the pages from before it.
@@ -1724,7 +2154,13 @@ function ContentEditPage() {
 		},
 	});
 
-	const pluginBlocks = React.useMemo(() => (manifest ? getPluginBlocks(manifest) : []), [manifest]);
+	// A room's editors keep the manifest the session joined with. A schema change closes the room
+	// for this client as outdated, and the admin reloads.
+	const editorManifest = roomView?.manifest ?? manifest;
+	const pluginBlocks = React.useMemo(
+		() => (editorManifest ? getPluginBlocks(editorManifest) : []),
+		[editorManifest],
+	);
 
 	// Stable handler identities: these flow into the memoized
 	// ContentSettingsPanel, so fresh arrows on every mutation-state flip
@@ -1770,8 +2206,63 @@ function ContentEditPage() {
 		},
 		[activeLocale, autosaveMutation.mutateAsync, id, rawItem?.locale, serializeEditorSave],
 	);
+	const saveOutsideValues = React.useCallback(
+		async (
+			values:
+				| OutsideValueChanges
+				| ((latest: ContentItem) => OutsideValueChanges | Promise<OutsideValueChanges>),
+		): Promise<ContentItem> => {
+			for (let attempt = 1; ; attempt++) {
+				let changes = values;
+				if (typeof changes === "function") {
+					try {
+						// oxlint-disable-next-line no-await-in-loop -- a retry rebases on a fresh read
+						const latest = await queryClient.fetchQuery({
+							queryKey: ["content", collection, id, { locale: activeLocale }],
+							queryFn: () => fetchContent(collection, id, { locale: activeLocale }),
+							staleTime: 0,
+						});
+						// oxlint-disable-next-line no-await-in-loop -- a retry rebases on a fresh read
+						changes = await changes(latest);
+					} catch (error) {
+						handleContentUpdateError(error, id, "outside");
+						throw error;
+					}
+				}
+				try {
+					// oxlint-disable-next-line no-await-in-loop -- one attempt at a time
+					return await updateMutation.mutateAsync({
+						targetId: id,
+						targetLocale: rawItem?.locale ?? activeLocale,
+						source: "outside",
+						// Reference edges save as autosaves do, without a revision.
+						changes: changes.references ? { ...changes, skipRevision: true } : changes,
+					});
+				} catch (error) {
+					if (!isListConflict(error)) throw error;
+					if (typeof values !== "function" || attempt >= LIST_SAVE_ATTEMPTS) {
+						handleContentUpdateError(error, id, "outside");
+						throw error;
+					}
+				}
+			}
+		},
+		[
+			activeLocale,
+			collection,
+			handleContentUpdateError,
+			id,
+			queryClient,
+			rawItem?.locale,
+			updateMutation.mutateAsync,
+		],
+	);
 	const handleAuthorChange = React.useCallback(
 		(authorId: string | null) => {
+			if (roomRef.current) {
+				saveOutsideValues({ authorId }).catch(() => undefined);
+				return;
+			}
 			updateMutation.mutate({
 				targetId: id,
 				targetLocale: rawItem?.locale ?? activeLocale,
@@ -1779,7 +2270,7 @@ function ContentEditPage() {
 				changes: { authorId },
 			});
 		},
-		[activeLocale, id, rawItem?.locale, updateMutation.mutate],
+		[activeLocale, id, rawItem?.locale, saveOutsideValues, updateMutation.mutate],
 	);
 	const handlePublishedAtChange = React.useCallback(
 		async (
@@ -1819,18 +2310,25 @@ function ContentEditPage() {
 
 	const handleSeoChange = React.useCallback(
 		(seo: ContentSeoInput) => {
+			if (roomRef.current) {
+				return saveOutsideValues({ seo }).then(
+					() => true,
+					() => false,
+				);
+			}
 			updateMutation.mutate({
 				targetId: id,
 				targetLocale: rawItem?.locale ?? activeLocale,
 				source: "auxiliary",
 				changes: { seo },
 			});
+			return undefined;
 		},
-		[activeLocale, id, rawItem?.locale, updateMutation.mutate],
+		[activeLocale, id, rawItem?.locale, saveOutsideValues, updateMutation.mutate],
 	);
 
 	const handlePublish = React.useCallback(
-		(payload: {
+		(payload?: {
 			data: Record<string, unknown>;
 			slug?: string;
 			bylines?: BylineCreditInput[];
@@ -1839,6 +2337,13 @@ function ContentEditPage() {
 			if (publishRequestRef.current) return publishRequestRef.current;
 
 			const request = (async () => {
+				// Only a room publishes without a payload: it saves the edits, and the route publishes
+				// that save.
+				if (!payload) {
+					await prepareRoomOperation({ draft: true }).catch(failWithToast(t`Failed to publish`));
+					await publishMutation.mutateAsync({ revision: undefined, savedReferences: false });
+					return;
+				}
 				const savedItem = await serializeEditorSave(() =>
 					updateMutation.mutateAsync({
 						targetId: id,
@@ -1862,10 +2367,13 @@ function ContentEditPage() {
 		},
 		[
 			activeLocale,
+			failWithToast,
 			id,
+			prepareRoomOperation,
 			publishMutation.mutateAsync,
 			rawItem?.locale,
 			serializeEditorSave,
+			t,
 			updateMutation.mutateAsync,
 		],
 	);
@@ -1878,6 +2386,11 @@ function ContentEditPage() {
 			if (unpublishRequestRef.current) return unpublishRequestRef.current;
 
 			const request = (async () => {
+				if (roomRef.current) {
+					await prepareRoomOperation().catch(failWithToast(t`Failed to unpublish`));
+					await unpublishMutation.mutateAsync(undefined);
+					return;
+				}
 				const savedItem = await serializeEditorSave(async () => {
 					if (!payload) return;
 					return updateMutation.mutateAsync({
@@ -1900,22 +2413,24 @@ function ContentEditPage() {
 		},
 		[
 			activeLocale,
+			failWithToast,
 			id,
+			prepareRoomOperation,
 			rawItem?.locale,
 			serializeEditorSave,
+			t,
 			unpublishMutation.mutateAsync,
 			updateMutation.mutateAsync,
 		],
 	);
 	// The confirmation shows a failure, except a refusal the lock explains:
 	// that resolves, so the confirmation closes and the lock notice takes over.
-	const handleDiscardDraft = React.useCallback(
-		() =>
-			discardDraftMutation.mutateAsync().catch((error: unknown) => {
-				if (!entryLock.reportWriteError(error, id)) throw error;
-			}),
-		[discardDraftMutation.mutateAsync, entryLock.reportWriteError, id],
-	);
+	const handleDiscardDraft = React.useCallback(async () => {
+		if (roomRef.current) await prepareRoomOperation();
+		return discardDraftMutation.mutateAsync().catch((error: unknown) => {
+			if (!entryLock.reportWriteError(error, id)) throw error;
+		});
+	}, [discardDraftMutation.mutateAsync, entryLock.reportWriteError, id, prepareRoomOperation]);
 	const handleSchedule = React.useCallback(
 		async (
 			scheduledAt: string,
@@ -1926,6 +2441,7 @@ function ContentEditPage() {
 				references?: Record<string, string[]>;
 			},
 		) => {
+			if (roomRef.current) await prepareRoomOperation({ draft: true });
 			const savedItem = await serializeEditorSave(async () => {
 				if (!payload) return;
 				return updateMutation.mutateAsync({
@@ -1950,6 +2466,7 @@ function ContentEditPage() {
 			applyScheduleChange,
 			entryLock.reportWriteError,
 			id,
+			prepareRoomOperation,
 			rawItem?.locale,
 			scheduleMutation.mutateAsync,
 			serializeEditorSave,
@@ -1963,6 +2480,9 @@ function ContentEditPage() {
 			bylines?: BylineCreditInput[];
 			references?: Record<string, string[]>;
 		}) => {
+			if (roomRef.current) {
+				await prepareRoomOperation().catch(failWithToast(t`Failed to unschedule`));
+			}
 			const savedItem = await serializeEditorSave(async () => {
 				if (!payload) return;
 				return updateMutation.mutateAsync({
@@ -1978,21 +2498,23 @@ function ContentEditPage() {
 		[
 			activeLocale,
 			applyScheduleChange,
+			failWithToast,
 			id,
+			prepareRoomOperation,
 			rawItem?.locale,
 			serializeEditorSave,
+			t,
 			unscheduleMutation.mutateAsync,
 			updateMutation.mutateAsync,
 		],
 	);
 	// As with discarding, a refusal the lock explains closes the confirmation.
-	const handleDelete = React.useCallback(
-		() =>
-			deleteMutation.mutateAsync().catch((error: unknown) => {
-				if (!entryLock.reportWriteError(error, id)) throw error;
-			}),
-		[deleteMutation.mutateAsync, entryLock.reportWriteError, id],
-	);
+	const handleDelete = React.useCallback(async () => {
+		if (roomRef.current) await prepareRoomOperation();
+		return deleteMutation.mutateAsync().catch((error: unknown) => {
+			if (!entryLock.reportWriteError(error, id)) throw error;
+		});
+	}, [deleteMutation.mutateAsync, entryLock.reportWriteError, id, prepareRoomOperation]);
 	const handleTranslate = React.useCallback(
 		(locale: string) => translateMutation.mutate(locale),
 		[translateMutation.mutate],
@@ -2025,7 +2547,7 @@ function ContentEditPage() {
 	}, [collection, id, queryClient]);
 
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <EditorSkeleton />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -2035,7 +2557,7 @@ function ContentEditPage() {
 	}
 
 	if (isLoading) {
-		return <LoadingScreen />;
+		return <EditorSkeleton />;
 	}
 
 	if (itemError && !rawItem) {
@@ -2050,13 +2572,76 @@ function ContentEditPage() {
 		return <ErrorScreen error={itemError.message} />;
 	}
 
-	return (
+	if (!showsEditor) {
+		return <EditorSkeleton />;
+	}
+
+	const readOnlyBanner = (
+		<Banner
+			title={t`Read-only`}
+			description={
+				rawItem && currentUser && entryEditAccess(currentUser, { ...rawItem, status: "draft" })
+					? t`Your role can edit your own entries only while they are drafts.`
+					: t`Your role can't edit this entry.`
+			}
+		/>
+	);
+	let readOnly = true;
+	let notice: React.ReactNode = null;
+	if (roomView) {
+		readOnly = !roomView.editable;
+		// Kept edits show on the save button, which these banners would contradict.
+		if (roomView.kept === null && coEditing.mode === "reloading") {
+			notice = (
+				<Banner
+					title={t`Reloading the admin`}
+					description={t`EmDash or this entry’s fields changed since you opened it.`}
+					action={
+						<Button
+							size="sm"
+							variant="secondary"
+							type="button"
+							onClick={() => window.location.reload()}
+						>
+							{t`Reload`}
+						</Button>
+					}
+				/>
+			);
+		} else if (roomView.kept === null && roomView.access === "view") {
+			notice = readOnlyBanner;
+		}
+	} else if (entryDeleted) {
+		notice = (
+			<Banner
+				variant="alert"
+				title={t`This entry was moved to Trash or deleted`}
+				description={t`It’s shown read-only. An entry in Trash can be restored from there.`}
+			/>
+		);
+	} else if (editAccess === null) {
+		notice = readOnlyBanner;
+	} else if (coEditingMode === "single-editor") {
+		readOnly = entryLock.readOnly || coEditing.mode !== "single-editor";
+		notice = (
+			<EntryLockNotice
+				state={entryLock.state}
+				onTakeOver={takeOverOrJoin}
+				onReadInstead={entryLock.readInstead}
+				isTakingOver={entryLock.isTakingOver || coEditing.mode !== "single-editor"}
+				takeOverFailed={entryLock.takeOverFailed}
+				canJoin={coEditing.mode !== "single-editor" || coEditing.canJoin}
+			/>
+		);
+	}
+
+	const editor = (
 		<ContentEditor
 			collection={collection}
 			collectionLabel={collectionConfig.labelSingular || collectionConfig.label}
 			item={item}
 			timezone={manifest.timezone ?? "UTC"}
-			fields={collectionConfig.fields}
+			fields={(editorManifest?.collections[collection] ?? collectionConfig).fields}
 			isSaving={
 				updateMutation.isPending || publishedAtMutation.isPending || publishMutation.isPending
 			}
@@ -2095,6 +2680,7 @@ function ContentEditPage() {
 			currentUser={currentUser}
 			adminLayout={adminLayout.editor}
 			users={usersData?.items}
+			usersLoading={usersLoading}
 			onAuthorChange={handleAuthorChange}
 			i18n={i18n}
 			translations={translationsData?.translations}
@@ -2106,32 +2692,24 @@ function ContentEditPage() {
 			availableBylinesLoaded={bylinesLoaded}
 			onQuickCreateByline={handleQuickCreateByline}
 			onQuickEditByline={handleQuickEditByline}
-			manifest={manifest ?? null}
+			manifest={editorManifest ?? null}
 			onEntryRefresh={handlePluginEntryRefresh}
-			readOnly={entryLock.readOnly || editAccess === null}
-			notice={
-				editAccess === null ? (
-					<Banner
-						title={t`Read-only`}
-						description={
-							rawItem &&
-							currentUser &&
-							entryEditAccess(currentUser, { ...rawItem, status: "draft" })
-								? t`Your role can edit your own entries only while they are drafts.`
-								: t`Your role can't edit this entry.`
-						}
-					/>
-				) : (
-					<EntryLockNotice
-						state={entryLock.state}
-						onTakeOver={entryLock.takeOver}
-						onReadInstead={entryLock.readInstead}
-						isTakingOver={entryLock.isTakingOver}
-						takeOverFailed={entryLock.takeOverFailed}
-					/>
-				)
-			}
+			readOnly={readOnly}
+			notice={notice}
+			room={roomView?.room ?? null}
+			roomResetting={resetting}
+			fieldsLoading={resetting || leavingRoom}
+			roomSync={roomSync}
+			unkeptEdits={unkeptEdits !== null}
+			roomBlocked={roomBlocked}
+			onSaveOutsideValues={saveOutsideValues}
+			onPreviewNotSaved={handlePreviewNotSaved}
+			readFormRef={readFormRef}
+			sendReferencesRef={sendReferencesRef}
 		/>
+	);
+	return (
+		<RoomOperationsContext.Provider value={roomOperations}>{editor}</RoomOperationsContext.Provider>
 	);
 }
 
@@ -2139,7 +2717,7 @@ function ContentEditPage() {
 const mediaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/media",
-	component: MediaPage,
+	component: withRouteModules(MediaPage, MediaLibrary),
 	staticData: { pageTitle: msg`Media` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		folder:
@@ -2208,6 +2786,7 @@ function MediaPage() {
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
 		enabled: folderListEnabled,
+		placeholderData: keepPreviousData,
 	});
 	const folders = React.useMemo(
 		() => folderListQuery.data?.pages.flatMap((folderPage) => folderPage.items) ?? [],
@@ -2437,7 +3016,7 @@ function MediaPage() {
 const commentsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/comments",
-	component: CommentsPage,
+	component: withRouteModules(CommentsPage, CommentInbox),
 	staticData: { pageTitle: msg`Comments` },
 });
 
@@ -2622,7 +3201,7 @@ const mediaUsageSettingsRoute = createRoute({
 const securitySettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/security",
-	component: SecuritySettingsWrapper,
+	component: withRouteModules(SecuritySettingsWrapper, SecuritySettings),
 	staticData: { pageTitle: msg`Security Settings` },
 	validateSearch: (search: Record<string, unknown>): { addPasskey?: boolean } =>
 		search.addPasskey === true || search.addPasskey === 1 || search.addPasskey === "1"
@@ -2639,10 +3218,13 @@ function SecuritySettingsWrapper() {
 const allowedDomainsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/allowed-domains",
-	component: () => (
-		<RequireAdmin>
-			<AllowedDomainsSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<AllowedDomainsSettings />
+			</RequireAdmin>
+		),
+		AllowedDomainsSettings,
 	),
 	staticData: { pageTitle: msg`Allowed Domains` },
 });
@@ -2651,10 +3233,13 @@ const allowedDomainsSettingsRoute = createRoute({
 const apiTokenSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/api-tokens",
-	component: () => (
-		<RequireAdmin>
-			<ApiTokenSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<ApiTokenSettings />
+			</RequireAdmin>
+		),
+		ApiTokenSettings,
 	),
 	staticData: { pageTitle: msg`API Tokens` },
 });
@@ -2663,10 +3248,13 @@ const apiTokenSettingsRoute = createRoute({
 const emailSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/email",
-	component: () => (
-		<RequireAdmin>
-			<EmailSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<EmailSettings />
+			</RequireAdmin>
+		),
+		EmailSettings,
 	),
 	staticData: { pageTitle: msg`Email Settings` },
 });
@@ -2675,10 +3263,13 @@ const emailSettingsRoute = createRoute({
 const backupSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/backups",
-	component: () => (
-		<RequireAdmin>
-			<BackupSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<BackupSettings />
+			</RequireAdmin>
+		),
+		BackupSettings,
 	),
 	staticData: { pageTitle: msg`Backups` },
 });
@@ -2686,7 +3277,7 @@ const backupSettingsRoute = createRoute({
 const transferSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/transfer",
-	component: TransferSettingsPage,
+	component: withRouteModules(TransferSettingsPage, TransferSettings),
 	staticData: { pageTitle: msg`Transfer` },
 	validateSearch: (search: Record<string, unknown>): { start?: "import" } =>
 		search.start === "import" ? { start: "import" } : {},
@@ -2700,7 +3291,7 @@ function TransferSettingsPage() {
 const sidebarsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/sidebars",
-	component: SidebarsSettingsPage,
+	component: withRouteModules(SidebarsSettingsPage, SidebarsSettings),
 	validateSearch: (search: Record<string, unknown>): { tab?: "editor" } =>
 		search.tab === "editor" ? { tab: "editor" } : {},
 });
@@ -2714,10 +3305,13 @@ function SidebarsSettingsPage() {
 const generalSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/general",
-	component: () => (
-		<RequireAdmin>
-			<GeneralSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<GeneralSettings />
+			</RequireAdmin>
+		),
+		GeneralSettings,
 	),
 	staticData: { pageTitle: msg`General Settings` },
 });
@@ -2726,10 +3320,13 @@ const generalSettingsRoute = createRoute({
 const socialSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/social",
-	component: () => (
-		<RequireAdmin>
-			<SocialSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<SocialSettings />
+			</RequireAdmin>
+		),
+		SocialSettings,
 	),
 	staticData: { pageTitle: msg`Social Settings` },
 });
@@ -2738,10 +3335,13 @@ const socialSettingsRoute = createRoute({
 const seoSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/seo",
-	component: () => (
-		<RequireAdmin>
-			<SeoSettings />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<SeoSettings />
+			</RequireAdmin>
+		),
+		SeoSettings,
 	),
 	staticData: { pageTitle: msg`SEO Settings` },
 });
@@ -2750,7 +3350,7 @@ const seoSettingsRoute = createRoute({
 const pluginManagerRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins-manager",
-	component: PluginManagerPage,
+	component: withRouteModules(PluginManagerPage, PluginManager),
 	staticData: { pageTitle: msg`Plugins` },
 });
 
@@ -2765,7 +3365,7 @@ function PluginManagerPage() {
 const registryBrowseRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/registry",
-	component: RegistryBrowsePage,
+	component: withRouteModules(RegistryBrowsePage, RegistryBrowse),
 	staticData: { pageTitle: msg`Plugin Registry` },
 });
 
@@ -2778,10 +3378,7 @@ function RegistryBrowsePage() {
 
 	const { data: plugins } = useQuery({
 		queryKey: ["plugins"],
-		queryFn: async () => {
-			const { fetchPlugins } = await import("./lib/api/plugins.js");
-			return fetchPlugins();
-		},
+		queryFn: fetchPlugins,
 		refetchOnMount: "always",
 		refetchOnWindowFocus: "always",
 	});
@@ -2823,7 +3420,7 @@ const marketplaceDetailRoute = createRoute({
 const registryDetailRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/registry/$publisher/$slug",
-	component: RegistryDetailPage,
+	component: withRouteModules(RegistryDetailPage, RegistryPluginDetail),
 	staticData: { pageTitle: msg`Plugin Details` },
 });
 
@@ -2879,10 +3476,13 @@ function MarketplaceUnavailablePage() {
 const wordpressImportRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/import/wordpress",
-	component: () => (
-		<RequireAdmin>
-			<WordPressImport />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<WordPressImport />
+			</RequireAdmin>
+		),
+		WordPressImport,
 	),
 	staticData: { pageTitle: msg`Import from WordPress` },
 });
@@ -2911,7 +3511,7 @@ const menuEditorRoute = createRoute({
 const taxonomyRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/taxonomies/$taxonomy",
-	component: TaxonomyPage,
+	component: withRouteModules(TaxonomyPage, TaxonomyManager),
 	staticData: { pageTitle: msg`Taxonomies` },
 });
 
@@ -2955,10 +3555,13 @@ const sectionEditRoute = createRoute({
 const usersRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/users",
-	component: () => (
-		<RequireAdmin>
-			<UsersPage />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<UsersPage />
+			</RequireAdmin>
+		),
+		UsersPage,
 	),
 	staticData: { pageTitle: msg`Users` },
 });
@@ -3000,7 +3603,7 @@ const bylineSchemaRoute = createRoute({
 const contentTypesListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types",
-	component: ContentTypesListPage,
+	component: withRouteModules(ContentTypesListPage, ContentTypeList, BlockTypeList),
 	staticData: { pageTitle: msg`Content Types` },
 });
 
@@ -3077,19 +3680,21 @@ function ContentTypesListPage() {
 		return <ErrorScreen error={error.message} />;
 	}
 
+	const loading = collectionsLoading || orphansLoading || blockTypesLoading;
+
 	return (
 		<div className="space-y-6">
 			<ContentTypeList
 				collections={collections ?? []}
 				orphanedTables={orphanedTables}
-				isLoading={collectionsLoading || orphansLoading}
+				isLoading={loading}
 				onDelete={(slug) => deleteMutation.mutateAsync(slug)}
 				isDeleting={deleteMutation.isPending}
 				deleteError={deleteMutation.error}
 				onRegisterOrphan={(slug) => registerOrphanMutation.mutate(slug)}
 				onReorder={(slugs) => reorderMutation.mutate(slugs)}
 			/>
-			<BlockTypeList blockTypes={blockTypes ?? []} isLoading={blockTypesLoading} />
+			{!loading && <BlockTypeList blockTypes={blockTypes ?? []} />}
 		</div>
 	);
 }
@@ -3097,7 +3702,7 @@ function ContentTypesListPage() {
 const contentTypesNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/new",
-	component: ContentTypesNewPage,
+	component: withRouteModules(ContentTypesNewPage, ContentTypeEditor),
 	staticData: { pageTitle: msg`New content type` },
 });
 
@@ -3133,7 +3738,7 @@ function ContentTypesNewPage() {
 const relationsListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/relations",
-	component: RelationsListPage,
+	component: withRouteModules(RelationsListPage, RelationList),
 	staticData: { pageTitle: msg`Relations` },
 });
 
@@ -3194,7 +3799,7 @@ function useRelationsQuery() {
 const contentTypesEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/$slug",
-	component: ContentTypesEditPage,
+	component: withRouteModules(ContentTypesEditPage, ContentTypeEditor),
 	staticData: { pageTitle: msg`Edit content type` },
 });
 
@@ -3345,7 +3950,7 @@ function ContentTypesEditPage() {
 	}
 
 	if (isLoading) {
-		return <LoadingScreen />;
+		return <RouteLoading />;
 	}
 
 	return (
@@ -3374,10 +3979,13 @@ function ContentTypesEditPage() {
 const pluginSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins-manager/$pluginId/settings",
-	component: () => (
-		<RequireAdmin>
-			<PluginSettingsPage />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<PluginSettingsPage />
+			</RequireAdmin>
+		),
+		PluginSettings,
 	),
 	staticData: { pageTitle: msg`Plugin Settings` },
 });
@@ -3391,7 +3999,7 @@ function PluginSettingsPage() {
 const pluginRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/$pluginId/$",
-	component: PluginPage,
+	component: withRouteModules(PluginPage, SandboxedPluginPage),
 	staticData: { pageTitle: msg`Plugin` },
 });
 
@@ -3484,6 +4092,9 @@ export function createAdminRouter(queryClient: QueryClient) {
 		context: { queryClient },
 		basepath: "/_emdash/admin",
 		defaultPreload: "intent",
+		defaultPendingComponent: RouteLoading,
+		defaultPendingMs: 150,
+		defaultPendingMinMs: 300,
 	});
 }
 
@@ -3500,25 +4111,50 @@ export function ConfigurationLoadingScreen() {
 	const { t } = useLingui();
 	return (
 		<div className="emdash-configuration-loader">
-			<div className="loader-inner">
-				<div
-					className="spinner emdash-configuration-spinner"
-					role="status"
-					aria-label={t`Loading`}
-				/>
-				<p className="emdash-configuration-label">{t`Loading configuration...`}</p>
-			</div>
+			<div className="spinner emdash-configuration-spinner" role="status" aria-label={t`Loading`} />
 		</div>
 	);
 }
 
-function LoadingScreen() {
+/** Fills the page area while a screen or its data loads, inside the admin's frame. */
+function RouteLoading() {
 	const { t } = useLingui();
 	return (
-		<div className="flex items-center justify-center min-h-screen">
-			<div className="text-center">
-				<Loader />
-				<p className="mt-4 text-kumo-subtle">{t`Loading configuration...`}</p>
+		<div
+			className="flex items-center justify-center min-h-[50vh]"
+			role="status"
+			aria-label={t`Loading`}
+		>
+			<Loader />
+		</div>
+	);
+}
+
+/** The editor's frame, shown while its code or the entry loads. */
+function EditorSkeleton() {
+	const { t } = useLingui();
+	return (
+		<div
+			className="flex h-full flex-col bg-kumo-elevated"
+			role="status"
+			aria-label={t`Loading entry`}
+		>
+			<div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-kumo-line px-3 py-2 sm:px-4">
+				<div className="size-8 shrink-0" />
+				<div className="w-48">
+					<SkeletonLine blockHeight={16} minWidth={60} maxWidth={100} />
+				</div>
+			</div>
+			<div className="flex min-h-0 flex-1">
+				<div className="min-w-0 flex-1">
+					<div className="emdash-editor-page mx-auto w-full max-w-[52rem] space-y-4 pt-8 sm:pt-12">
+						<SkeletonLine blockHeight={36} minWidth={40} maxWidth={70} />
+						{Array.from({ length: 6 }, (_, i) => (
+							<SkeletonLine key={i} blockHeight={16} minWidth={70} maxWidth={100} />
+						))}
+					</div>
+				</div>
+				<div className="hidden w-92 shrink-0 border-s border-kumo-line lg:block" />
 			</div>
 		</div>
 	);

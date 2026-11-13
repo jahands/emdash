@@ -1,17 +1,30 @@
 import { describe, it, expect, vi } from "vitest";
 
 import {
+	INTERNAL_MEDIA_IMAGE_ORIGIN,
+	PORTABLE_TEXT_IMAGE_SIZES,
 	RESPONSIVE_BREAKPOINTS,
 	buildResponsiveImage,
+	capCandidateWidths,
 	formatContentType,
 	gallerySizes,
+	lazyImageSizes,
+	mediaImageOrigin,
+	optimizeImage,
+	portableTextImageSizes,
 	responsiveSizes,
 	responsiveWidths,
+	stripInternalMediaOrigin,
 	toAbsoluteMediaUrl,
 	type GetImage,
 } from "../../../src/media/responsive.js";
 
 describe("responsiveWidths", () => {
+	it("never generates a candidate wider than the endpoint's largest rendition", () => {
+		expect(Math.max(...responsiveWidths(6000))).toBe(4000);
+		expect(Math.max(...responsiveWidths(6000, 8000))).toBe(4000);
+	});
+
 	it("includes breakpoints up to 2x the rendered width", () => {
 		expect(responsiveWidths(400)).toEqual([400, 640, 750, 800]);
 	});
@@ -29,7 +42,7 @@ describe("responsiveWidths", () => {
 		expect(responsiveWidths(40, 40)).toEqual([40]);
 		expect(responsiveWidths(40, 60)).toEqual([40, 60]);
 		expect(responsiveWidths(400, 700)).toEqual([400, 640, 700]);
-		expect(responsiveWidths(1000, 500)).toEqual([500, 1000]);
+		expect(responsiveWidths(1000, 500)).toEqual([500]);
 	});
 
 	it("rounds fractional widths and ignores unusable original widths", () => {
@@ -230,5 +243,187 @@ describe("toAbsoluteMediaUrl", () => {
 		// "/\\evil.com" would otherwise resolve to https://evil.com.
 		expect(toAbsoluteMediaUrl("/\\evil.com/x.jpg", ORIGIN)).toBe("/\\evil.com/x.jpg");
 		expect(toAbsoluteMediaUrl("/\\/evil.com/x.jpg", ORIGIN)).toBe("/\\/evil.com/x.jpg");
+	});
+});
+
+describe("capCandidateWidths", () => {
+	it("replaces candidates wider than the source with the source width", () => {
+		expect(capCandidateWidths([640, 1280, 2400, 2560, 4800], 2400)).toEqual([640, 1280, 2400]);
+		expect(capCandidateWidths([640, 1280, 3200, 4800], 2400)).toEqual([640, 1280, 2400]);
+	});
+
+	it("keeps candidates when none exceed the source", () => {
+		expect(capCandidateWidths([640, 1280], 4000)).toEqual([640, 1280]);
+	});
+
+	it("keeps candidates when the source width is unknown", () => {
+		expect(capCandidateWidths([640, 8000])).toEqual([640, 8000]);
+		expect(capCandidateWidths([640, 8000], 0)).toEqual([640, 8000]);
+	});
+});
+
+describe("lazyImageSizes", () => {
+	it("lets supporting browsers use the laid-out width", () => {
+		expect(lazyImageSizes("(min-width: 680px) 680px, 100vw")).toBe(
+			"auto, (min-width: 680px) 680px, 100vw",
+		);
+	});
+
+	it("does not repeat auto", () => {
+		expect(lazyImageSizes("auto, 100vw")).toBe("auto, 100vw");
+	});
+});
+
+describe("portableTextImageSizes", () => {
+	it("reads the hint PortableText attached to a node", () => {
+		const node = { _type: "image" };
+		expect(portableTextImageSizes(node)).toBeUndefined();
+		Reflect.set(node, PORTABLE_TEXT_IMAGE_SIZES, "680px");
+		expect(portableTextImageSizes(node)).toBe("680px");
+	});
+});
+
+describe("stripInternalMediaOrigin", () => {
+	it("turns a path-embedded internal source into a site-relative path", () => {
+		expect(
+			stripInternalMediaOrigin(
+				`/cdn-cgi/image/width=640/${INTERNAL_MEDIA_IMAGE_ORIGIN}/_emdash/api/media/file/a.jpg 640w, /cdn-cgi/image/width=1280/${INTERNAL_MEDIA_IMAGE_ORIGIN}/_emdash/api/media/file/a.jpg 1280w`,
+			),
+		).toBe(
+			"/cdn-cgi/image/width=640/_emdash/api/media/file/a.jpg 640w, /cdn-cgi/image/width=1280/_emdash/api/media/file/a.jpg 1280w",
+		);
+	});
+
+	it("leaves query-encoded sources alone", () => {
+		const url = `/_image?href=${encodeURIComponent(`${INTERNAL_MEDIA_IMAGE_ORIGIN}/_emdash/api/media/file/a.jpg`)}&w=640`;
+		expect(stripInternalMediaOrigin(url)).toBe(url);
+	});
+});
+
+describe("mediaImageOrigin", () => {
+	const publicOrigin = () => "https://site.example.com";
+
+	it("uses the internal origin for on-demand pages", () => {
+		expect(
+			mediaImageOrigin({
+				internalOrigin: INTERNAL_MEDIA_IMAGE_ORIGIN,
+				isPrerendered: false,
+				publicOrigin,
+			}),
+		).toBe(INTERNAL_MEDIA_IMAGE_ORIGIN);
+	});
+
+	it("uses the public origin for prerendered pages and when no internal origin is set", () => {
+		expect(
+			mediaImageOrigin({
+				internalOrigin: INTERNAL_MEDIA_IMAGE_ORIGIN,
+				isPrerendered: true,
+				publicOrigin,
+			}),
+		).toBe("https://site.example.com");
+		expect(
+			mediaImageOrigin({ internalOrigin: undefined, isPrerendered: false, publicOrigin }),
+		).toBe("https://site.example.com");
+	});
+});
+
+describe("optimizeImage", () => {
+	/** Mimics Astro's constrained layout: 1x and 2x the display width, no source cap. */
+	function fakeGetImage(transformUrl: (src: string, width: number) => string) {
+		return vi.fn<GetImage>(async (opts) => {
+			const width = opts.width ?? 0;
+			const widths = opts.widths ?? [width, width * 2];
+			const values = widths.map((w) => ({ url: transformUrl(opts.src, w), descriptor: `${w}w` }));
+			const { src: _src, widths: _widths, width: _w, height: _h, ...attributes } = opts;
+			return {
+				src: transformUrl(opts.src, width),
+				srcSet: {
+					values,
+					attribute: values.map((v) => `${v.url} ${v.descriptor}`).join(", "),
+				},
+				options: { widths },
+				attributes: { ...attributes, width, height: opts.height },
+			};
+		});
+	}
+	const endpoint = (src: string, w: number) =>
+		`/_image?href=${encodeURIComponent(src)}&w=${w}&f=webp`;
+
+	it("caps candidates at the source width", async () => {
+		const getImage = fakeGetImage(endpoint);
+		const result = await optimizeImage(
+			getImage,
+			{},
+			{
+				src: "https://site.example.com/_emdash/api/media/file/a.jpg",
+				width: 2400,
+				height: 1600,
+				originalWidth: 2400,
+			},
+		);
+		expect(result?.srcset).toContain("2400w");
+		expect(result?.srcset).not.toContain("4800w");
+		expect(getImage).toHaveBeenLastCalledWith(expect.objectContaining({ widths: [2400] }));
+	});
+
+	it("applies Astro's constrained-layout defaults", async () => {
+		const getImage = fakeGetImage(endpoint);
+		await optimizeImage(
+			getImage,
+			{ objectFit: "contain" },
+			{ src: "https://site.example.com/a.jpg", width: 100, height: 100 },
+		);
+		expect(getImage).toHaveBeenCalledWith(
+			expect.objectContaining({ layout: "constrained", fit: "contain", position: "center" }),
+		);
+	});
+
+	it("returns the attributes for the img element", async () => {
+		const result = await optimizeImage(
+			fakeGetImage(endpoint),
+			{},
+			{
+				src: "https://site.example.com/a.jpg",
+				width: 100,
+				height: 50,
+				alt: "A",
+				sizes: "100px",
+			},
+		);
+		expect(result?.attributes).toMatchObject({ alt: "A", sizes: "100px", width: 100, height: 50 });
+	});
+
+	it("points path-embedded internal sources at the site", async () => {
+		const cdn = (src: string, w: number) => `/cdn-cgi/image/width=${w}/${src}`;
+		const result = await optimizeImage(
+			fakeGetImage(cdn),
+			{},
+			{
+				src: `${INTERNAL_MEDIA_IMAGE_ORIGIN}/_emdash/api/media/file/a.jpg`,
+				width: 800,
+				height: 600,
+				originalWidth: 800,
+			},
+		);
+		expect(result?.src).toBe("/cdn-cgi/image/width=800/_emdash/api/media/file/a.jpg");
+		expect(result?.srcset).toBe("/cdn-cgi/image/width=800/_emdash/api/media/file/a.jpg 800w");
+	});
+
+	it("returns null for relative URLs, passthrough results and failures", async () => {
+		const getImage = fakeGetImage(endpoint);
+		expect(await optimizeImage(getImage, {}, { src: "/a.jpg", width: 1, height: 1 })).toBeNull();
+		expect(getImage).not.toHaveBeenCalled();
+
+		const passthrough = vi.fn<GetImage>(async (opts) => ({ src: opts.src }));
+		expect(
+			await optimizeImage(passthrough, {}, { src: "https://x.example/a.jpg", width: 1, height: 1 }),
+		).toBeNull();
+
+		const failing = vi.fn<GetImage>(async () => {
+			throw new Error("no service");
+		});
+		expect(
+			await optimizeImage(failing, {}, { src: "https://x.example/a.jpg", width: 1, height: 1 }),
+		).toBeNull();
 	});
 });

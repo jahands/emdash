@@ -23,6 +23,7 @@ import { unknownOptionWarning, validateConfigShape } from "../../config/options-
 import { normalizeMigrationConfig } from "../../database/migrations/policy.js";
 import { normalizeAstroI18n } from "../../i18n/normalize.js";
 import { INTERNAL_MEDIA_PREFIX } from "../../media/normalize.js";
+import { INTERNAL_MEDIA_IMAGE_ORIGIN } from "../../media/responsive.js";
 import { getCoreMigrationIdentity } from "../../migrations/identity.js";
 import {
 	createMigrationIntegrationMetadata,
@@ -44,6 +45,7 @@ import { loadDevEnv } from "./dev-env.js";
 import { startDevSchedulerBridge } from "./dev-scheduler-bridge.js";
 import { createDebouncedTypegenRefresh, listenForDevTypegenRefresh } from "./dev-typegen.js";
 import { notoSans } from "./font-provider.js";
+import { createNodeCompression } from "./node-compression.js";
 import {
 	hasUserDefinedPublicRoute,
 	injectCoreRoutes,
@@ -153,9 +155,8 @@ export function resolveBuildTimeSiteUrl(configuredSiteUrl: string | undefined): 
  *     URL is never fetched). Only registered when `siteUrl` is known at build.
  *  3. In `astro dev` the dev-server origin isn't known at build time, so we
  *     register a host-agnostic pattern scoped to the media route. Dev-only.
- *
- * Returns an empty array when no source is statically known (production build,
- * local storage, no `siteUrl`), in which case media renders as a plain `<img>`.
+ *  4. `internalMediaOrigin` (see {@link resolveInternalMediaOrigin}), scoped
+ *     to the media route, for builds that don't know the site origin.
  *
  * @internal Exported for unit testing.
  */
@@ -163,6 +164,7 @@ export function buildImageRemotePatterns(
 	storage: { config?: unknown } | undefined,
 	siteUrl: string | undefined,
 	command: "dev" | "build" | "preview" | "sync",
+	internalMediaOrigin?: string,
 ): ImageRemotePattern[] {
 	const patterns: ImageRemotePattern[] = [];
 
@@ -195,24 +197,86 @@ export function buildImageRemotePatterns(
 		}
 	}
 
-	if (siteUrl) {
-		try {
-			const { hostname } = new URL(siteUrl);
-			// WHATWG URL accepts `*` in a hostname, which Astro's matcher treats
-			// as a wildcard that would allowlist other hosts.
-			if (!hostname.includes("*")) {
-				patterns.push({ hostname, pathname: `${INTERNAL_MEDIA_PREFIX}**` });
-			}
-		} catch {
-			// ignore an unparseable site URL
-		}
+	const siteHostname = siteMediaHostname(siteUrl);
+	if (siteHostname) {
+		patterns.push({ hostname: siteHostname, pathname: `${INTERNAL_MEDIA_PREFIX}**` });
 	}
 
 	if (command === "dev") {
 		patterns.push({ pathname: `${INTERNAL_MEDIA_PREFIX}**` });
 	}
 
+	if (internalMediaOrigin) {
+		const url = new URL(internalMediaOrigin);
+		patterns.push({
+			protocol: url.protocol === "https:" ? "https" : "http",
+			hostname: url.hostname,
+			pathname: `${INTERNAL_MEDIA_PREFIX}**`,
+		});
+	}
+
 	return patterns;
+}
+
+function siteMediaHostname(siteUrl: string | undefined): string | undefined {
+	if (!siteUrl) return undefined;
+	try {
+		const { hostname } = new URL(siteUrl);
+		// WHATWG URL accepts `*` in a hostname, which Astro's matcher treats
+		// as a wildcard that would allowlist other hosts.
+		return hostname.includes("*") ? undefined : hostname;
+	} catch {
+		return undefined;
+	}
+}
+
+/**
+ * The image service `@astrojs/cloudflare` installs for `imageService: "cloudflare"`
+ * at build time: URL-based transformations through `/cdn-cgi/image/`, with no
+ * `IMAGES` binding.
+ */
+const CLOUDFLARE_URL_IMAGE_SERVICE = "@astrojs/cloudflare/image-service";
+
+/** The image service Astro uses when `image.service` is not configured. */
+const DEFAULT_IMAGE_SERVICE = "astro/assets/services/sharp";
+
+/**
+ * Image services whose transform URLs never hand the source to another
+ * fetcher. Astro's own services and the Cloudflare adapter's workerd service
+ * keep Astro's default `getURL`, which sends every transform to the configured
+ * image endpoint. The Cloudflare URL service embeds the source in a
+ * `/cdn-cgi/image/` path, which `stripInternalMediaOrigin` makes site-relative.
+ * Any other service may build URLs for a CDN that fetches the source itself.
+ */
+const INTERNAL_ORIGIN_IMAGE_SERVICES = new Set([
+	DEFAULT_IMAGE_SERVICE,
+	"astro/assets/services/noop",
+	"@astrojs/cloudflare/image-service-workerd",
+	CLOUDFLARE_URL_IMAGE_SERVICE,
+]);
+
+/**
+ * The origin same-origin media is absolutized against for Astro's image
+ * service when the build doesn't know the site origin, or `undefined` when the
+ * site origin (or, in dev, the host-agnostic pattern) already covers it.
+ *
+ * Only used when the source can reach nothing but EmDash's own image endpoint,
+ * which serves the media route from storage by path. Anything else would try
+ * to fetch the URL.
+ *
+ * @internal Exported for unit testing.
+ */
+export function resolveInternalMediaOrigin(opts: {
+	siteUrl: string | undefined;
+	command: "dev" | "build" | "preview" | "sync";
+	ownImageEndpoint: boolean;
+	imageServiceEntrypoint: string | undefined;
+}): string | undefined {
+	if (opts.command === "dev" || !opts.ownImageEndpoint) return undefined;
+	if (!INTERNAL_ORIGIN_IMAGE_SERVICES.has(opts.imageServiceEntrypoint ?? DEFAULT_IMAGE_SERVICE)) {
+		return undefined;
+	}
+	return siteMediaHostname(opts.siteUrl) ? undefined : INTERNAL_MEDIA_IMAGE_ORIGIN;
 }
 
 /**
@@ -277,14 +341,17 @@ export function resolveImageEndpoint(opts: {
 	imagesDisabled: boolean;
 	currentEntrypoint: string | undefined;
 	isCloudflare: boolean;
+	imageServiceEntrypoint?: string;
 }): { entrypoint?: string; warn?: string } {
 	if (opts.imagesDisabled) return {};
 	const current = opts.currentEntrypoint;
 	if (current === undefined || OVERRIDABLE_IMAGE_ENDPOINTS.has(current)) {
+		if (!opts.isCloudflare) return { entrypoint: "emdash/internal/image-endpoint" };
 		return {
-			entrypoint: opts.isCloudflare
-				? "@emdash-cms/cloudflare/image-endpoint"
-				: "emdash/internal/image-endpoint",
+			entrypoint:
+				opts.imageServiceEntrypoint === CLOUDFLARE_URL_IMAGE_SERVICE
+					? "@emdash-cms/cloudflare/image-resizing-endpoint"
+					: "@emdash-cms/cloudflare/image-endpoint",
 		};
 	}
 	// A deliberate passthrough setup: leave it alone, no warning.
@@ -313,7 +380,7 @@ export function imageEndpointRoutePattern(route: string | undefined): string {
  *
  * The admin SPA is a React app hydrated via `client:only="react"`. Without the
  * React integration the build succeeds and the admin route returns 200, but the
- * bundle never hydrates -- the page sits on "Loading EmDash..." forever with no
+ * bundle never hydrates -- the page shows its loading spinner forever with no
  * error anywhere (#962). Checked in `astro:config:done` so integrations added
  * by other integrations are visible too.
  *
@@ -327,7 +394,7 @@ export function missingReactIntegrationWarning(
 	}
 	return (
 		`@astrojs/react is not registered in your Astro config. The EmDash admin UI ` +
-		`will not hydrate without it (the page stays on "Loading EmDash..."). ` +
+		`will not hydrate without it (the page keeps showing its loading spinner). ` +
 		`Add it to your integrations:\n\n` +
 		`  import react from "@astrojs/react";\n` +
 		`  export default defineConfig({\n` +
@@ -621,6 +688,8 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 	let usesCloudflareAdapter = false;
 	let normalizedI18n: ReturnType<typeof normalizeAstroI18n> = null;
 	const migrationMetadata = createMigrationIntegrationMetadata(resolvedConfig.database);
+	const nodeCompression =
+		resolvedConfig.compression === false ? undefined : createNodeCompression();
 
 	const integration: AstroIntegration = {
 		name: "emdash",
@@ -730,15 +799,6 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 								},
 							];
 
-				// Authorize media sources so Astro's image service builds transform
-				// URLs for them (it won't optimize an un-allowed source). `updateConfig`
-				// merges arrays, so user-configured remotePatterns are preserved.
-				const imageRemotePatterns = buildImageRemotePatterns(
-					resolvedConfig.storage,
-					resolveBuildTimeSiteUrl(resolvedConfig.siteUrl),
-					command,
-				);
-
 				// Wrap Astro's image endpoint so EmDash media bytes load straight from
 				// storage (Access-safe) instead of over HTTP. Skip when the user opts
 				// out or has a custom endpoint we can't delegate back to.
@@ -746,8 +806,27 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					imagesDisabled: resolvedConfig.images === false,
 					currentEntrypoint: astroConfig.image?.endpoint?.entrypoint,
 					isCloudflare: astroConfig.adapter?.name === "@astrojs/cloudflare",
+					imageServiceEntrypoint: astroConfig.image?.service?.entrypoint,
 				});
 				if (imageEndpointWarning) logger.warn(imageEndpointWarning);
+
+				// Authorize media sources so Astro's image service builds transform
+				// URLs for them (it won't optimize an un-allowed source). `updateConfig`
+				// merges arrays, so user-configured remotePatterns are preserved.
+				const buildTimeSiteUrl = resolveBuildTimeSiteUrl(resolvedConfig.siteUrl);
+				const internalMediaOrigin = resolveInternalMediaOrigin({
+					siteUrl: buildTimeSiteUrl,
+					command,
+					ownImageEndpoint: Boolean(imageEndpoint),
+					imageServiceEntrypoint: astroConfig.image?.service?.entrypoint,
+				});
+				if (internalMediaOrigin) serializableConfig.internalMediaOrigin = internalMediaOrigin;
+				const imageRemotePatterns = buildImageRemotePatterns(
+					resolvedConfig.storage,
+					buildTimeSiteUrl,
+					command,
+					internalMediaOrigin,
+				);
 
 				const imageConfig: Record<string, unknown> = {};
 				if (imageRemotePatterns.length) imageConfig.remotePatterns = imageRemotePatterns;
@@ -758,21 +837,26 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					);
 				}
 
+				const viteConfig = createViteConfig(
+					{
+						serializableConfig,
+						resolvedConfig,
+						pluginDescriptors,
+						astroConfig,
+					},
+					command,
+				);
+				if (nodeCompression && astroConfig.adapter?.name === "@astrojs/node") {
+					viteConfig.plugins = [...(viteConfig.plugins ?? []), nodeCompression.vitePlugin];
+				}
+
 				updateConfig({
 					security: securityConfig,
 					...(Object.keys(imageConfig).length ? { image: imageConfig } : {}),
 					// fonts is a valid AstroConfig key but may not be in the
 					// type definition for the minimum supported Astro version
 					...({ fonts: emdashFonts } as Record<string, unknown>),
-					vite: createViteConfig(
-						{
-							serializableConfig,
-							resolvedConfig,
-							pluginDescriptors,
-							astroConfig,
-						},
-						command,
-					),
+					vite: viteConfig,
 				});
 
 				// Astro reads a route's `export const prerender` by matching the file's
@@ -811,6 +895,12 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 				// port isn't known yet here. Nothing useful to print for build.
 			},
 			"astro:config:done": async ({ config: finalConfig, logger }) => {
+				const cookie = finalConfig.session ? finalConfig.session.cookie : undefined;
+				serializableConfig.sessionCookieName =
+					typeof cookie === "string"
+						? cookie || "astro-session"
+						: (cookie?.name ?? "astro-session");
+				nodeCompression?.setConfig(finalConfig);
 				const warning = missingReactIntegrationWarning(finalConfig.integrations);
 				if (warning) logger.warn(warning);
 				const adapterWarning = adapterVersionMismatchWarning(finalConfig.root);
@@ -880,7 +970,8 @@ export function emdash(config: EmDashConfig = {}): AstroIntegration {
 					refreshDevTypes();
 				});
 			},
-			"astro:build:done": ({ logger }) => {
+			"astro:build:done": async ({ logger }) => {
+				await nodeCompression?.precompress(logger);
 				logger.info("Build complete");
 			},
 		},

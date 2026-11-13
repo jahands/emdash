@@ -21,7 +21,8 @@ import { AdminBrandingProvider, type AdminBranding } from "./lib/admin-branding-
 import { refetchCurrentUserOnForbidden } from "./lib/api/current-user";
 import { AuthProviderProvider, type AuthProviders } from "./lib/auth-provider-context";
 import { PluginAdminProvider, type PluginAdmins } from "./lib/plugin-context";
-import { getLoadedDateLocale, waitForDateLocale } from "./locales/date-locale.js";
+import { setRoutePrefetchFiles, type RoutePrefetchFiles } from "./lib/route-prefetch.js";
+import { loadDateLocale } from "./locales/date-locale.js";
 import { LocaleDirectionProvider } from "./locales/index.js";
 import { KumoTranslationsProvider } from "./locales/KumoTranslationsProvider.js";
 import { createAdminRouter } from "./router";
@@ -41,7 +42,6 @@ refetchCurrentUserOnForbidden(queryClient);
 // Create the router with query client context
 const router = createAdminRouter(queryClient);
 const ADMIN_BASEPATH = "/_emdash/admin";
-const DATE_LOCALE_BOOT_TIMEOUT_MS = 3000;
 
 export function normalizeAdminHref(href: string): string {
 	if (href === ADMIN_BASEPATH) return "/";
@@ -121,6 +121,8 @@ export interface AdminAppProps {
 	locale?: string;
 	/** Compiled Lingui messages for the active locale */
 	messages?: Messages;
+	/** Files of the screens to download before they open, read from the build. Without them, screens load when opened or when a link to them shows intent. */
+	routePrefetchFiles?: RoutePrefetchFiles;
 }
 
 /**
@@ -129,6 +131,7 @@ export interface AdminAppProps {
 const EMPTY_PLUGINS: PluginAdmins = {};
 const EMPTY_AUTH_PROVIDERS: AuthProviders = {};
 const EMPTY_ADMIN_BRANDING: AdminBranding = {};
+const NO_PREFETCH_FILES: RoutePrefetchFiles = {};
 
 export function AdminApp({
 	pluginAdmins = EMPTY_PLUGINS,
@@ -136,36 +139,22 @@ export function AdminApp({
 	adminBranding = EMPTY_ADMIN_BRANDING,
 	locale = "en",
 	messages = {},
+	routePrefetchFiles = NO_PREFETCH_FILES,
 }: AdminAppProps) {
-	// Date locales can't be serialized from the server, so the first render waits
-	// for the active one. Otherwise calendars would render with the US week start
-	// and then shift. The timeout keeps a stalled request from blocking the admin.
-	const [dateLocaleReady, setDateLocaleReady] = React.useState(
-		() => getLoadedDateLocale(locale) !== undefined,
-	);
 	React.useEffect(() => {
-		if (dateLocaleReady) return;
-		let active = true;
-		void (async () => {
-			await waitForDateLocale(locale, DATE_LOCALE_BOOT_TIMEOUT_MS);
-			if (active) setDateLocaleReady(true);
-		})();
-		return () => {
-			active = false;
-		};
-	}, [locale, dateLocaleReady]);
+		document.getElementById("emdash-boot-loader")?.remove();
+	}, []);
 
 	React.useEffect(() => {
-		if (dateLocaleReady) document.getElementById("emdash-boot-loader")?.remove();
-	}, [dateLocaleReady]);
+		setRoutePrefetchFiles(routePrefetchFiles);
+	}, [routePrefetchFiles]);
 
 	const i18nInitialized = React.useRef(false);
 	if (!i18nInitialized.current) {
 		i18n.loadAndActivate({ locale, messages });
+		void loadDateLocale(locale);
 		i18nInitialized.current = true;
 	}
-
-	if (!dateLocaleReady) return null;
 
 	return (
 		<ThemeProvider>

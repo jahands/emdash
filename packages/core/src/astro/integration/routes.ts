@@ -133,6 +133,11 @@ export function injectCoreRoutes(
 	});
 
 	injectRoute({
+		pattern: "/_emdash/api/calendar/range",
+		entrypoint: resolveRoute("api/calendar/range.ts"),
+	});
+
+	injectRoute({
 		pattern: "/_emdash/api/admin/scheduled-policy-rejections/[collection]/[id]",
 		entrypoint: resolveRoute("api/admin/scheduled-policy-rejections/[collection]/[id].ts"),
 	});
@@ -158,6 +163,11 @@ export function injectCoreRoutes(
 	injectRoute({
 		pattern: "/_emdash/api/content/[collection]/[id]/revisions",
 		entrypoint: resolveRoute("api/content/[collection]/[id]/revisions.ts"),
+	});
+
+	injectRoute({
+		pattern: "/_emdash/api/content/[collection]/[id]/revisions/editors",
+		entrypoint: resolveRoute("api/content/[collection]/[id]/revisions/editors.ts"),
 	});
 
 	injectRoute({
@@ -216,6 +226,11 @@ export function injectCoreRoutes(
 	injectRoute({
 		pattern: "/_emdash/api/content/[collection]/[id]/lock",
 		entrypoint: resolveRoute("api/content/[collection]/[id]/lock.ts"),
+	});
+
+	injectRoute({
+		pattern: "/_emdash/api/content/[collection]/[id]/room",
+		entrypoint: resolveRoute("api/content/[collection]/[id]/room.ts"),
 	});
 
 	// i18n translation routes

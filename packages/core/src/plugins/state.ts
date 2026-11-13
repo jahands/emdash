@@ -300,7 +300,7 @@ export class PluginStateRepository {
 /**
  * Map a `_plugin_state` row to the public `PluginState` shape. Every read
  * path uses this, so adding a column to the table means changing this
- * function and nothing else.
+ * function and `PLUGIN_STATE_COLUMNS`, and nothing else.
  */
 export interface PluginStateRow {
 	plugin_id: string;
@@ -318,6 +318,31 @@ export interface PluginStateRow {
 	mcp_tools_enabled: number;
 	mcp_tools_consent: string | null;
 }
+
+/** The columns of a `PluginStateRow`, for reads that name them. */
+export const PLUGIN_STATE_COLUMNS = [
+	"plugin_id",
+	"status",
+	"version",
+	"installed_at",
+	"activated_at",
+	"deactivated_at",
+	"source",
+	"marketplace_version",
+	"display_name",
+	"description",
+	"registry_publisher_did",
+	"registry_slug",
+	"mcp_tools_enabled",
+	"mcp_tools_consent",
+] as const satisfies readonly (keyof PluginStateRow)[];
+
+type UnlistedPluginStateColumn = Exclude<
+	keyof PluginStateRow,
+	(typeof PLUGIN_STATE_COLUMNS)[number]
+>;
+const pluginStateColumnsComplete: [UnlistedPluginStateColumn] extends [never] ? true : never = true;
+void pluginStateColumnsComplete;
 
 export function rowToPluginState(row: PluginStateRow): PluginState {
 	return {

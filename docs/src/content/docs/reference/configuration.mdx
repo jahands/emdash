@@ -117,6 +117,18 @@ emdash({
 });
 ```
 
+### `compression`
+
+**Optional.** Controls whether the `@astrojs/node` standalone server compresses responses. The default is `true`. Other adapters and the Node adapter's middleware mode are not affected.
+
+When enabled, the build stores Brotli and gzip copies of the client assets, and the server compresses pages and API responses as it sends them. Set `compression: false` when a reverse proxy or CDN in front of the server compresses responses. [Deploy to Node.js](/deployment/nodejs/#compression) lists which responses are compressed.
+
+```js
+emdash({
+	compression: false,
+});
+```
+
 ### `imagePlaceholders`
 
 **Optional.** Controls whether EmDash generates blurhash and dominant-color placeholders for uploaded images. The default is `true` on every runtime, including Cloudflare Workers.
@@ -449,6 +461,27 @@ emdash({
 
 See [MCP Server Reference](/reference/mcp-server/) for token creation and client configuration.
 
+### `coEditing`
+
+**Optional.** Lets several people edit an entry in the admin at the same time. The default is `false`. Co-editing applies to collections with revision support, and runs on these hosts:
+
+- Node.js sites that use the `@astrojs/node` adapter, except in `node:cluster` workers. [Co-editing on Node.js](/deployment/nodejs/#co-editing) covers reverse proxies, several processes and shutdown.
+- Cloudflare Workers sites with the `EMDASH_ROOMS` Durable Object binding and the room classes exported from the Worker entry point. The Cloudflare templates include both; [Co-editing on Cloudflare](/deployment/cloudflare/#co-editing) shows the setup for an existing site.
+
+On other hosts, and on a Cloudflare site without the binding, the editor uses single-editor mode, where opening an entry takes an [edit lock](/guides/working-with-content/#edit-locks). [Edit with other people](/guides/working-with-content/#edit-with-other-people) describes what editors see.
+
+Set the option to `true` to turn co-editing on:
+
+```js
+emdash({
+	coEditing: true,
+});
+```
+
+The change takes effect when the site is rebuilt and deployed. Admin tabs opened before then use single-editor mode until they reload.
+
+When co-editing is turned off again, open editors save any unsaved edits as a recovery revision and continue in single-editor mode. On Node.js, EmDash then adds no `upgrade` listener to the site's server and doesn't handle `SIGTERM` or `SIGINT`. Edits that a room still holds unsaved stay in its storage until co-editing is on again, and are saved as a recovery revision when the room next drops its state.
+
 ### `siteUrl`
 
 The public browser-facing origin for the site (scheme + host + optional port, **no path**). Set it before running production setup, unless the site is deployed to Cloudflare Workers. Only loopback development hosts can otherwise complete setup without a configured origin.
@@ -472,7 +505,7 @@ emdash({
 
 When `siteUrl` is not set in config, EmDash checks environment variables in order: `EMDASH_SITE_URL`, then `SITE_URL`. This is useful for container deployments where the public URL is set at runtime.
 
-Image optimization reads these environment variables at **build time**, because Astro records the allowed image origins in `image.remotePatterns` when `astro build` runs. If `EMDASH_SITE_URL` or `SITE_URL` is set only in the runtime environment, as on hosts that inject variables when the app starts, locally stored media is served unoptimized. Set the variable in the build environment as well, or set `siteUrl` in config.
+Image optimization with Astro's built-in image services or the Cloudflare adapter's does not need a site URL. A custom `image.service` receives the public URL of each image, so it needs whatever origin setup that service expects. Prerendered pages are the exception for every service: Astro fetches their images during `astro build`, so locally stored media on a prerendered page is optimized only when `siteUrl`, `EMDASH_SITE_URL`, or `SITE_URL` is set in the build environment.
 
 Setup fails with `SITE_URL_REQUIRED` on a non-loopback host when neither source is set. This prevents the first unauthenticated setup request from choosing the origin used in later authentication emails. A production build deployed to Cloudflare Workers is the exception: Cloudflare only routes requests for hostnames bound to the Worker, so setup records `https://` and the hostname it runs on. The same build served by `wrangler dev`, `astro preview`, or self-hosted workerd on a reachable address gets no such guarantee; set `siteUrl` or `EMDASH_SITE_URL` there first.
 

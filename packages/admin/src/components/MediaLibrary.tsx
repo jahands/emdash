@@ -69,6 +69,7 @@ import {
 	formatFileSize,
 	getMediaThumbnailUrl,
 	getMediaPreviewUrl,
+	renditionWidthFor,
 	getMediaObjectPosition,
 	fallbackToOriginalThumbnail,
 	metaNumber,
@@ -177,11 +178,18 @@ const centerMediaOverlayOnCursor: Modifier = ({
 };
 const MEDIA_DRAG_OVERLAY_MODIFIERS = [centerMediaOverlayOnCursor];
 
+/** A newest-first list with the items not in `shown` moved after the others, oldest first. */
+function shownFirst<T extends { id: string }>(items: T[], shown: ReadonlySet<string> | undefined) {
+	if (!shown) return items;
+	const added = items.filter((item) => !shown.has(item.id)).toReversed();
+	return added.length ? [...items.filter((item) => shown.has(item.id)), ...added] : items;
+}
+
 /**
  * Media library component with upload, provider tabs, and grid view
  */
 export function MediaLibrary({
-	items = [],
+	items: liveItems = [],
 	isLoading,
 	onUpload,
 	onItemUpdated,
@@ -214,10 +222,11 @@ export function MediaLibrary({
 	const currentUser = useCurrentUser().data;
 	const isAdmin = (currentUser?.role ?? 0) >= 50;
 	const [activeProvider, setActiveProvider] = React.useState<string>("local");
+	const usageStatusEnabled = isAdmin && activeProvider === "local";
 	const activationQuery = useQuery({
 		queryKey: MEDIA_USAGE_ACTIVATION_QUERY_KEY,
 		queryFn: fetchMediaUsageActivationStatus,
-		enabled: isAdmin && activeProvider === "local",
+		enabled: usageStatusEnabled,
 		retry: false,
 		staleTime: 60_000,
 		refetchOnMount: "always",
@@ -229,10 +238,9 @@ export function MediaLibrary({
 		queryKey: MEDIA_USAGE_PROGRESS_QUERY_KEY,
 		queryFn: fetchMediaUsageProgress,
 		enabled:
-			isAdmin &&
-			activeProvider === "local" &&
+			usageStatusEnabled &&
 			!activationQuery.isError &&
-			setupStatus?.state === "active",
+			(activationQuery.data === undefined || activationQuery.data.state === "active"),
 		retry: false,
 		staleTime: 60_000,
 		refetchOnMount: "always",
@@ -240,6 +248,10 @@ export function MediaLibrary({
 		refetchOnReconnect: false,
 	});
 	const setupProgress = progressQuery.data;
+	const usageStatusPending =
+		usageStatusEnabled &&
+		(activationQuery.isPending ||
+			(activationQuery.data?.state === "active" && progressQuery.isPending));
 	const setupIncomplete =
 		setupStatus &&
 		(setupStatus.state !== "active" ||
@@ -287,7 +299,7 @@ export function MediaLibrary({
 	>({});
 
 	// Fetch available providers
-	const { data: providers } = useQuery({
+	const { data: providers, isPlaceholderData: providersPending } = useQuery({
 		queryKey: ["media-providers"],
 		queryFn: fetchMediaProviders,
 		placeholderData: [],
@@ -443,9 +455,64 @@ export function MediaLibrary({
 		return tabs;
 	}, [providers, t]);
 
+	// Another page, search, filter or folder is a new list once its own items arrive. Until then
+	// the cards shown stay as they are; then the grid is drawn anew instead of moving cards that
+	// happen to be in both lists.
+	const listView = [
+		activeProvider,
+		folderId ?? "",
+		pagination?.page ?? 1,
+		debouncedSearch.trim(),
+		localTypeFilter,
+	].join("\n");
+	const liveList: Array<{ id: string }> =
+		activeProvider === "local" ? liveItems : (providerData?.items ?? []);
+	const [shownList, setShownList] = React.useState<{
+		view: string;
+		generation: number;
+		leftWith?: Array<{ id: string }>;
+	}>({ view: listView, generation: 0 });
+	if (shownList.view === listView) {
+		if (shownList.leftWith) setShownList({ view: listView, generation: shownList.generation });
+	} else if (!shownList.leftWith) {
+		setShownList({ ...shownList, leftWith: liveList });
+	} else if (shownList.leftWith !== liveList) {
+		setShownList({ view: listView, generation: shownList.generation + 1 });
+	}
+
+	// The list is newest first, so an upload would land first and move every card. Until the list
+	// changes, items that weren't shown when the upload dialog opened go after the others, in upload
+	// order.
+	const [uploadBaseline, setUploadBaseline] = React.useState<{
+		generation: number;
+		shown: ReadonlySet<string>;
+	} | null>(null);
+	if (uploadDialogOpen && uploadBaseline?.generation !== shownList.generation) {
+		setUploadBaseline({
+			generation: shownList.generation,
+			shown: new Set(liveList.map((item) => item.id)),
+		});
+	}
+	const shownBeforeUpload =
+		uploadBaseline?.generation === shownList.generation ? uploadBaseline.shown : undefined;
+
 	// Get current items based on active provider
-	const currentItems = activeProvider === "local" ? items : [];
-	const currentProviderItems = activeProvider !== "local" ? providerData?.items || [] : [];
+	const currentItems = activeProvider === "local" ? shownFirst(liveItems, shownBeforeUpload) : [];
+	const currentProviderItems =
+		activeProvider !== "local" ? shownFirst(providerData?.items ?? [], shownBeforeUpload) : [];
+	const lastShownItem = (activeProvider === "local" ? currentItems : currentProviderItems).at(-1);
+	const latestUploadId =
+		shownBeforeUpload && lastShownItem && !shownBeforeUpload.has(lastShownItem.id)
+			? lastShownItem.id
+			: undefined;
+	const revealedUploadRef = React.useRef<string | undefined>(undefined);
+	React.useEffect(() => {
+		if (uploadDialogOpen || !latestUploadId || revealedUploadRef.current === latestUploadId) return;
+		revealedUploadRef.current = latestUploadId;
+		document
+			.querySelector(`[data-media-id="${CSS.escape(latestUploadId)}"]`)
+			?.scrollIntoView({ block: "nearest" });
+	}, [latestUploadId, uploadDialogOpen]);
 	const currentLoading = activeProvider === "local" ? isLoading : providerLoading;
 	React.useEffect(() => {
 		if (
@@ -514,6 +581,17 @@ export function MediaLibrary({
 			Boolean(foldersError) ||
 			visibleFolders.length > 0 ||
 			(viewMode === "list" && hasFolderSurface));
+	const itemsPending =
+		currentLoading && currentItems.length === 0 && currentProviderItems.length === 0;
+	const initialContentPending =
+		itemsPending ||
+		usageStatusPending ||
+		providersPending ||
+		(showFolderResults && Boolean(foldersLoading) && visibleFolders.length === 0);
+	// Everything below the header appears together once, so late responses
+	// never push the toolbar or the grid.
+	const [contentRevealed, setContentRevealed] = React.useState(!initialContentPending);
+	if (!contentRevealed && !initialContentPending) setContentRevealed(true);
 	const folderActionsAvailable =
 		Boolean(canManageFolders) &&
 		Boolean(onCreateFolder) &&
@@ -659,8 +737,11 @@ export function MediaLibrary({
 		setUploadTarget(null);
 		const returnTarget = returnFocusRef.current;
 		returnFocusRef.current = null;
+		// Focus returns without scrolling, which would take the screen off an upload just revealed.
 		window.requestAnimationFrame(() => {
-			(returnTarget?.isConnected ? returnTarget : mediaHeadingRef.current)?.focus();
+			(returnTarget?.isConnected ? returnTarget : mediaHeadingRef.current)?.focus({
+				preventScroll: true,
+			});
 		});
 	}, []);
 	const handleUploadQueueIdle = React.useCallback(() => {
@@ -736,7 +817,7 @@ export function MediaLibrary({
 					: "space-y-4"
 			}
 			data-media-library
-			aria-busy={currentLoading || moveMutation.isPending || undefined}
+			aria-busy={!contentRevealed || currentLoading || moveMutation.isPending || undefined}
 			onClickCapture={handleRootClickCapture}
 		>
 			<Toasty toastManager={toastManager}>{null}</Toasty>
@@ -831,7 +912,7 @@ export function MediaLibrary({
 					)}
 				</div>
 			</div>
-			{activeProvider === "local" && setupIncomplete ? (
+			{contentRevealed && activeProvider === "local" && setupIncomplete ? (
 				<Banner
 					variant="alert"
 					title={
@@ -853,7 +934,7 @@ export function MediaLibrary({
 			) : null}
 
 			{/* Provider tabs (only when an external provider is configured) */}
-			{providerTabs.length > 1 && (
+			{contentRevealed && providerTabs.length > 1 && (
 				<Tabs
 					variant="underline"
 					value={activeProvider}
@@ -885,7 +966,7 @@ export function MediaLibrary({
 
 			{/* Toolbar: search + type filter (start) · view toggle (end).
 			    Local library search/filter is handled server-side. */}
-			{showToolbar && (
+			{contentRevealed && showToolbar && (
 				<TableToolbar
 					className="flex-row flex-nowrap gap-2"
 					trailing={
@@ -966,7 +1047,7 @@ export function MediaLibrary({
 				</span>
 			)}
 
-			{hasFolderSurface && viewMode === "grid" && (
+			{contentRevealed && hasFolderSurface && viewMode === "grid" && (
 				<section
 					aria-labelledby="media-folders-heading"
 					aria-busy={Boolean(foldersLoading || isLoadingMoreFolders) || undefined}
@@ -1025,7 +1106,7 @@ export function MediaLibrary({
 			)}
 
 			{/* Content */}
-			{currentLoading && currentItems.length === 0 && currentProviderItems.length === 0 ? (
+			{!contentRevealed || itemsPending ? (
 				<div className="flex items-center justify-center py-12">
 					<Loader />
 				</div>
@@ -1105,6 +1186,7 @@ export function MediaLibrary({
 				)
 			) : viewMode === "grid" ? (
 				<Grid
+					key={shownList.generation}
 					variant="4up"
 					gap="sm"
 					className="2xl:grid-cols-6"
@@ -1222,7 +1304,7 @@ export function MediaLibrary({
 						{activeProvider === "local"
 							? currentItems.map((item) => (
 									<MediaListItem
-										key={item.id}
+										key={`${shownList.generation}:${item.id}`}
 										item={item}
 										selected={detailItem?.id === item.id}
 										draggable={
@@ -1237,7 +1319,7 @@ export function MediaLibrary({
 								))
 							: currentProviderItems.map((item) => (
 									<ProviderListItem
-										key={item.id}
+										key={`${shownList.generation}:${item.id}`}
 										item={item}
 										selected={detailItem?.id === item.id}
 										onClick={() => {
@@ -1263,7 +1345,7 @@ export function MediaLibrary({
 				</DataTable>
 			)}
 
-			{activeProvider === "local" && pagination && pagination.totalCount > 0 && (
+			{contentRevealed && activeProvider === "local" && pagination && pagination.totalCount > 0 && (
 				<ListPaginationFooter
 					pagination={pagination}
 					pageSizes={MEDIA_BROWSER_PAGE_SIZES}
@@ -1271,7 +1353,7 @@ export function MediaLibrary({
 				/>
 			)}
 
-			{activeProvider === "local" && !pagination && hasMore && onLoadMore && (
+			{contentRevealed && activeProvider === "local" && !pagination && hasMore && onLoadMore && (
 				<div className="flex justify-center">
 					<Button variant="outline" onClick={onLoadMore} disabled={isLoading}>
 						{isLoading ? t`Loading...` : t`Load More`}
@@ -1607,6 +1689,7 @@ function MediaGridItem({ item, selected, draggable, isMoving, onClick }: MediaGr
 			ref={setNodeRef}
 			{...listeners}
 			aria-busy={isMoving || undefined}
+			data-media-id={item.id}
 			data-media-draggable={draggable || undefined}
 			className={cn(
 				"min-w-0 transition-opacity",
@@ -1635,13 +1718,15 @@ interface ProviderGridItemProps {
 
 function ProviderGridItem({ item, selected, onClick, onDimensionsLoaded }: ProviderGridItemProps) {
 	return (
-		<MediaBrowserItem
-			item={providerItemToMediaItem("provider", item)}
-			layout="grid"
-			selected={selected}
-			onClick={onClick}
-			onDimensionsLoaded={onDimensionsLoaded}
-		/>
+		<div data-media-id={item.id} className="min-w-0">
+			<MediaBrowserItem
+				item={providerItemToMediaItem("provider", item)}
+				layout="grid"
+				selected={selected}
+				onClick={onClick}
+				onDimensionsLoaded={onDimensionsLoaded}
+			/>
+		</div>
 	);
 }
 
@@ -1670,6 +1755,7 @@ function MediaListItem({ item, selected, draggable, isMoving, onClick }: MediaLi
 			ref={setNodeRef}
 			{...listeners}
 			aria-busy={isMoving || undefined}
+			data-media-id={item.id}
 			data-media-draggable={draggable || undefined}
 			data-selected={selected || undefined}
 			data-clickable
@@ -1684,7 +1770,15 @@ function MediaListItem({ item, selected, draggable, isMoving, onClick }: MediaLi
 				<div className="h-10 w-10 overflow-hidden rounded">
 					{isImage ? (
 						<img
-							src={getMediaThumbnailUrl(item.url, item.mimeType, 80, item.contentHash)}
+							src={getMediaThumbnailUrl(
+								item.url,
+								item.mimeType,
+								renditionWidthFor(
+									{ width: 40, height: 40 },
+									{ fit: "cover", sourceWidth: item.width, sourceHeight: item.height },
+								),
+								item.contentHash,
+							)}
 							alt={item.alt || item.filename}
 							draggable={false}
 							className="emdash-media-transparency-grid h-full w-full object-cover"
@@ -1728,6 +1822,7 @@ function ProviderListItem({ item, selected, onClick, onDimensionsLoaded }: Provi
 
 	return (
 		<tr
+			data-media-id={item.id}
 			data-selected={selected || undefined}
 			data-clickable
 			className="cursor-pointer"

@@ -19,18 +19,23 @@ import {
 	PencilSimple,
 	X,
 } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
-import { fetchMediaItem, type MediaItem, type MediaUpdateInput } from "../lib/api";
+import type { MediaItem, MediaUpdateInput } from "../lib/api";
 import {
 	canonicalMediaProviderId,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
+	getMediaThumbnailUrl,
 	localMediaFileUrl,
 	metaString,
 	syncMediaCaption,
 } from "../lib/media-utils.js";
+import {
+	useMediaItem,
+	useRenditionFallback,
+	useRenditionWidth,
+} from "../lib/use-media-rendition.js";
 import { cn } from "../lib/utils.js";
 import { DISCLOSURE_EASE, DISCLOSURE_MS, IMAGE_EDGE, ROW_BUTTON } from "./block-field-styles.js";
 import { FieldHelpLabel } from "./FieldHelpLabel.js";
@@ -159,6 +164,51 @@ const THUMB_REVEAL = cn(
 const PHOTO_ACTION =
 	"bg-kumo-base/85 shadow-sm backdrop-blur-sm not-disabled:hover:bg-kumo-base pointer-coarse:h-11 pointer-coarse:min-w-11";
 
+/** The most height `max-h-48` lets the default preview take. */
+const DEFAULT_PREVIEW_MAX_HEIGHT = 192;
+
+/**
+ * The `src` for a field's preview: a rendition sized to the image element the
+ * returned ref is given, once that element has a size. A local image whose
+ * media item is still loading (`waiting`) gets no `src` yet, so it is
+ * requested once, at its current version. A rendition that fails to load falls
+ * back to the original before the image counts as broken.
+ */
+function useImageFieldRendition({
+	storedUrl,
+	previewUrl,
+	contentHash,
+	value,
+	media,
+	waiting,
+	onBroken,
+}: {
+	storedUrl: string | undefined;
+	previewUrl: string | undefined;
+	contentHash: string | null | undefined;
+	value: ImageFieldValue | undefined;
+	media: MediaItem | undefined;
+	waiting: boolean;
+	onBroken: () => void;
+}) {
+	const mimeType = media?.mimeType ?? value?.mimeType;
+	const [ref, width] = useRenditionWidth<HTMLImageElement>({
+		fit: "cover",
+		sourceWidth: media?.width ?? value?.width,
+		sourceHeight: media?.height ?? value?.height,
+	});
+	let rendition: string | undefined;
+	if (storedUrl && !waiting) {
+		if (!mimeType) rendition = previewUrl;
+		else if (width) rendition = getMediaThumbnailUrl(storedUrl, mimeType, width, contentHash);
+	}
+	const [src, handleRenditionError] = useRenditionFallback(rendition, previewUrl);
+	const handleError = () => {
+		if (!handleRenditionError()) onBroken();
+	};
+	return [ref, src, handleError] as const;
+}
+
 export function ImageFieldRenderer({
 	id,
 	label,
@@ -237,22 +287,15 @@ export function ImageFieldRenderer({
 		canonicalMediaProviderId(objectValue.provider) === "local"
 			? objectValue.id
 			: null;
-	const { data: currentMedia } = useQuery({
-		queryKey: ["media", currentMediaId],
-		queryFn: ({ signal }) => fetchMediaItem(currentMediaId!, { signal }),
-		enabled: currentMediaId !== null,
-	});
+	const { data: currentMedia, isError: currentMediaFailed } = useMediaItem(currentMediaId);
 	const currentDarkMediaId =
 		variant === "featured" &&
 		darkValue?.id &&
 		canonicalMediaProviderId(darkValue.provider) === "local"
 			? darkValue.id
 			: null;
-	const { data: currentDarkMedia } = useQuery({
-		queryKey: ["media", currentDarkMediaId],
-		queryFn: ({ signal }) => fetchMediaItem(currentDarkMediaId!, { signal }),
-		enabled: currentDarkMediaId !== null,
-	});
+	const { data: currentDarkMedia, isError: currentDarkMediaFailed } =
+		useMediaItem(currentDarkMediaId);
 	const storedDisplayUrl = mediaDisplayUrl(value);
 	const primaryContentHash =
 		objectValue?.id && Object.hasOwn(editedContentHashes, objectValue.id)
@@ -269,6 +312,25 @@ export function ImageFieldRenderer({
 	const darkDisplayUrl = storedDarkDisplayUrl
 		? getMediaPreviewUrl(storedDarkDisplayUrl, darkContentHash)
 		: undefined;
+	const [primaryImageRef, primaryImageSrc, handlePrimaryImageError] = useImageFieldRendition({
+		storedUrl: storedDisplayUrl,
+		previewUrl: displayUrl,
+		contentHash: primaryContentHash,
+		value: objectValue,
+		media: currentMedia,
+		waiting: currentMediaId !== null && currentMedia === undefined && !currentMediaFailed,
+		onBroken: () => setImageBroken(true),
+	});
+	const [darkImageRef, darkImageSrc, handleDarkImageError] = useImageFieldRendition({
+		storedUrl: storedDarkDisplayUrl,
+		previewUrl: darkDisplayUrl,
+		contentHash: darkContentHash,
+		value: darkValue,
+		media: currentDarkMedia,
+		waiting:
+			currentDarkMediaId !== null && currentDarkMedia === undefined && !currentDarkMediaFailed,
+		onBroken: () => setDarkImageBroken(true),
+	});
 
 	React.useEffect(() => {
 		setImageBroken(false);
@@ -549,11 +611,12 @@ export function ImageFieldRenderer({
 								</div>
 							) : (
 								<img
-									src={darkDisplayUrl}
+									ref={darkImageRef}
+									src={darkImageSrc}
 									alt=""
 									className="h-full w-full object-cover"
 									style={{ objectPosition: darkObjectPosition }}
-									onError={() => setDarkImageBroken(true)}
+									onError={handleDarkImageError}
 								/>
 							)}
 						</div>
@@ -626,11 +689,12 @@ export function ImageFieldRenderer({
 			<div className="flex size-16 shrink-0 items-center justify-center overflow-hidden rounded-full bg-kumo-tint text-kumo-subtle ring ring-kumo-line">
 				{displayUrl && !imageBroken ? (
 					<img
-						src={displayUrl}
+						ref={primaryImageRef}
+						src={primaryImageSrc}
 						alt=""
 						className="size-full object-cover"
 						style={{ objectPosition }}
-						onError={() => setImageBroken(true)}
+						onError={handlePrimaryImageError}
 					/>
 				) : displayUrl ? (
 					<>
@@ -679,11 +743,12 @@ export function ImageFieldRenderer({
 					</div>
 				) : (
 					<img
-						src={displayUrl}
+						ref={primaryImageRef}
+						src={primaryImageSrc}
 						alt=""
 						className="emdash-media-transparency-grid h-full w-full object-cover"
 						style={{ objectPosition }}
-						onError={() => setImageBroken(true)}
+						onError={handlePrimaryImageError}
 					/>
 				)}
 			</div>
@@ -750,11 +815,12 @@ export function ImageFieldRenderer({
 		const preview =
 			displayUrl && !imageBroken ? (
 				<img
-					src={displayUrl}
+					ref={primaryImageRef}
+					src={primaryImageSrc}
 					alt=""
 					className="size-full object-cover"
 					style={{ objectPosition }}
-					onError={() => setImageBroken(true)}
+					onError={handlePrimaryImageError}
 				/>
 			) : displayUrl ? (
 				<ImageBroken className="size-4" aria-hidden="true" />
@@ -886,7 +952,8 @@ export function ImageFieldRenderer({
 					) : (
 						// Its size is known before it loads, so a block opening around it animates to its full height.
 						<img
-							src={displayUrl}
+							ref={primaryImageRef}
+							src={primaryImageSrc}
 							alt=""
 							className={cn(
 								IMAGE_EDGE,
@@ -897,7 +964,7 @@ export function ImageFieldRenderer({
 								aspectRatio:
 									currentWidth && currentHeight ? `${currentWidth} / ${currentHeight}` : "16 / 9",
 							}}
-							onError={() => setImageBroken(true)}
+							onError={handlePrimaryImageError}
 						/>
 					)}
 					<div
@@ -921,11 +988,20 @@ export function ImageFieldRenderer({
 				) : (
 					<div className="grid gap-2">
 						<img
-							src={displayUrl}
+							ref={currentWidth && currentHeight ? primaryImageRef : undefined}
+							src={currentWidth && currentHeight ? primaryImageSrc : displayUrl}
 							alt=""
 							className="emdash-media-transparency-grid max-h-48 min-h-20 rounded-lg border object-cover"
-							style={{ objectPosition }}
-							onError={() => setImageBroken(true)}
+							style={{
+								objectPosition,
+								...(currentWidth && currentHeight
+									? {
+											aspectRatio: `${currentWidth} / ${currentHeight}`,
+											width: `min(100%, ${(DEFAULT_PREVIEW_MAX_HEIGHT * currentWidth) / currentHeight}px, ${currentWidth}px)`,
+										}
+									: undefined),
+							}}
+							onError={handlePrimaryImageError}
 						/>
 						{primaryActions}
 					</div>

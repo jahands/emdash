@@ -1,6 +1,7 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../database/types.js";
+import { settleAll } from "../utils/settle.js";
 
 const REPAIR_GUIDE =
 	"https://docs.emdashcms.com/guides/internationalization/#repairing-taxonomy-locale-mismatches";
@@ -10,29 +11,37 @@ interface TaxonomyLocaleMismatch {
 	locale: string;
 }
 
+/**
+ * Warn when taxonomy definitions or terms use locales outside the configured
+ * ones. `definitionLocales` may be given (or still loading) when the caller
+ * already reads the definitions; the terms are read meanwhile.
+ */
 export async function warnAboutUnconfiguredTaxonomyLocales(
 	db: Kysely<Database>,
 	configuredLocales: readonly string[],
-	definitionLocales?: readonly string[],
+	definitionLocales?: readonly string[] | Promise<readonly string[]>,
 ): Promise<void> {
 	const supportedLocales = configuredLocales.length > 0 ? configuredLocales : ["en"];
-	const definitionRows =
+	const [definitionRows, termRows] = await settleAll([
 		definitionLocales === undefined
-			? await db
+			? db
 					.selectFrom("_emdash_taxonomy_defs")
 					.select("locale")
 					.distinct()
 					.where("locale", "not in", supportedLocales)
 					.execute()
-			: [...new Set(definitionLocales)]
-					.filter((locale) => !supportedLocales.includes(locale))
-					.map((locale) => ({ locale }));
-	const termRows = await db
-		.selectFrom("taxonomies")
-		.select("locale")
-		.distinct()
-		.where("locale", "not in", supportedLocales)
-		.execute();
+			: Promise.resolve(definitionLocales).then((locales) =>
+					[...new Set(locales)]
+						.filter((locale) => !supportedLocales.includes(locale))
+						.map((locale) => ({ locale })),
+				),
+		db
+			.selectFrom("taxonomies")
+			.select("locale")
+			.distinct()
+			.where("locale", "not in", supportedLocales)
+			.execute(),
+	]);
 	const mismatches: TaxonomyLocaleMismatch[] = [
 		...definitionRows.map(({ locale }) => ({ source: "definitions" as const, locale })),
 		...termRows.map(({ locale }) => ({ source: "terms" as const, locale })),

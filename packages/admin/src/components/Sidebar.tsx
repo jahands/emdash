@@ -709,6 +709,7 @@ export function SidebarNav({ manifest }: SidebarNavProps) {
 	);
 
 	const folders = useFolderState();
+	const { isMobile, setOpenMobile } = useSidebar();
 
 	function renderNavEntries(entries: readonly NavEntry<NavLink>[]) {
 		return entries.map((entry, index) => {
@@ -738,7 +739,16 @@ export function SidebarNav({ manifest }: SidebarNavProps) {
 	}
 
 	return (
-		<KumoSidebar className="emdash-sidebar" aria-label={t`Admin navigation`}>
+		<KumoSidebar
+			className="emdash-sidebar"
+			aria-label={t`Admin navigation`}
+			onClick={(event) => {
+				// Kumo's phone sheet only closes on Escape or a backdrop tap; a picked link should close it too.
+				if (isMobile && event.target instanceof Element && event.target.closest("a[href]")) {
+					setOpenMobile(false);
+				}
+			}}
+		>
 			<KumoSidebar.Header className="px-[11px] transition-[padding] duration-(--sidebar-animation-duration) motion-reduce:transition-none group-not-data-[state=collapsed]/sidebar:px-3.5">
 				<Link
 					to="/"

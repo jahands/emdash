@@ -87,6 +87,7 @@ examples/wp-theme-unit-test/
 !.claude/skills
 
 .perf-query-counts
+.perf-audit/
 query-counts-out/
 
 # Generated query-dump artefacts; tooling lives in scripts/query-dumps/ but
@@ -94,3 +95,6 @@ query-counts-out/
 scripts/query-dumps/sqlite/
 scripts/query-dumps/d1/
 scripts/query-dumps/classification.*.md
+
+# perf audit harness output
+.perf-audit/

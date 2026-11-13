@@ -5,6 +5,8 @@ import { enUS } from "react-day-picker/locale/en-US";
 
 import { LOCALES } from "./locales.js";
 
+const DATE_LOCALE_BOOT_TIMEOUT_MS = 3000;
+
 const loadedDateLocales = new Map<string, DayPickerLocale>();
 const pendingDateLocales = new Map<string, Promise<DayPickerLocale>>();
 
@@ -58,6 +60,28 @@ export async function waitForDateLocale(code: string, timeoutMs: number): Promis
 	} finally {
 		clearTimeout(timer);
 	}
+}
+
+/**
+ * Whether the date locale for an admin locale has loaded. Date locales can't be
+ * serialized from the server, so the admin waits for this before showing
+ * calendars, which would otherwise render with the US week start and then
+ * shift. Turns true after a timeout so a stalled request can't block the admin.
+ */
+export function useDateLocaleReady(code: string): boolean {
+	const [ready, setReady] = React.useState(() => getLoadedDateLocale(code) !== undefined);
+	React.useEffect(() => {
+		if (ready) return;
+		let active = true;
+		void (async () => {
+			await waitForDateLocale(code, DATE_LOCALE_BOOT_TIMEOUT_MS);
+			if (active) setReady(true);
+		})();
+		return () => {
+			active = false;
+		};
+	}, [code, ready]);
+	return ready;
 }
 
 /**

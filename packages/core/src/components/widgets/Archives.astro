@@ -1,7 +1,7 @@
 ---
 import { localePathPrefix } from "../../i18n/resolve.js";
-import { getPublishedDates } from "../../query.js";
-import { groupEntriesByPublishedAt } from "../../widgets/archives.js";
+import { getPublishedDateBuckets } from "../../query.js";
+import { groupPublishedDateBuckets } from "../../widgets/archives.js";
 
 interface Props {
 	type?: "monthly" | "yearly";
@@ -12,13 +12,10 @@ const { type = "monthly", limit = 12 } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const locale = Astro.currentLocale;
-const { dates } = await getPublishedDates("posts", { locale });
+const { buckets } = await getPublishedDateBuckets("posts", { locale });
 const localePrefix = await localePathPrefix(locale);
 
-const archiveList = groupEntriesByPublishedAt(
-	dates.map((publishedAt) => ({ data: { publishedAt } })),
-	{ type, limit },
-);
+const archiveList = groupPublishedDateBuckets(buckets, { type, limit });
 ---
 
 <ul class="widget-archives">

@@ -5,13 +5,14 @@ import * as React from "react";
 
 import type { MediaFolder, MediaItem } from "../../lib/api/media.js";
 import {
-	fallbackToOriginalThumbnail,
 	formatFileSize,
 	getFileIcon,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
 	getMediaThumbnailUrl,
+	renditionWidthFor,
 } from "../../lib/media-utils.js";
+import { useRenditionFallback, useRenditionWidth } from "../../lib/use-media-rendition.js";
 import { cn } from "../../lib/utils.js";
 import type { MediaUploadJob } from "./useMediaUploadQueue.js";
 
@@ -61,14 +62,28 @@ export function MediaBrowserItem({
 	const hasVisualPreview = Boolean(item.url) && (isImage || Boolean(item.provider));
 	const needsDimensions = hasVisualPreview && (!item.width || !item.height);
 	const previewUrl = item.url ? getMediaPreviewUrl(item.url, item.contentHash) : "";
-	const imageUrl =
+	const [previewRef, renditionWidth] = useRenditionWidth<HTMLImageElement>({
+		fit: "cover",
+		sourceWidth: item.width,
+		sourceHeight: item.height,
+	});
+	const renditionUrl =
 		needsDimensions && onDimensionsLoaded
 			? previewUrl
-			: getMediaThumbnailUrl(item.url, item.mimeType, undefined, item.contentHash);
+			: renditionWidth
+				? getMediaThumbnailUrl(item.url, item.mimeType, renditionWidth, item.contentHash)
+				: undefined;
+	const [imageUrl, handleRenditionError] = useRenditionFallback(
+		renditionUrl,
+		previewUrl || undefined,
+	);
 
 	const preview = hasVisualPreview ? (
 		<img
+			ref={previewRef}
 			src={imageUrl}
+			loading="lazy"
+			decoding="async"
 			alt={selectable ? "" : item.alt || item.filename}
 			draggable={false}
 			className="emdash-media-transparency-grid h-full w-full object-cover"
@@ -80,7 +95,7 @@ export function MediaBrowserItem({
 					onDimensionsLoaded(image.naturalWidth, image.naturalHeight);
 				}
 			}}
-			onError={(event) => fallbackToOriginalThumbnail(event.currentTarget, previewUrl)}
+			onError={handleRenditionError}
 		/>
 	) : (
 		<div className="flex h-full w-full items-center justify-center bg-kumo-tint">
@@ -291,7 +306,15 @@ export function MediaSelectionTrayItem({
 			<div className="h-10 w-14 overflow-hidden rounded-md bg-kumo-tint">
 				{image ? (
 					<img
-						src={getMediaThumbnailUrl(item.url, item.mimeType, 80, item.contentHash)}
+						src={getMediaThumbnailUrl(
+							item.url,
+							item.mimeType,
+							renditionWidthFor(
+								{ width: 56, height: 40 },
+								{ fit: "cover", sourceWidth: item.width, sourceHeight: item.height },
+							),
+							item.contentHash,
+						)}
 						alt=""
 						className="emdash-media-transparency-grid h-full w-full object-cover"
 						style={{ objectPosition: getMediaObjectPosition(item) }}

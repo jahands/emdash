@@ -43,7 +43,12 @@ interface ManifestEnvelope {
 		version?: string;
 		timezone?: string;
 		staging?: boolean;
+		coEditing?: boolean;
 	};
+}
+
+function manifestRequest(): Request {
+	return new Request("http://localhost/_emdash/api/manifest");
 }
 
 function makeContext(
@@ -65,7 +70,7 @@ function makeContext(
 			: undefined,
 	};
 
-	return { locals } as unknown as APIContext;
+	return { locals, request: manifestRequest() } as unknown as APIContext;
 }
 
 describe("manifest route admin branding", () => {
@@ -88,6 +93,32 @@ describe("manifest route admin branding", () => {
 		expect(response.status).toBe(200);
 		const body = (await response.json()) as ManifestEnvelope;
 		expect(body.data.admin).toBeUndefined();
+	});
+
+	it("reports whether this host runs co-editing rooms", async () => {
+		const coEditing = async (rooms: unknown) => {
+			const locals = {
+				emdash: {
+					config: {},
+					rooms,
+					getManifest: async () => ({
+						version: "test",
+						hash: "test",
+						collections: {},
+						plugins: {},
+						taxonomies: [],
+					}),
+				},
+			};
+			const response = await getManifest({
+				locals,
+				request: manifestRequest(),
+			} as unknown as APIContext);
+			return ((await response.json()) as ManifestEnvelope).data.coEditing;
+		};
+
+		expect(await coEditing({ issueToken: () => null })).toBe(true);
+		expect(await coEditing(null)).toBe(false);
 	});
 
 	it("returns admin branding even when getManifest() resolves to a built manifest", async () => {
@@ -123,6 +154,7 @@ describe("manifest route admin branding", () => {
 						}),
 					},
 				},
+				request: manifestRequest(),
 			} as unknown as APIContext;
 
 			const response = await getManifest(context);
@@ -151,6 +183,7 @@ describe("manifest route admin branding", () => {
 						}),
 					},
 				},
+				request: manifestRequest(),
 			} as unknown as APIContext;
 			const staging = async () =>
 				((await (await getManifest(context)).json()) as ManifestEnvelope).data.staging;
@@ -179,6 +212,7 @@ describe("manifest route provider-managed names", () => {
 					}),
 				},
 			},
+			request: manifestRequest(),
 		} as unknown as APIContext;
 		const body = (await (await getManifest(context)).json()) as ManifestEnvelope;
 		return body.data.providerManagedName;
@@ -230,6 +264,7 @@ describeEachDialect("manifest route saved site logo", (dialect) => {
 					}),
 				},
 			},
+			request: manifestRequest(),
 		} as unknown as APIContext;
 	}
 

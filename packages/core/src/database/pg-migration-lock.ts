@@ -34,7 +34,7 @@ export const MIGRATION_LOCK_BUSY_MESSAGE = "EMDASH_MIGRATION_LOCK_BUSY";
  * blocking adapter, and using the same id keeps old and new builds mutually
  * exclusive on the same lock.
  */
-const KYSELY_PG_MIGRATION_LOCK_ID = BigInt("3853314791062309107");
+export const KYSELY_PG_MIGRATION_LOCK_ID = BigInt("3853314791062309107");
 
 /**
  * Extends the stock adapter so every capability flag and `instanceof` check

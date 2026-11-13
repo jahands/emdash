@@ -11,7 +11,7 @@ import * as React from "react";
 
 import { fetchSettings, updateSettings, type SiteSettings } from "../../lib/api";
 import { SaveButton } from "../SaveButton.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import { PendingSaveAction, SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
 
 function socialSettingsSnapshot(settings: Partial<SiteSettings>) {
 	return JSON.stringify({
@@ -91,7 +91,7 @@ export function SocialSettings() {
 
 	if (isLoading) {
 		return (
-			<SettingsFrame title={title} description={description}>
+			<SettingsFrame title={title} description={description} actions={<PendingSaveAction />}>
 				<div
 					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
 					role="status"

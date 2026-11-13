@@ -3,11 +3,19 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ImageFieldRenderer, type ImageFieldValue } from "../../src/components/ImageFieldRenderer";
 import { fetchMediaItem, type LocalMediaItem, type MediaUpdateInput } from "../../src/lib/api";
+import { ApiResponseError } from "../../src/lib/api/client.js";
+import { fetchMediaItemBatched } from "../../src/lib/api/media.js";
 import { render } from "../utils/render.tsx";
+import { shownFile } from "../utils/rendition.js";
 
 vi.mock("../../src/lib/api", async () => {
 	const actual = await vi.importActual("../../src/lib/api");
 	return { ...actual, fetchMediaItem: vi.fn() };
+});
+
+vi.mock("../../src/lib/api/media.js", async () => {
+	const actual = await vi.importActual("../../src/lib/api/media.js");
+	return { ...actual, fetchMediaItemBatched: vi.fn() };
 });
 
 vi.mock("../../src/components/MediaPickerModal", () => ({
@@ -179,7 +187,7 @@ const selectedImage: ImageFieldValue = {
 };
 
 beforeEach(() => {
-	vi.mocked(fetchMediaItem).mockResolvedValue({
+	const current = {
 		id: selectedImage.id,
 		filename: selectedImage.filename!,
 		mimeType: selectedImage.mimeType!,
@@ -192,7 +200,9 @@ beforeEach(() => {
 		createdAt: "2026-01-01T00:00:00.000Z",
 		authorId: "author-1",
 		folderId: null,
-	} as LocalMediaItem);
+	} as LocalMediaItem;
+	vi.mocked(fetchMediaItem).mockResolvedValue(current);
+	vi.mocked(fetchMediaItemBatched).mockResolvedValue(current);
 });
 
 describe("ImageFieldRenderer", () => {
@@ -220,14 +230,14 @@ describe("ImageFieldRenderer", () => {
 		expect(removeButton.element()).toHaveTextContent("Remove");
 
 		const image = screen.container.querySelector("img");
-		expect(image).toHaveAttribute("src", "/_emdash/api/media/file/featured-image.jpg");
+		await vi.waitFor(() =>
+			expect(shownFile(image)).toBe("/_emdash/api/media/file/featured-image.jpg"),
+		);
 		expect(image?.style.objectPosition).toBe("25% 75%");
 		expect(getComputedStyle(image!.parentElement!).aspectRatio).toBe("16 / 9");
 	});
 
 	it("previews a local image whose storage key contains slashes (#2871)", async () => {
-		// Keep the current-item refresh pending so the preview comes from the stored value.
-		vi.mocked(fetchMediaItem).mockReturnValue(new Promise(() => {}));
 		const screen = await render(
 			<ImageFieldRenderer
 				label="Featured image"
@@ -239,11 +249,13 @@ describe("ImageFieldRenderer", () => {
 
 		await expect.element(screen.getByText("notes-on-simplicity.jpg")).toBeVisible();
 		const image = screen.container.querySelector("img");
-		expect(image).toHaveAttribute("src", "/_emdash/api/media/file/2026/08/photo.jpg");
+		await vi.waitFor(() =>
+			expect(shownFile(image)).toBe("/_emdash/api/media/file/2026/08/photo.jpg"),
+		);
 	});
 
 	it("refreshes a featured local preview from the current media item", async () => {
-		vi.mocked(fetchMediaItem).mockResolvedValueOnce({
+		vi.mocked(fetchMediaItemBatched).mockResolvedValueOnce({
 			id: selectedImage.id,
 			filename: selectedImage.filename!,
 			mimeType: selectedImage.mimeType!,
@@ -267,23 +279,17 @@ describe("ImageFieldRenderer", () => {
 			/>,
 		);
 
+		await vi.waitFor(() => expect(fetchMediaItemBatched).toHaveBeenCalledWith("featured-image"));
 		await vi.waitFor(() =>
-			expect(fetchMediaItem).toHaveBeenCalledWith(
-				"featured-image",
-				expect.objectContaining({ signal: expect.any(AbortSignal) }),
+			expect(shownFile(screen.container.querySelector("img"))).toBe(
+				"/_emdash/api/media/file/featured-image.jpg?_emdash_media=sha256%3Acropped",
 			),
 		);
-		await expect
-			.element(screen.container.querySelector("img")!)
-			.toHaveAttribute(
-				"src",
-				"/_emdash/api/media/file/featured-image.jpg?_emdash_media=sha256%3Acropped",
-			);
 		await expect.element(screen.getByText("449 × 299 · image/jpeg")).toBeVisible();
 	});
 
 	it("refreshes a featured dark mode preview from the current media item", async () => {
-		vi.mocked(fetchMediaItem).mockImplementation(async (id) => {
+		vi.mocked(fetchMediaItemBatched).mockImplementation(async (id) => {
 			const dark = id === "dark-image";
 			return {
 				id,
@@ -320,31 +326,58 @@ describe("ImageFieldRenderer", () => {
 			/>,
 		);
 
+		await vi.waitFor(() => expect(fetchMediaItemBatched).toHaveBeenCalledWith("dark-image"));
 		await vi.waitFor(() =>
-			expect(fetchMediaItem).toHaveBeenCalledWith(
-				"dark-image",
-				expect.objectContaining({ signal: expect.any(AbortSignal) }),
+			expect(shownFile(screen.container.querySelectorAll("img")[1])).toBe(
+				"/_emdash/api/media/file/featured-dark.jpg?_emdash_media=sha256%3Adark-cropped",
 			),
 		);
-		await expect
-			.element(screen.container.querySelectorAll("img")[1]!)
-			.toHaveAttribute(
-				"src",
-				"/_emdash/api/media/file/featured-dark.jpg?_emdash_media=sha256%3Adark-cropped",
-			);
 	});
 
-	it("falls back cleanly when optional featured-image metadata is missing", async () => {
+	it("shows the original when the asset changes on a site whose renditions fail", async () => {
+		const original = "/_emdash/api/media/file/no-renditions/featured-image.jpg";
 		const screen = await render(
 			<ImageFieldRenderer
 				label="Featured image"
-				value={{ id: "legacy", src: "https://example.com/legacy.jpg" }}
+				value={{ ...selectedImage, meta: { storageKey: "no-renditions/featured-image.jpg" } }}
+				onChange={vi.fn()}
+				variant="featured"
+			/>,
+		);
+		await vi.waitFor(() =>
+			expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(original),
+		);
+
+		await screen.getByRole("button", { name: "Edit asset" }).click();
+		await screen.getByRole("button", { name: "Refresh original asset" }).click();
+
+		await vi.waitFor(() =>
+			expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(
+				`${original}?_emdash_media=sha256%3Areplaced-original`,
+			),
+		);
+		expect(screen.container).not.toHaveTextContent("Image not found");
+	});
+
+	it("falls back cleanly when optional featured-image metadata is missing", async () => {
+		vi.mocked(fetchMediaItemBatched).mockRejectedValue(
+			new ApiResponseError(404, "NOT_FOUND", "Media item not found"),
+		);
+		const screen = await render(
+			<ImageFieldRenderer
+				label="Featured image"
+				value={{ id: "legacy", src: "/_emdash/api/media/file/legacy.jpg" }}
 				onChange={vi.fn()}
 				variant="featured"
 			/>,
 		);
 
 		await expect.element(screen.getByText("Selected image")).toBeVisible();
+		await vi.waitFor(() =>
+			expect(shownFile(screen.container.querySelector("img"))).toBe(
+				"/_emdash/api/media/file/legacy.jpg",
+			),
+		);
 		expect(screen.container.textContent).not.toContain("×");
 		expect(screen.container.textContent).not.toContain("·");
 	});
@@ -363,7 +396,9 @@ describe("ImageFieldRenderer", () => {
 		);
 
 		const image = screen.container.querySelector("img");
-		expect(image).toHaveAttribute("src", "/_emdash/api/media/file/featured%3Fdraft%231.jpg");
+		await vi.waitFor(() =>
+			expect(shownFile(image)).toBe("/_emdash/api/media/file/featured%3Fdraft%231.jpg"),
+		);
 	});
 
 	it("copies metadata and the library caption when a replacement is selected", async () => {
@@ -460,15 +495,11 @@ describe("ImageFieldRenderer", () => {
 		const screen = await render(
 			<ImageFieldRenderer
 				label="Featured image"
-				value={selectedImage}
+				value={{ ...selectedImage, meta: { storageKey: "missing/featured-image.jpg" } }}
 				onChange={vi.fn()}
 				variant="featured"
 			/>,
 		);
-		const image = screen.container.querySelector("img");
-		expect(image).not.toBeNull();
-
-		image!.dispatchEvent(new Event("error"));
 
 		await expect.element(screen.getByText("Image not found")).toBeVisible();
 		await expect.element(screen.getByText("notes-on-simplicity.jpg")).toBeVisible();
@@ -585,7 +616,9 @@ describe("ImageFieldRenderer", () => {
 
 		await expect.element(screen.getByText("notes-on-simplicity-dark.jpg")).toBeVisible();
 		const images = screen.container.querySelectorAll("img");
-		expect(images[1]).toHaveAttribute("src", "/_emdash/api/media/file/dark-image.jpg");
+		await vi.waitFor(() =>
+			expect(shownFile(images[1])).toBe("/_emdash/api/media/file/dark-image.jpg"),
+		);
 
 		await screen.getByRole("button", { name: "Remove dark mode variant" }).click();
 		expect(onChange).toHaveBeenCalledWith(selectedImage);
@@ -800,7 +833,10 @@ describe("ImageFieldRenderer", () => {
 		const screen = await render(<Harness />);
 		const sources: string[] = [];
 		const observer = new MutationObserver(() => {
-			for (const image of screen.container.querySelectorAll("img")) sources.push(image.src);
+			for (const image of screen.container.querySelectorAll("img")) {
+				const source = shownFile(image);
+				if (source) sources.push(source);
+			}
 		});
 		observer.observe(screen.container, {
 			attributes: true,
@@ -850,7 +886,10 @@ describe("ImageFieldRenderer", () => {
 			"/_emdash/api/media/file/featured-image.jpg?_emdash_media=sha256%3Areplaced-original";
 		const sources: string[] = [];
 		const observer = new MutationObserver(() => {
-			for (const image of screen.container.querySelectorAll("img")) sources.push(image.src);
+			for (const image of screen.container.querySelectorAll("img")) {
+				const source = shownFile(image);
+				if (source) sources.push(source);
+			}
 		});
 		observer.observe(screen.container, {
 			attributes: true,

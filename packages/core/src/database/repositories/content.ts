@@ -7,6 +7,8 @@ import { normalizeExplicitDatetime } from "../../datetime-normalization.js";
 import { getLocaleCandidates } from "../../i18n/config.js";
 import { canonicalLocaleColumn, localeMatches, localeOrder } from "../../i18n/query.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
+import { notifyRoom } from "../../rooms/notifications.js";
+import type { OutsideValue } from "../../rooms/types.js";
 import { isIndexableFieldType, isStoragelessFieldRow, type FieldType } from "../../schema/types.js";
 import { buildFtsPrefixMatch, buildSlugGlobPrefix } from "../../search/match.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
@@ -17,7 +19,12 @@ import { executeAtomicBatchIfSupported, isPostgres } from "../dialect-helpers.js
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
 import { validateIdentifier } from "../validate.js";
-import { createRevisionId, RevisionRepository, startingRevisionId } from "./revision.js";
+import {
+	createRevisionId,
+	RevisionRepository,
+	startingRevisionId,
+	type Revision,
+} from "./revision.js";
 import type {
 	CreateContentInput,
 	UpdateContentInput,
@@ -74,6 +81,14 @@ type ResolvedFieldFilter =
 			kind: "range";
 			bounds: Partial<Record<"gt" | "gte" | "lt" | "lte", NormalizedFilterScalar>>;
 	  };
+
+/** The values outside a room's document that an update writes. */
+function outsideValuesWritten(input: UpdateContentInput): OutsideValue[] {
+	const outside: OutsideValue[] = [];
+	if (input.authorId !== undefined) outside.push("author");
+	if (input.publishedAt !== undefined) outside.push("publishedAt");
+	return outside;
+}
 
 function nullableColumnMatch(column: string, value: string | null): ReturnType<typeof sql> {
 	validateIdentifier(column, "content column");
@@ -337,6 +352,43 @@ export async function findTypesWithDueContent(
 	}
 
 	return due;
+}
+
+/**
+ * Earliest `scheduled_at` across `types` that is after `after` and no later
+ * than `until`, or `null` when nothing is scheduled in that window.
+ */
+export async function findNextScheduledAt(
+	db: Kysely<Database>,
+	types: string[],
+	after: Date,
+	until: Date,
+): Promise<Date | null> {
+	const from = after.toISOString();
+	const to = until.toISOString();
+	let next: Date | null = null;
+
+	// Each subquery binds two values, so halve the chunk to stay within D1's bind limit.
+	for (const chunk of chunks(types, Math.floor(SQL_BATCH_SIZE / 2))) {
+		const columns = chunk.map(
+			(type, index) => sql`(
+				SELECT MIN(scheduled_at) FROM ${sql.ref(getTableName(type))}
+				WHERE scheduled_at > ${from} AND scheduled_at <= ${to} AND deleted_at IS NULL
+			) AS ${sql.ref(`next_${index}`)}`,
+		);
+		const result = await sql<Record<string, unknown>>`SELECT ${sql.join(columns)}`.execute(db);
+		const row = result.rows[0];
+		if (!row) throw new Error("Upcoming-content check returned no row");
+		for (const index of chunk.keys()) {
+			const value = row[`next_${index}`];
+			const scheduledAt =
+				value instanceof Date ? value : typeof value === "string" ? new Date(value) : null;
+			if (!scheduledAt || Number.isNaN(scheduledAt.getTime())) continue;
+			if (!next || scheduledAt < next) next = scheduledAt;
+		}
+	}
+
+	return next;
 }
 
 function assertPageOffset(offset: number | undefined, cursor: string | undefined): void {
@@ -1014,22 +1066,11 @@ export class ContentRepository {
 				);
 			} else {
 				const { orderValue, id: cursorId } = decodeCursor(options.cursor);
-
-				if (safeOrderDirection === "DESC") {
-					query = query.where((eb) =>
-						eb.or([
-							eb(dbField as any, "<", orderValue),
-							eb.and([eb(dbField as any, "=", orderValue), eb("id", "<", cursorId)]),
-						]),
-					);
-				} else {
-					query = query.where((eb) =>
-						eb.or([
-							eb(dbField as any, ">", orderValue),
-							eb.and([eb(dbField as any, "=", orderValue), eb("id", ">", cursorId)]),
-						]),
-					);
-				}
+				const cmp = safeOrderDirection === "ASC" ? sql.raw(">") : sql.raw("<");
+				// The row value, unlike the equivalent OR, is an index bound on Postgres.
+				query = query.where(
+					sql<boolean>`(${sql.ref(dbField)}, ${sql.ref("id")}) ${cmp} (${orderValue}, ${cursorId})`,
+				);
 			}
 		}
 
@@ -1185,6 +1226,9 @@ export class ContentRepository {
 		}
 
 		if (hasColumnWrites) invalidateCollectionCache(type);
+		if (result.numUpdatedRows > 0n) {
+			notifyRoom({ collection: type, id }, outsideValuesWritten(input));
+		}
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
@@ -1295,6 +1339,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
+		notifyRoom({ collection: type, id });
 		const item = await this.findById(type, id);
 		if (!item) throw new Error("Content not found");
 
@@ -1368,6 +1413,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
+		notifyRoom({ collection: type, id });
 		await new RevisionRepository(this.db, this.datetimeContexts).queuePruning(type, id, revisionId);
 		return revisionId;
 	}
@@ -1591,6 +1637,7 @@ export class ContentRepository {
 
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed && liveMetadataChanged) invalidateCollectionCache(type);
+		if (changed) notifyRoom({ collection: type, id }, outsideValuesWritten(input));
 		return changed;
 	}
 
@@ -1744,7 +1791,10 @@ export class ContentRepository {
 				throw error;
 			}
 
-			if (synced) return true;
+			if (synced) {
+				notifyRoom({ collection: type, id: current.id });
+				return true;
+			}
 			await cleanUp();
 			sibling = await this.findByIdIncludingTrashed(type, current.id);
 		}
@@ -1770,6 +1820,7 @@ export class ContentRepository {
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed) {
 			invalidateCollectionCache(type);
+			notifyRoom({ collection: type, id });
 		}
 		return changed;
 	}
@@ -1811,6 +1862,7 @@ export class ContentRepository {
 		if (!restored) throw new ContentMutationConflictError("Content changed while restoring");
 
 		invalidateCollectionCache(type);
+		notifyRoom({ collection: type, id: existing.id });
 		return this.mapRow(type, restored);
 	}
 
@@ -1837,7 +1889,10 @@ export class ContentRepository {
 		`.execute(this.db);
 
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
-		if (changed) invalidateCollectionCache(type);
+		if (changed) {
+			invalidateCollectionCache(type);
+			notifyRoom({ collection: type, id });
+		}
 		return changed;
 	}
 
@@ -2209,26 +2264,35 @@ export class ContentRepository {
 		const tableName = getTableName(type);
 		const nowIso = now.toISOString();
 
-		const result = await this.db
-			.selectFrom(tableName as keyof Database)
-			.select((eb) => [
-				eb.fn.count("id").as("total"),
-				eb.fn.sum(eb.case().when("status", "=", "published").then(1).else(0).end()).as("published"),
-				eb.fn.sum(eb.case().when("status", "=", "draft").then(1).else(0).end()).as("draft"),
-				sql<number>`SUM(CASE WHEN scheduled_at IS NOT NULL THEN 1 ELSE 0 END)`.as("scheduled"),
-				sql<number>`SUM(CASE WHEN scheduled_at IS NOT NULL AND scheduled_at <= ${nowIso} THEN 1 ELSE 0 END)`.as(
-					"overdue_scheduled",
-				),
-			])
-			.where("deleted_at" as never, "is", null)
-			.executeTakeFirst();
+		// Counting per status reads only the (deleted_at, status) index, and the
+		// scheduled counts only the partial (deleted_at, scheduled_at) index; one
+		// aggregate over every live row reads the table.
+		const table = sql.ref(tableName);
+		const { rows } = await sql<{
+			status: string;
+			count: number | string;
+			scheduled: number | string;
+			overdue_scheduled: number | string;
+		}>`
+			SELECT status, COUNT(*) AS count,
+				(SELECT COUNT(*) FROM ${table}
+					WHERE deleted_at IS NULL AND scheduled_at IS NOT NULL) AS scheduled,
+				(SELECT COUNT(*) FROM ${table}
+					WHERE deleted_at IS NULL AND scheduled_at IS NOT NULL AND scheduled_at <= ${nowIso}
+				) AS overdue_scheduled
+			FROM ${table}
+			WHERE deleted_at IS NULL
+			GROUP BY status
+		`.execute(this.db);
 
+		const countOf = (status: string) =>
+			Number(rows.find((row) => row.status === status)?.count ?? 0);
 		return {
-			total: Number(result?.total || 0),
-			published: Number(result?.published || 0),
-			draft: Number(result?.draft || 0),
-			scheduled: Number(result?.scheduled || 0),
-			overdueScheduled: Number(result?.overdue_scheduled || 0),
+			total: rows.reduce((sum, row) => sum + Number(row.count), 0),
+			published: countOf("published"),
+			draft: countOf("draft"),
+			scheduled: Number(rows[0]?.scheduled ?? 0),
+			overdueScheduled: Number(rows[0]?.overdue_scheduled ?? 0),
 		};
 	}
 
@@ -2282,6 +2346,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
+		notifyRoom({ collection: type, id });
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
@@ -2333,6 +2398,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
+		if ((result.numAffectedRows ?? 0n) > 0n) notifyRoom({ collection: type, id });
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
@@ -2600,11 +2666,13 @@ export class ContentRepository {
 		requireSlug = true,
 		expectedRevision?: ContentRevisionPrecondition,
 		currentTime: Date = new Date(),
+		preloaded?: { existing: ContentItem; draftRevision?: Revision | null },
 	): Promise<ContentItem> {
 		const tableName = getTableName(type);
 		const now = currentTime.toISOString();
 
-		const existing = await this.findById(type, id);
+		const existing =
+			preloaded?.existing.id === id ? preloaded.existing : await this.findById(type, id);
 		if (!existing) {
 			throw new EmDashValidationError("Content item not found");
 		}
@@ -2702,6 +2770,7 @@ export class ContentRepository {
 				}
 
 				invalidateCollectionCache(type);
+				notifyRoom({ collection: type, id }, ["publishedAt"]);
 				const updated = await this.findById(type, id);
 				if (!updated) throw new Error("Content not found");
 				return updated;
@@ -2738,7 +2807,11 @@ export class ContentRepository {
 				provisionalRevisionId = revision.id;
 			}
 
-			const revision = await revisionRepo.findById(revisionToPublish);
+			const preloadedRevision = preloaded?.draftRevision;
+			const revision =
+				preloadedRevision && preloadedRevision.id === revisionToPublish
+					? preloadedRevision
+					: await revisionRepo.findById(revisionToPublish);
 			if (!revision || revision.collection !== type || revision.entryId !== id) {
 				throw new EmDashValidationError("Revision does not belong to the specified content item");
 			}
@@ -2784,8 +2857,9 @@ export class ContentRepository {
 				? sql`AND scheduled_at IS NOT NULL AND scheduled_at <= ${now}`
 				: sql``;
 			let promoted = false;
+			let updated: ContentItem | null = null;
 			try {
-				const result = await sql`
+				const result = await sql<Record<string, unknown>>`
 					UPDATE ${sql.ref(tableName)}
 					SET ${sql.join(assignments, sql`, `)}
 					WHERE id = ${id}
@@ -2803,8 +2877,11 @@ export class ContentRepository {
 						AND revisions.collection = ${type}
 						AND revisions.entry_id = ${id}
 					)
+					RETURNING *
 				`.execute(this.db);
-				promoted = (result.numAffectedRows ?? 0n) > 0n;
+				const row = result.rows[0];
+				if (row) updated = this.mapRow(type, row);
+				promoted = updated !== null;
 			} catch (error) {
 				if (isConfirmedStatementFailure(error)) throw error;
 				let observed: ContentItem | null;
@@ -2842,7 +2919,8 @@ export class ContentRepository {
 			}
 
 			invalidateCollectionCache(type);
-			const updated = await this.findById(type, id);
+			notifyRoom({ collection: type, id }, ["publishedAt"]);
+			updated ??= await this.findById(type, id);
 			if (!updated) {
 				throw new Error("Content not found");
 			}
@@ -2927,6 +3005,7 @@ export class ContentRepository {
 			if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
 
 			invalidateCollectionCache(type);
+			notifyRoom({ collection: type, id });
 			const updated = await this.findById(type, id);
 			if (!updated) throw new Error("Content not found");
 			return updated;
@@ -2983,8 +3062,22 @@ export class ContentRepository {
 		revisionId: string,
 		expected: Pick<ContentItem, "version" | "liveRevisionId" | "draftRevisionId">,
 	): Promise<boolean> {
+		return (await this.stageDraftRevision(type, id, revisionId, expected)) !== null;
+	}
+
+	/**
+	 * `replaceDraftRevision`, returning the row as it stands after the update, or null when the
+	 * entry no longer matches `expected`. Scheduling moves `updatedAt` without bumping `version`,
+	 * so the entry's `_rev` can't be derived from `expected`.
+	 */
+	async stageDraftRevision(
+		type: string,
+		id: string,
+		revisionId: string,
+		expected: Pick<ContentItem, "version" | "liveRevisionId" | "draftRevisionId">,
+	): Promise<ContentItem | null> {
 		const tableName = getTableName(type);
-		const result = await sql`
+		const result = await sql<Record<string, unknown>>`
 			UPDATE ${sql.ref(tableName)}
 			SET draft_revision_id = ${revisionId},
 				version = version + 1
@@ -2999,8 +3092,39 @@ export class ContentRepository {
 				AND revisions.collection = ${type}
 				AND revisions.entry_id = ${id}
 			)
+			RETURNING *
 		`.execute(this.db);
-		return (result.numAffectedRows ?? 0n) > 0n;
+		const row = result.rows[0];
+		if (!row) return null;
+		notifyRoom({ collection: type, id });
+		return this.mapRow(type, row);
+	}
+
+	/**
+	 * Marks the entry's draft revision kept if it is an autosave and the entry still has
+	 * `expected`'s `version` and `updatedAt`, in one statement. Changes neither. Resolves to
+	 * whether a revision was marked.
+	 */
+	async markDraftRevisionKept(
+		type: string,
+		id: string,
+		expected: Pick<ContentItem, "version" | "updatedAt">,
+	): Promise<boolean> {
+		const tableName = getTableName(type);
+		const result = await sql<{ id: string }>`
+			UPDATE revisions
+			SET kind = NULL
+			WHERE kind = 'autosave'
+			AND id = (
+				SELECT draft_revision_id FROM ${sql.ref(tableName)}
+				WHERE id = ${id}
+				AND deleted_at IS NULL
+				AND version = ${expected.version}
+				AND updated_at = ${expected.updatedAt}
+			)
+			RETURNING id
+		`.execute(this.db);
+		return result.rows.length > 0;
 	}
 
 	/**
@@ -3044,6 +3168,7 @@ export class ContentRepository {
 			AND ${nullableColumnMatch("scheduled_at", existing.scheduledAt)}
 		`.execute(this.db);
 		if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
+		notifyRoom({ collection: type, id });
 
 		const updated = await this.findById(type, id);
 		if (!updated) {

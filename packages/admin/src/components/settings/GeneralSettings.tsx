@@ -39,7 +39,7 @@ import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { SaveButton } from "../SaveButton.js";
 import { ChangeDomainDialog } from "./ChangeDomainDialog.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import { PendingSaveAction, SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
 
 const ROLE_ADMIN = 50;
 
@@ -153,15 +153,15 @@ export function GeneralSettings() {
 		queryFn: fetchSettings,
 		staleTime: Infinity,
 	});
-	const { data: siteDomain } = useQuery({
+	const { data: siteDomain, isPending: siteDomainPending } = useQuery({
 		queryKey: ["site-domain"],
 		queryFn: fetchSiteDomain,
 	});
-	const { data: manifest } = useQuery({
+	const { data: manifest, isPending: manifestPending } = useQuery({
 		queryKey: ["manifest"],
 		queryFn: fetchManifest,
 	});
-	const { data: emailSettings } = useQuery({
+	const { data: emailSettings, isPending: emailSettingsPending } = useQuery({
 		queryKey: ["email-settings"],
 		queryFn: fetchEmailSettings,
 	});
@@ -307,9 +307,9 @@ export function GeneralSettings() {
 	const title = t`General Settings`;
 	const description = t`Site identity, logo, favicon, and reading preferences`;
 
-	if (isLoading) {
+	if (isLoading || siteDomainPending || manifestPending || emailSettingsPending) {
 		return (
-			<SettingsFrame title={title} description={description}>
+			<SettingsFrame title={title} description={description} actions={<PendingSaveAction />}>
 				<div
 					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
 					role="status"

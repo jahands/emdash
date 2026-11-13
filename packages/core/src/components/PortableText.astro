@@ -18,6 +18,7 @@ import {
 	buildPortableTextListTree,
 	clonePortableTextValue,
 } from "../content/portable-text-lists.js";
+import { PORTABLE_TEXT_IMAGE_SIZES } from "../media/responsive.js";
 import { getEditMeta } from "../query.js";
 // @ts-ignore - virtual module
 import { pluginBlockComponents } from "virtual:emdash/block-components";
@@ -29,6 +30,13 @@ export interface Props extends Omit<PortableTextProps, "value"> {
 	value: PortableTextProps["value"] | null | undefined;
 	/** Initial label for read-only inline tables; defaults to English. */
 	tablePlaceholder?: string;
+	/**
+	 * `sizes` for image blocks shown at the full width of the text column,
+	 * e.g. `"(min-width: 760px) 680px, calc(100vw - 2rem)"`. Without it, images
+	 * are sized against the viewport in browsers that don't support
+	 * `sizes="auto"`.
+	 */
+	imageSizes?: string;
 }
 
 const {
@@ -36,6 +44,7 @@ const {
 	components: userComponents,
 	listNestingMode = "html",
 	tablePlaceholder,
+	imageSizes,
 	...rest
 } = Astro.props;
 
@@ -59,6 +68,13 @@ if (!editMeta) {
 		grouped as Array<Record<string, unknown>>,
 		listNestingMode,
 	) as typeof value;
+	if (imageSizes && Array.isArray(renderValue)) {
+		for (const node of renderValue as unknown[]) {
+			if (node && typeof node === "object" && (node as { _type?: unknown })._type === "image") {
+				Reflect.set(node, PORTABLE_TEXT_IMAGE_SIZES, imageSizes);
+			}
+		}
+	}
 }
 ---
 

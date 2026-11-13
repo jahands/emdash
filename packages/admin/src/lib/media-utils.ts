@@ -258,6 +258,69 @@ export function getMediaThumbnailUrl(
 	return `/_image?${params.toString()}`;
 }
 
+const IMAGE_MIME_TYPES_BY_EXTENSION: Record<string, string> = {
+	avif: "image/avif",
+	gif: "image/gif",
+	jpeg: "image/jpeg",
+	jpg: "image/jpeg",
+	png: "image/png",
+	svg: "image/svg+xml",
+	webp: "image/webp",
+};
+
+const URL_QUERY_OR_HASH = /[?#]/;
+
+/** The image MIME type a file URL's extension names, or undefined when it names none. */
+export function imageMimeTypeFromUrl(url: string): string | undefined {
+	const path = url.split(URL_QUERY_OR_HASH, 1)[0] ?? "";
+	const dot = path.lastIndexOf(".");
+	return dot > path.lastIndexOf("/")
+		? IMAGE_MIME_TYPES_BY_EXTENSION[path.slice(dot + 1).toLowerCase()]
+		: undefined;
+}
+
+/**
+ * Rounds a width up to the step for its size, so boxes of nearly the same
+ * size share one cached rendition while none is much wider than it needs.
+ */
+function renditionStep(width: number): number {
+	const step = width <= 256 ? 32 : width <= 1024 ? 64 : width <= 2048 ? 128 : 256;
+	return Math.min(Math.ceil(width / step) * step, MAX_RENDITION_WIDTH);
+}
+const MAX_RENDITION_WIDTH = 3840;
+const MAX_RENDITION_DPR = 3;
+
+/**
+ * The width to request a rendition at, in image pixels, so it fills a box of
+ * `box` CSS pixels on this screen, rounded up to a shared step, and never
+ * wider than the source. A picture of another shape than its box is
+ * cropped to the box under `cover`, so it needs more width than the box, and
+ * letterboxed in it under `contain`, so it needs less.
+ */
+export function renditionWidthFor(
+	box: { width: number; height: number },
+	options: {
+		fit?: "cover" | "contain";
+		sourceWidth?: number | null;
+		sourceHeight?: number | null;
+		dpr?: number;
+	} = {},
+): number {
+	const { fit = "contain", sourceWidth, sourceHeight } = options;
+	let cssWidth = box.width;
+	if (sourceWidth && sourceHeight && box.height > 0) {
+		const widthAtBoxHeight = (box.height * sourceWidth) / sourceHeight;
+		cssWidth =
+			fit === "cover" ? Math.max(cssWidth, widthAtBoxHeight) : Math.min(cssWidth, widthAtBoxHeight);
+	}
+	const devicePixelRatio =
+		options.dpr ?? (typeof window === "undefined" ? 1 : window.devicePixelRatio || 1);
+	const dpr = Math.min(Math.max(devicePixelRatio, 1), MAX_RENDITION_DPR);
+	const needed = Math.ceil(cssWidth * dpr);
+	const width = renditionStep(needed);
+	return sourceWidth && sourceWidth > 0 ? Math.min(width, sourceWidth) : width;
+}
+
 /**
  * `onError` fallback for grid thumbnails: if a `/_image` rendition fails to
  * load (e.g. the endpoint rejects the request on a site whose configured origin

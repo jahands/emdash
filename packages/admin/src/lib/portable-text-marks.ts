@@ -1,3 +1,5 @@
+import { isFrozenJson } from "./frozen-json.js";
+
 const SUPPORTED_PORTABLE_TEXT_DECORATORS = new Set([
 	"strong",
 	"em",
@@ -100,11 +102,23 @@ export class UnsupportedPortableTextMarksError extends Error {
 	}
 }
 
+const unsupportedMarksByBlock = new WeakMap<object, string[]>();
+
+function unsupportedMarksInBlock(block: UnknownRecord): string[] {
+	const cached = unsupportedMarksByBlock.get(block);
+	if (cached) return cached;
+	const unsupported = new Set<string>();
+	collectPortableTextMarks(block, new Map(), unsupported);
+	const marks = [...unsupported];
+	if (isFrozenJson(block)) unsupportedMarksByBlock.set(block, marks);
+	return marks;
+}
+
 export function findUnsupportedPortableTextMarks(blocks: unknown[]): string[] {
 	const unsupported = new Set<string>();
 	for (const block of blocks) {
 		if (isRecord(block) && (block._type === "block" || block._type === "table")) {
-			collectPortableTextMarks(block, new Map(), unsupported);
+			for (const mark of unsupportedMarksInBlock(block)) unsupported.add(mark);
 		}
 	}
 	return [...unsupported].toSorted();
@@ -115,6 +129,13 @@ export function assertPortableTextMarksSupported(blocks: unknown[]): void {
 	if (unsupported.length > 0) {
 		throw new UnsupportedPortableTextMarksError(unsupported);
 	}
+}
+
+/** The unsupported marks in one ProseMirror node, as JSON, and its descendants. */
+export function findUnsupportedProseMirrorMarks(node: unknown): string[] {
+	const unsupported = new Set<string>();
+	collectProseMirrorMarks(node, unsupported);
+	return [...unsupported];
 }
 
 export function assertProseMirrorMarksSupported(document: unknown): void {

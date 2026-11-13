@@ -20,6 +20,10 @@ import { z } from "zod";
 
 import { NodeSqliteCompatDatabase as Database } from "#node-sqlite";
 
+import {
+	getBylineFieldDefs,
+	resetBylineFieldDefsCacheForTests,
+} from "../../../src/bylines/field-defs-cache.js";
 import { DEFAULT_COMMENT_MODERATOR_PLUGIN_ID } from "../../../src/comments/moderator.js";
 import { LockingSqliteAdapter } from "../../../src/database/migration-lock.js";
 import {
@@ -42,8 +46,11 @@ import type { RuntimeDependencies } from "../../../src/emdash-runtime.js";
 import { getI18nConfig, setI18nConfig } from "../../../src/i18n/config.js";
 import { definePlugin } from "../../../src/plugins/define-plugin.js";
 import type { ContentBeforeSaveHandler } from "../../../src/plugins/types.js";
-import { runWithContext } from "../../../src/request-context.js";
+import { getRequestContext, runWithContext } from "../../../src/request-context.js";
+import type { RuntimeRoomHost } from "../../../src/rooms/types.js";
+import { BylineSchemaRegistry } from "../../../src/schema/byline-registry.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
+import { getSiteSettings, invalidateSiteSettingsSnapshot } from "../../../src/settings/index.js";
 
 class LockingSqliteDialect extends SqliteDialect {
 	override createAdapter(): DialectAdapter {
@@ -138,18 +145,12 @@ describe("EmDashRuntime.create — cold boot", () => {
 		try {
 			// Every phase records its own entry exactly once.
 			const names = timings.map((t) => t.name);
-			for (const expected of [
-				"rt.db",
-				"rt.seedcheck",
-				"rt.plugins",
-				"rt.site",
-				"rt.hookselections",
-				"rt.sandbox",
-				"rt.hooks",
-				"rt.cron",
-			]) {
+			for (const expected of ["rt.db", "rt.sandbox", "rt.hooks", "rt.cron"]) {
 				expect(names.filter((n) => n === expected)).toHaveLength(1);
 			}
+			// The database starts empty: the cold-start reads fail before the
+			// migrations and run again after them.
+			expect(names.filter((n) => n === "rt.reads")).toHaveLength(2);
 			// rt.market / rt.registry are not configured — no phantom phases.
 			expect(names).not.toContain("rt.market");
 			expect(names).not.toContain("rt.registry");
@@ -177,6 +178,39 @@ describe("EmDashRuntime.create — cold boot", () => {
 		} finally {
 			await runtime.stopCron();
 		}
+	});
+
+	it("builds the room host with the new runtime, drops idle rooms hourly and shuts them down", async () => {
+		const host = {
+			issueToken: vi.fn(),
+			isOpen: vi.fn(),
+			save: vi.fn(),
+			release: vi.fn(),
+			notify: vi.fn(),
+			forgetTokens: vi.fn(),
+			expireIdle: vi.fn(async () => {}),
+			shutdown: vi.fn(async () => {}),
+			activate: vi.fn(),
+		} satisfies RuntimeRoomHost;
+		const deps = createDeps();
+		deps.createRoomHost = vi.fn(() => host);
+		let now = new Date("2026-11-04T12:30:00Z");
+		deps.now = () => now;
+		const runtime = await EmDashRuntime.create(deps);
+		try {
+			expect(deps.createRoomHost).toHaveBeenCalledWith(runtime);
+			expect(runtime.rooms).toBe(host);
+			expect(host.activate).not.toHaveBeenCalled();
+
+			await runtime.runScheduledTasks();
+			expect(host.expireIdle).not.toHaveBeenCalled();
+			now = new Date("2026-11-04T13:00:00Z");
+			await runtime.runScheduledTasks();
+			expect(host.expireIdle).toHaveBeenCalledOnce();
+		} finally {
+			await runtime.shutdown();
+		}
+		expect(host.shutdown).toHaveBeenCalledOnce();
 	});
 
 	it("creates a runtime without a timings array (backwards compatible)", async () => {
@@ -668,6 +702,10 @@ describe("EmDashRuntime.create — cold boot", () => {
 	// migration round trip on the singleton.
 	describe("migration check folded into the cold-start batch", () => {
 		const MIGRATION_COUNT_SQL = /from "_emdash_migrations"/i;
+		// The cold-start reads carry the count in the same statement; this is a
+		// count read on its own.
+		const standaloneCount = (statement: string) =>
+			MIGRATION_COUNT_SQL.test(statement) && !statement.includes('"_plugin_state"');
 
 		// One in-memory database behind both connections. create() destroys the
 		// coalescing connection, which would close it, so close is stubbed.
@@ -718,10 +756,10 @@ describe("EmDashRuntime.create — cold boot", () => {
 			);
 			try {
 				expect(coalescingSql.filter((s) => MIGRATION_COUNT_SQL.test(s))).toHaveLength(1);
+				expect(coalescingSql.filter(standaloneCount)).toHaveLength(0);
 				expect(singletonSql.filter((s) => MIGRATION_COUNT_SQL.test(s))).toHaveLength(0);
-				// The cold-start reads ran once, in the batch with the count.
-				expect(timings.filter((t) => t.name === "rt.plugins")).toHaveLength(1);
-				expect(timings.filter((t) => t.name === "rt.seedcheck")).toHaveLength(1);
+				// The cold-start reads ran once, in the statement with the count.
+				expect(timings.filter((t) => t.name === "rt.reads")).toHaveLength(1);
 			} finally {
 				await runtime.stopCron();
 			}
@@ -745,8 +783,7 @@ describe("EmDashRuntime.create — cold boot", () => {
 				expect(Number(applied.rows[0]?.count)).toBe(MIGRATION_NAMES.length);
 				// The first pass ran before the tables existed; the reads ran again
 				// once the policy had migrated.
-				expect(timings.filter((t) => t.name === "rt.plugins")).toHaveLength(2);
-				expect(timings.filter((t) => t.name === "rt.seedcheck")).toHaveLength(2);
+				expect(timings.filter((t) => t.name === "rt.reads")).toHaveLength(2);
 			} finally {
 				await runtime.stopCron();
 			}
@@ -782,7 +819,9 @@ describe("EmDashRuntime.create — cold boot", () => {
 			);
 			try {
 				expect(singletonSql.filter((s) => MIGRATION_COUNT_SQL.test(s))).toHaveLength(1);
-				expect(timings.filter((t) => t.name === "rt.plugins")).toHaveLength(2);
+				// Both folded reads failed on the count, so the separate reads ran.
+				expect(timings.filter((t) => t.name === "rt.reads")).toHaveLength(2);
+				expect(timings.filter((t) => t.name === "rt.plugins")).toHaveLength(1);
 			} finally {
 				await runtime.stopCron();
 			}
@@ -803,8 +842,99 @@ describe("EmDashRuntime.create — cold boot", () => {
 					new SqliteDialect({ database: recordingHandle(sqlite, coalescingSql) }),
 			});
 			try {
-				expect(singletonSql.some((s) => MIGRATION_COUNT_SQL.test(s))).toBe(true);
-				expect(coalescingSql.some((s) => MIGRATION_COUNT_SQL.test(s))).toBe(false);
+				const exactStatus = /^select name from "_emdash_migrations"/i;
+				expect(singletonSql.some((s) => exactStatus.test(s.trim()))).toBe(true);
+				expect(coalescingSql.some((s) => exactStatus.test(s.trim()))).toBe(false);
+			} finally {
+				await runtime.stopCron();
+			}
+		});
+
+		it("reads a migrated database in one statement without a coalescing connection", async () => {
+			const sqlite = sharedDatabase();
+			const setup = new Kysely<EmDashDatabase>({
+				dialect: new SqliteDialect({ database: sqlite }),
+			});
+			await runMigrations(setup);
+			await new OptionsRepository(setup).set("emdash:setup_complete", true);
+			// Recorded, so its first-install lifecycle doesn't run.
+			await setup
+				.insertInto("_plugin_state")
+				.values({
+					plugin_id: "test-exclusive-provider",
+					version: "1.0.0",
+					status: "active",
+					source: "config",
+				})
+				.execute();
+			const singletonSql: string[] = [];
+			const runtime = await EmDashRuntime.create({
+				...createDeps(),
+				createDialect: () => new SqliteDialect({ database: recordingHandle(sqlite, singletonSql) }),
+			});
+			try {
+				const coldStartReads = singletonSql.filter((s) =>
+					/"_plugin_state"|"_emdash_collections"|"_emdash_migrations"|from "?options"?/i.test(s),
+				);
+				expect(coldStartReads).toHaveLength(1);
+				expect(singletonSql.filter((s) => s.includes("_emdash_cron_tasks"))).toEqual([]);
+			} finally {
+				await runtime.stopCron();
+			}
+		});
+
+		it("primes site settings and byline field definitions from the cold-start read", async () => {
+			const sqlite = sharedDatabase();
+			const setup = new Kysely<EmDashDatabase>({
+				dialect: new SqliteDialect({ database: sqlite }),
+			});
+			await runMigrations(setup);
+			await new OptionsRepository(setup).set("site:title", "Primed");
+			await new BylineSchemaRegistry(setup).createField({
+				slug: "twitter",
+				label: "Twitter",
+				type: "url",
+			});
+			invalidateSiteSettingsSnapshot();
+			resetBylineFieldDefsCacheForTests();
+
+			const singletonSql: string[] = [];
+			const runtime = await EmDashRuntime.create({
+				...createDeps(),
+				createDialect: () => new SqliteDialect({ database: recordingHandle(sqlite, singletonSql) }),
+			});
+			try {
+				singletonSql.length = 0;
+				const [settings, fields] = await runWithContext({ editMode: false }, () =>
+					Promise.all([getSiteSettings(), getBylineFieldDefs(runtime.db)]),
+				);
+				expect(settings.title).toBe("Primed");
+				expect(fields.map((field) => field.slug)).toEqual(["twitter"]);
+				expect(singletonSql.filter((s) => /like|_emdash_byline_fields/i.test(s))).toEqual([]);
+			} finally {
+				await runtime.stopCron();
+				invalidateSiteSettingsSnapshot();
+				resetBylineFieldDefsCacheForTests();
+			}
+		});
+
+		it("starts the scheduler outside the request that created the runtime", async () => {
+			let startedIn: unknown = "not started";
+			const runtime = await runWithContext({ editMode: false }, () =>
+				EmDashRuntime.create({
+					...createDeps(),
+					createScheduler: () => ({
+						start: () => {
+							startedIn = getRequestContext();
+						},
+						stop: () => {},
+						reschedule: () => {},
+						setSystemCleanup: () => {},
+					}),
+				}),
+			);
+			try {
+				expect(startedIn).toBeUndefined();
 			} finally {
 				await runtime.stopCron();
 			}
@@ -858,9 +988,9 @@ describe("EmDashRuntime.create — cold boot", () => {
 			const timings: Array<{ name: string; dur: number; desc?: string }> = [];
 			const second = await EmDashRuntime.create(deps, timings);
 			try {
-				expect(coalescingSql.filter((s) => MIGRATION_COUNT_SQL.test(s))).toHaveLength(0);
+				expect(coalescingSql.filter(standaloneCount)).toHaveLength(0);
 				// The cold-start reads still ran once, on the coalescing connection.
-				expect(timings.filter((t) => t.name === "rt.plugins")).toHaveLength(1);
+				expect(timings.filter((t) => t.name === "rt.reads")).toHaveLength(1);
 				expect(coalescingSql.length).toBeGreaterThan(0);
 			} finally {
 				await second.stopCron();
@@ -900,6 +1030,48 @@ describe("EmDashRuntime.create — cold boot", () => {
 		// fail fast without building a new connection or touching the db.
 		await expect(EmDashRuntime.create(deps)).rejects.toThrow(/backing off/i);
 		expect(dialectCalls).toBe(1);
+	});
+
+	describe("a database that was never migrated", () => {
+		it("is reported unmigrated while its migration fails and backs off", async () => {
+			const sqlite = new Database(":memory:");
+			// 001_initial creates this table, so the first migration fails.
+			sqlite.exec("CREATE TABLE _emdash_collections (id TEXT)");
+			const deps: RuntimeDependencies = {
+				...createDeps(),
+				createDialect: () => new SqliteDialect({ database: sqlite }),
+			};
+
+			await expect(EmDashRuntime.create(deps)).rejects.toThrow(/Migration failed/i);
+			expect(EmDashRuntime.isDatabaseUnmigrated(deps.config)).toBe(true);
+
+			await expect(EmDashRuntime.create(deps)).rejects.toThrow(/backing off/i);
+			expect(EmDashRuntime.isDatabaseUnmigrated(deps.config)).toBe(true);
+		});
+
+		it("is no longer reported unmigrated once init has migrated it", async () => {
+			const deps = createDeps();
+			const runtime = await EmDashRuntime.create(deps);
+			await runtime.stopCron();
+
+			expect(EmDashRuntime.isDatabaseUnmigrated(deps.config)).toBe(false);
+		});
+
+		it("is not confused with a migrated database whose migration fails", async () => {
+			const sqlite = new Database(":memory:");
+			const setupDb = new Kysely<EmDashDatabase>({
+				dialect: new SqliteDialect({ database: sqlite }),
+			});
+			await runMigrations(setupDb);
+			await sql`DELETE FROM _emdash_migrations WHERE name = '001_initial'`.execute(setupDb);
+			const deps: RuntimeDependencies = {
+				...createDeps(),
+				createDialect: () => new SqliteDialect({ database: sqlite }),
+			};
+
+			await expect(EmDashRuntime.create(deps)).rejects.toThrow(/Migration failed/i);
+			expect(EmDashRuntime.isDatabaseUnmigrated(deps.config)).toBe(false);
+		});
 	});
 
 	it("backs off behind a migration lock that was left long ago", async () => {

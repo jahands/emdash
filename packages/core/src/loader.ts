@@ -1091,10 +1091,10 @@ function sortCursorCondition(
 			? sql`(${sort} IS NOT NULL OR ${id} ${cmp} ${cursorId})`
 			: sql`(${sort} IS NULL AND ${id} ${cmp} ${cursorId})`;
 	}
-	const past = sql`${sort} ${cmp} ${value} OR (${sort} = ${value} AND ${id} ${cmp} ${cursorId})`;
-	return nullsFirst || NON_NULL_SORT_COLUMNS.has(column)
-		? sql`(${past})`
-		: sql`(${past} OR ${sort} IS NULL)`;
+	// The row value, unlike the equivalent OR, is an index bound on Postgres.
+	// A NULL sort makes it NULL, which excludes the row as the OR form did.
+	const past = sql`(${sort}, ${id}) ${cmp} (${value}, ${cursorId})`;
+	return nullsFirst || NON_NULL_SORT_COLUMNS.has(column) ? past : sql`(${past} OR ${sort} IS NULL)`;
 }
 
 /**
@@ -1741,16 +1741,61 @@ export async function getDb(): Promise<Kysely<Database>> {
 	return dbInstance;
 }
 
-/** @internal Date projection for published archive entries. */
-export async function loadPublishedDates(type: string, locale?: string) {
+/** `MM-DD` of each month's last day, and February 28th, which ends most Februaries. */
+const MONTH_LAST_DAYS = [
+	"01-31",
+	"02-28",
+	"02-29",
+	"03-31",
+	"04-30",
+	"05-31",
+	"06-30",
+	"07-31",
+	"08-31",
+	"09-30",
+	"10-31",
+	"11-30",
+	"12-31",
+];
+
+/**
+ * @internal Published entry counts in buckets of `published_at` that each lie
+ * within one calendar month in every time zone, ordered by each bucket's
+ * latest `published_at`, newest first.
+ *
+ * A canonical UTC timestamp (`YYYY-MM-DDTHH:MM:SS[.sss]Z`) is bucketed by its
+ * UTC day. Every UTC offset is under a day, so a day other than the first or
+ * last of its month is in the same local month everywhere. Those two days can
+ * hold a local month boundary, so they are bucketed by UTC second instead;
+ * offsets and their transitions fall on whole seconds. Any other value is its
+ * own bucket. Each bucket parses with `new Date()` to an instant in it. SQLite's
+ * `LIKE` ignores the case of `T` and `Z`, as `new Date()` does.
+ */
+export async function loadPublishedDateBuckets(type: string, locale?: string) {
 	const tableName = getTableName(type);
 	const db = await getDb();
-	const result = await sql<{ published_at: string | null }>`
-		SELECT published_at FROM ${sql.ref(tableName)}
-		WHERE deleted_at IS NULL
-		AND ${buildStatusCondition(db, "published")}
-		${locale ? sql`AND ${localeMatches("locale", locale)}` : sql``}
-		ORDER BY published_at DESC, id DESC
+	const result = await sql<{ bucket: string; count: number | string | bigint }>`
+		SELECT bucket, COUNT(*) AS count
+		FROM (
+			SELECT published_at, CASE
+				WHEN NOT (
+					published_at LIKE '____-__-__T__:__:__Z'
+					OR published_at LIKE '____-__-__T__:__:__.___Z'
+				) THEN published_at
+				WHEN substr(published_at, 9, 2) BETWEEN '02' AND '27' THEN substr(published_at, 1, 10)
+				WHEN substr(published_at, 9, 2) = '01'
+					OR substr(published_at, 6, 5) IN (${sql.join(MONTH_LAST_DAYS)})
+				THEN substr(published_at, 1, 19) || 'Z'
+				ELSE substr(published_at, 1, 10)
+			END AS bucket
+			FROM ${sql.ref(tableName)}
+			WHERE deleted_at IS NULL
+			AND ${buildStatusCondition(db, "published")}
+			AND published_at IS NOT NULL
+			${locale ? sql`AND ${localeMatches("locale", locale)}` : sql``}
+		) AS published
+		GROUP BY bucket
+		ORDER BY MAX(published_at) DESC
 	`.execute(db);
 	return result.rows;
 }
