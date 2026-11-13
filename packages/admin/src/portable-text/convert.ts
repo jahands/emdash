@@ -14,11 +14,13 @@ import {
 } from "../components/editor/portableTextIdentity.js";
 import { htmlBlockFields } from "../html-block.js";
 import { isVideoBlock, videoBlockFields, videoNodeAttrs } from "../internal/video-block.js";
+import { freezeJson } from "../lib/frozen-json.js";
 import { canonicalMediaProviderId, localMediaFileUrl } from "../lib/media-utils.js";
 import {
 	UnsupportedPortableTextMarksError,
 	assertPortableTextMarksSupported,
 	assertProseMirrorMarksSupported,
+	findUnsupportedProseMirrorMarks,
 } from "../lib/portable-text-marks.js";
 import {
 	UnsafePortableTextTableError,
@@ -550,6 +552,127 @@ export function prosemirrorToPortableText(doc: {
 		if (converted) blocks.push(...(Array.isArray(converted) ? converted : [converted]));
 	}
 
+	return blocks;
+}
+
+/** Lists and tables derive ids from their position in the document, not only their keys. */
+const POSITIONAL_CONVERSION_TYPES = new Set(["bulletList", "orderedList", "table"]);
+
+function convertsByPosition(node: ProseMirrorNode): boolean {
+	if (POSITIONAL_CONVERSION_TYPES.has(node.type.name)) return true;
+	let found = false;
+	node.descendants((child) => {
+		if (POSITIONAL_CONVERSION_TYPES.has(child.type.name)) found = true;
+		return !found && !child.isTextblock;
+	});
+	return found;
+}
+
+interface BlockKeyClaim {
+	key: string | undefined;
+	/** The derived key without the node's path, which it starts with. */
+	derivedSuffix: string;
+	claimed: string;
+}
+
+interface ConvertedTopLevelNode {
+	/** The path the node was converted at, when its blocks depend on it beyond their keys. */
+	path: string | null;
+	json: PortableTextProseMirrorNode;
+	explicitKeys: string[];
+	unsupportedMarks: string[];
+	/** The keys the conversion claimed, in order, as if no other node held them. */
+	claims: BlockKeyClaim[];
+	blocks: PortableTextBlock[];
+}
+
+const convertedTopLevelNodes = new WeakMap<ProseMirrorNode, ConvertedTopLevelNode>();
+
+function convertNodeWithClaims(
+	json: PortableTextProseMirrorNode,
+	path: string,
+	claimKey: ClaimKey,
+): PortableTextBlock[] {
+	const converted = convertPMNode(json, path, claimKey);
+	// A clone, because converted blocks can share objects with the node's attributes.
+	return freezeJson(
+		structuredClone(converted ? (Array.isArray(converted) ? converted : [converted]) : []),
+	);
+}
+
+/** Converts one of an editor document's top-level nodes, remembered by node. */
+export function convertCachedTopLevelNode(
+	node: ProseMirrorNode,
+	index: number,
+): ConvertedTopLevelNode {
+	const path = `root:${index}`;
+	const cached = convertedTopLevelNodes.get(node);
+	if (cached && (cached.path === null || cached.path === path)) return cached;
+	const json = node.toJSON() as PortableTextProseMirrorNode;
+	const explicitKeys = explicitBlockKeys([json]);
+	const unsupportedMarks = findUnsupportedProseMirrorMarks(json);
+	const claims: BlockKeyClaim[] = [];
+	let positional = convertsByPosition(node);
+	let blocks: PortableTextBlock[] = [];
+	if (unsupportedMarks.length === 0) {
+		const claimKey = keyClaims(explicitKeys);
+		blocks = convertNodeWithClaims(json, path, (key, derived) => {
+			if (!derived.startsWith(path)) positional = true;
+			const claimed = claimKey(key, derived);
+			claims.push({ key, derivedSuffix: derived.slice(path.length), claimed });
+			return claimed;
+		});
+	}
+	const converted: ConvertedTopLevelNode = {
+		path: positional ? path : null,
+		json,
+		explicitKeys,
+		unsupportedMarks,
+		claims,
+		blocks,
+	};
+	convertedTopLevelNodes.set(node, converted);
+	return converted;
+}
+
+/**
+ * `prosemirrorToPortableText` for an editor's document. An edit replaces only
+ * the nodes it touches, so the other nodes' blocks come from the cache, frozen
+ * and with the same identity, unless the keys they claim are now taken.
+ */
+export function documentToPortableText(doc: ProseMirrorNode): PortableTextBlock[] {
+	const nodes: Array<{ converted: ConvertedTopLevelNode; path: string }> = [];
+	const unsupported = new Set<string>();
+	doc.forEach((node, _offset, index) => {
+		if (
+			index === doc.childCount - 1 &&
+			node.type.name === "paragraph" &&
+			node.childCount === 0 &&
+			portableTextKeyFromAttrs(node.attrs) === undefined
+		) {
+			return;
+		}
+		const converted = convertCachedTopLevelNode(node, index);
+		for (const mark of converted.unsupportedMarks) unsupported.add(mark);
+		nodes.push({ converted, path: `root:${index}` });
+	});
+	if (unsupported.size > 0) throw new UnsupportedPortableTextMarksError(unsupported);
+
+	const claimKey = keyClaims(nodes.flatMap(({ converted }) => converted.explicitKeys));
+	const blocks: PortableTextBlock[] = [];
+	for (const { converted, path } of nodes) {
+		const claimed = converted.claims.map(({ key, derivedSuffix }) =>
+			claimKey(key, path + derivedSuffix),
+		);
+		if (claimed.every((key, index) => key === converted.claims[index]!.claimed)) {
+			blocks.push(...converted.blocks);
+			continue;
+		}
+		// Conversion claims keys in the same order every time, so it can take the ones
+		// claimed above.
+		let next = 0;
+		blocks.push(...convertNodeWithClaims(converted.json, path, () => claimed[next++]!));
+	}
 	return blocks;
 }
 

@@ -71,6 +71,7 @@ import { getContentPublishingState } from "../lib/content-publishing-state.js";
 import { fromDatetimeLocalInputValue, toDatetimeLocalInputValue } from "../lib/datetime-local.js";
 import { getEntryTitle } from "../lib/entryTitle.js";
 import { getFieldLabel } from "../lib/field-label.js";
+import { stringifyJson } from "../lib/frozen-json.js";
 import { formatFileSize, getFileIcon, localMediaFileUrl } from "../lib/media-utils";
 import { usePluginAdmins } from "../lib/plugin-context.js";
 import {
@@ -350,16 +351,21 @@ function PersistentErrorToast({ notice }: { notice: PersistentErrorNotice }) {
 	return null;
 }
 
+/**
+ * The same text as `JSON.stringify({ data, slug, bylines })`. The rich text
+ * editor hands back the blocks an edit didn't touch, frozen and unchanged, so a
+ * keystroke serializes the block it changed instead of the whole document.
+ */
 function serializeEditorState(input: {
 	data: Record<string, unknown>;
 	slug: string;
 	bylines: BylineCreditInput[];
 }) {
-	return JSON.stringify({
-		data: input.data,
-		slug: input.slug,
-		bylines: input.bylines,
+	const data = Object.entries(input.data).flatMap(([name, value]) => {
+		const text = stringifyJson(value);
+		return text === undefined ? [] : [`${JSON.stringify(name)}:${text}`];
 	});
+	return `{"data":{${data.join(",")}},"slug":${JSON.stringify(input.slug)},"bylines":${JSON.stringify(input.bylines)}}`;
 }
 
 /** Field kinds whose editors read their value once, as rich text does, also inside blocks. */
@@ -3600,10 +3606,7 @@ function GrowingTextArea({
 	return <InputArea ref={ref} rows={1} value={value} {...props} />;
 }
 
-/**
- * Render field based on type
- */
-function FieldRenderer({
+function FieldRendererComponent({
 	name,
 	field,
 	value,
@@ -4304,6 +4307,12 @@ function FieldRenderer({
 			);
 	}
 }
+
+/**
+ * Render field based on type. Memoized so a keystroke in one field doesn't
+ * re-render the others.
+ */
+const FieldRenderer = React.memo(FieldRendererComponent);
 
 type RoomFieldRendererProps = Omit<FieldRendererProps, "value" | "collaboration"> & {
 	room: RoomEditing;

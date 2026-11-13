@@ -139,6 +139,7 @@ import type { Section } from "../lib/api";
 import { fetchMediaItem, uploadMedia } from "../lib/api/media.js";
 import type { RichTextBinding } from "../lib/co-editing/types.js";
 import { guardUnsavedInput, revealErrors } from "../lib/dialog-form.js";
+import { stringifyJson } from "../lib/frozen-json.js";
 import {
 	canonicalMediaProviderId,
 	dropsDisplayHeight,
@@ -151,6 +152,8 @@ import {
 import { cn } from "../lib/utils";
 import { UnsafePortableTextTableError } from "../portable-text-table.js";
 import {
+	convertCachedTopLevelNode,
+	documentToPortableText,
 	equalJsonValues,
 	portableTextToProsemirror,
 	prosemirrorToPortableText,
@@ -2234,10 +2237,7 @@ function normalizeButtonItems(items: unknown): unknown {
 	});
 }
 
-/**
- * Portable Text Editor Component
- */
-export function PortableTextEditor({
+function PortableTextEditorComponent({
 	value,
 	onChange,
 	placeholder,
@@ -2661,11 +2661,8 @@ export function PortableTextEditor({
 		)
 			return;
 		lastReportedDocRef.current = changedEditor.state.doc;
-		const doc = changedEditor.getJSON();
-		// TipTap's getJSON() returns JSONContent which is structurally compatible
-		const pmDoc = doc as Parameters<typeof prosemirrorToPortableText>[0];
 		try {
-			const portableText = prosemirrorToPortableText(pmDoc);
+			const portableText = documentToPortableText(changedEditor.state.doc);
 			if (equalJsonValues(portableText, lastPortableTextValueRef.current)) return;
 			lastPortableTextValueRef.current = portableText;
 			cb(portableText);
@@ -2802,6 +2799,43 @@ export function PortableTextEditor({
 			editor.setEditable(editorEditable, false);
 		}
 	}, [editor, editorEditable]);
+
+	// The first change builds the loaded document and converts every block, and
+	// the host serializes and checks them, so doing that while the page is idle
+	// keeps the first keystroke as quick as the rest.
+	React.useEffect(() => {
+		if (!editor || collaboration) return;
+		let cancelled = false;
+		let index = 0;
+		const whenIdle = (callback: () => void) => {
+			if (typeof requestIdleCallback === "function") requestIdleCallback(callback);
+			else setTimeout(callback, 50);
+		};
+		const warm = () => {
+			if (cancelled || editor.isDestroyed) return;
+			if (!lastReportedDocRef.current) {
+				lastReportedDocRef.current = editor.schema.nodeFromJSON(initialContent);
+				whenIdle(warm);
+				return;
+			}
+			const { doc } = editor.state;
+			const end = performance.now() + 4;
+			for (; index < doc.childCount && performance.now() < end; index++) {
+				try {
+					const { blocks } = convertCachedTopLevelNode(doc.child(index), index);
+					stringifyJson(blocks);
+					findUnsupportedPortableTextMarks(blocks);
+				} catch {
+					// reportChange surfaces conversion errors when the document changes.
+				}
+			}
+			if (index < doc.childCount) whenIdle(warm);
+		};
+		whenIdle(warm);
+		return () => {
+			cancelled = true;
+		};
+	}, [editor, collaboration]);
 
 	/**
 	 * Takes the line the block insert button typed back out, or only its slash
@@ -3634,6 +3668,24 @@ export function PortableTextEditor({
 		</div>
 	);
 }
+
+/**
+ * The editor reads `value` once, when it mounts, and a host replaces the content
+ * by remounting it. Skipping the render for each value it reported back keeps a
+ * keystroke from re-rendering the whole editor.
+ */
+function samePropsExceptValue(previous: PortableTextEditorProps, next: PortableTextEditorProps) {
+	const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+	for (const key of keys as Set<keyof PortableTextEditorProps>) {
+		if (key !== "value" && !Object.is(previous[key], next[key])) return false;
+	}
+	return true;
+}
+
+/**
+ * Portable Text Editor Component
+ */
+export const PortableTextEditor = React.memo(PortableTextEditorComponent, samePropsExceptValue);
 
 /** The editor's floating toolbars, which are only in the page while they show. */
 const BUBBLE_MENU_SELECTOR = [
