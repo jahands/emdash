@@ -70,7 +70,12 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 				<FloppyDisk />
 			)
 		) : state === "saving" || state === "joining" ? (
-			<Loader size="sm" />
+			// The spinner is a status region, so only the shown state mounts it.
+			state === activeState ? (
+				<Loader size="sm" />
+			) : (
+				<span className="size-4" />
+			)
 		) : state === "offline" ? (
 			<CloudSlash />
 		) : state === "not-saved" || state === "not-kept" ? (
