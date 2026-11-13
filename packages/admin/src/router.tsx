@@ -2573,7 +2573,7 @@ function ContentEditPage() {
 	}
 
 	if (!showsEditor) {
-		return <LoadingScreen />;
+		return <EditorSkeleton />;
 	}
 
 	const readOnlyBanner = (
