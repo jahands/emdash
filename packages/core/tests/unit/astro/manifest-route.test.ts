@@ -110,7 +110,10 @@ describe("manifest route admin branding", () => {
 					}),
 				},
 			};
-			const response = await getManifest({ locals } as unknown as APIContext);
+			const response = await getManifest({
+				locals,
+				request: manifestRequest(),
+			} as unknown as APIContext);
 			return ((await response.json()) as ManifestEnvelope).data.coEditing;
 		};
 
