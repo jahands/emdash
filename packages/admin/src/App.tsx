@@ -21,6 +21,7 @@ import { AdminBrandingProvider, type AdminBranding } from "./lib/admin-branding-
 import { refetchCurrentUserOnForbidden } from "./lib/api/current-user";
 import { AuthProviderProvider, type AuthProviders } from "./lib/auth-provider-context";
 import { PluginAdminProvider, type PluginAdmins } from "./lib/plugin-context";
+import { setRoutePrefetchFiles, type RoutePrefetchFiles } from "./lib/route-prefetch.js";
 import { loadDateLocale } from "./locales/date-locale.js";
 import { LocaleDirectionProvider } from "./locales/index.js";
 import { KumoTranslationsProvider } from "./locales/KumoTranslationsProvider.js";
@@ -120,6 +121,8 @@ export interface AdminAppProps {
 	locale?: string;
 	/** Compiled Lingui messages for the active locale */
 	messages?: Messages;
+	/** Files of the screens to download before they open, read from the build. Without them, screens load when opened or when a link to them shows intent. */
+	routePrefetchFiles?: RoutePrefetchFiles;
 }
 
 /**
@@ -128,6 +131,7 @@ export interface AdminAppProps {
 const EMPTY_PLUGINS: PluginAdmins = {};
 const EMPTY_AUTH_PROVIDERS: AuthProviders = {};
 const EMPTY_ADMIN_BRANDING: AdminBranding = {};
+const NO_PREFETCH_FILES: RoutePrefetchFiles = {};
 
 export function AdminApp({
 	pluginAdmins = EMPTY_PLUGINS,
@@ -135,10 +139,15 @@ export function AdminApp({
 	adminBranding = EMPTY_ADMIN_BRANDING,
 	locale = "en",
 	messages = {},
+	routePrefetchFiles = NO_PREFETCH_FILES,
 }: AdminAppProps) {
 	React.useEffect(() => {
 		document.getElementById("emdash-boot-loader")?.remove();
 	}, []);
+
+	React.useEffect(() => {
+		setRoutePrefetchFiles(routePrefetchFiles);
+	}, [routePrefetchFiles]);
 
 	const i18nInitialized = React.useRef(false);
 	if (!i18nInitialized.current) {

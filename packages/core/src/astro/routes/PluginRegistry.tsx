@@ -4,6 +4,7 @@ import {
 	type AdminBootErrorLabels,
 	type AdminBranding,
 	type PluginAdmins,
+	type RoutePrefetchFiles,
 } from "@emdash-cms/admin/app";
 import type { Messages } from "@lingui/core";
 import { useEffect, useState } from "react";
@@ -20,6 +21,7 @@ interface AdminWrapperProps {
 	adminBranding?: AdminBranding;
 	/** Shown if the catalog or plugin admins fail to load, in the request's language. */
 	bootErrorLabels: AdminBootErrorLabels;
+	routePrefetchFiles: RoutePrefetchFiles;
 }
 
 interface AdminBoot {
@@ -59,6 +61,7 @@ export default function AdminWrapper({
 	messagesUrl,
 	adminBranding,
 	bootErrorLabels,
+	routePrefetchFiles,
 }: AdminWrapperProps) {
 	const pending = loadAdminBoot(messagesUrl);
 	const [state, setState] = useState<BootState>({ status: "loading" });
@@ -101,6 +104,7 @@ export default function AdminWrapper({
 			adminBranding={adminBranding}
 			locale={locale}
 			messages={state.boot.messages}
+			routePrefetchFiles={routePrefetchFiles}
 		/>
 	);
 }

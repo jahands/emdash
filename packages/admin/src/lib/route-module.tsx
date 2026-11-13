@@ -9,6 +9,7 @@ import {
 	type AdminRouteModule,
 } from "../route-modules.js";
 import { reloadPage } from "./reload-page.js";
+import { holdRoutePrefetch } from "./route-prefetch.js";
 
 /** What a route component needs loaded before the router renders it. */
 export interface RouteModulePreload {
@@ -39,6 +40,7 @@ export function lazyRouteModule<
 	let failed = false;
 
 	const load = async () => {
+		const release = holdRoutePrefetch(module);
 		try {
 			const exports = await ROUTE_MODULE_LOADERS[module]();
 			Component = (exports as Record<K, unknown>)[exportName] as React.ComponentType<Props>;
@@ -47,6 +49,8 @@ export function lazyRouteModule<
 		} catch {
 			failed = true;
 			pending = undefined;
+		} finally {
+			release(!failed);
 		}
 	};
 
@@ -94,40 +98,6 @@ export function routeLoadsEditor(path: string | undefined): boolean {
 	return (
 		path !== undefined && adminRouteModules(path).some((module) => ADMIN_EDITOR_MODULES.has(module))
 	);
-}
-
-let prefetchQueue: AdminRouteModule[][] | undefined;
-let prefetching: Promise<boolean> | undefined;
-
-/**
- * Loads the next route modules for screens not yet visited, and resolves with
- * whether any are left. The editor's come first, together: they are the
- * largest and the likeliest next screen. Then one other screen at a time, so
- * a prefetch never holds the connections a screen's own requests need. With
- * Data Saver on, screens load when a link to them shows intent instead.
- */
-export function prefetchNextRouteModules(): Promise<boolean> {
-	if (prefersReducedData()) return Promise.resolve(false);
-	if (!prefetchQueue) {
-		const modules = Object.keys(ROUTE_MODULE_LOADERS) as AdminRouteModule[];
-		prefetchQueue = [
-			modules.filter((module) => ADMIN_EDITOR_MODULES.has(module)),
-			...modules.filter((module) => !ADMIN_EDITOR_MODULES.has(module)).map((module) => [module]),
-		];
-	}
-	const queue = prefetchQueue;
-	prefetching ??= (async () => {
-		const group = queue.shift() ?? [];
-		await Promise.all(group.map((module) => ROUTE_MODULE_LOADERS[module]().catch(() => {})));
-		prefetching = undefined;
-		return queue.length > 0;
-	})();
-	return prefetching;
-}
-
-function prefersReducedData(): boolean {
-	const connection = (navigator as Navigator & { connection?: { saveData?: boolean } }).connection;
-	return connection?.saveData === true;
 }
 
 type LoadFailure = "offline" | "unreachable" | "outdated";

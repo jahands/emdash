@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { lazyRouteModule, prefetchNextRouteModules } from "../../src/lib/route-module.js";
+import { lazyRouteModule } from "../../src/lib/route-module.js";
 import { render } from "../utils/render";
 
 const tab = vi.hoisted(() => ({ reloads: 0, chunkMissing: false, loaded: [] as string[] }));
@@ -123,16 +123,5 @@ describe("a route module that fails to load offline", () => {
 		window.dispatchEvent(new Event("online"));
 		await expect.element(page.getByText("Dashboard")).toBeVisible();
 		expect(tab.reloads).toBe(0);
-	});
-});
-
-describe("prefetching route modules", () => {
-	it("loads the editor first, then the other screens one at a time", async () => {
-		tab.loaded = [];
-		await expect(prefetchNextRouteModules()).resolves.toBe(true);
-		expect(tab.loaded).toEqual(["components/ContentEditor"]);
-
-		await expect(prefetchNextRouteModules()).resolves.toBe(false);
-		expect(tab.loaded).toEqual(["components/ContentEditor", "components/Dashboard"]);
 	});
 });

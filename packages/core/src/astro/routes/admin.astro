@@ -25,12 +25,13 @@ export const prerender = false;
 import { resolveLocale, getLocaleDir, DEFAULT_LOCALE } from "@emdash-cms/admin/locales/config";
 import { loadAdminBootLabels } from "@emdash-cms/admin/locales/server";
 import { getSiteSettingsWithDb } from "#settings/index.js";
-import { adminPreloadHrefs } from "#utils/admin-preloads.js";
+import { adminPrefetchFiles, adminPreloadHrefs } from "#utils/admin-preloads.js";
 
 const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
 const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls[DEFAULT_LOCALE];
 const modulePreloads = adminPreloadHrefs(adminPreloadsJson, Astro.url.pathname);
+const routePrefetchFiles = adminPrefetchFiles(adminPreloadsJson, Astro.url.pathname);
 const bootLabels = await loadAdminBootLabels(resolvedLocale);
 
 const adminConfig = Astro.locals.emdash?.config?.admin;
@@ -192,6 +193,7 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 				messagesUrl={messagesUrl}
 				adminBranding={{ logo: adminConfig?.logo, siteName: adminConfig?.siteName }}
 				bootErrorLabels={bootLabels.error}
+				routePrefetchFiles={routePrefetchFiles}
 			/>
 		</div>
 	</body>

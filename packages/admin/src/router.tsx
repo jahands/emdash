@@ -13,6 +13,7 @@ import {
 	useQuery,
 	useInfiniteQuery,
 	useIsFetching,
+	useIsMutating,
 	useMutation,
 	useQueryClient,
 } from "@tanstack/react-query";
@@ -26,6 +27,7 @@ import {
 	useNavigate,
 	useSearch,
 	useMatches,
+	useRouterState,
 } from "@tanstack/react-router";
 import * as React from "react";
 
@@ -149,12 +151,8 @@ import {
 	lastAutosavedDrafts,
 	withAutosavedDraft,
 } from "./lib/revision-list-cache.js";
-import {
-	lazyRouteModule,
-	prefetchNextRouteModules,
-	routeLoadsEditor,
-	withRouteModules,
-} from "./lib/route-module.js";
+import { lazyRouteModule, routeLoadsEditor, withRouteModules } from "./lib/route-module.js";
+import { setScreenIdle } from "./lib/route-prefetch.js";
 import { sanitizeRedirectUrl } from "./lib/url";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
@@ -593,24 +591,17 @@ function RootComponent() {
 	const dateLocaleReady = useDateLocaleReady(i18n.locale);
 	const ready = !isLoading && userSettled && dateLocaleReady;
 	const fetching = useIsFetching();
+	const mutating = useIsMutating();
+	const navigating = useRouterState({ select: (state) => state.status !== "idle" });
 	// Loading modules runs them on the main thread, which delays keystrokes in the editor.
 	const editing = useMatches({ select: (matches) => routeLoadsEditor(matches.at(-1)?.fullPath) });
-	const [prefetchRound, nextPrefetchRound] = React.useReducer((round: number) => round + 1, 0);
+	const screenIdle = ready && !editing && !navigating && fetching === 0 && mutating === 0;
 
 	React.useEffect(() => {
-		if (!ready || editing || fetching > 0) return;
-		let active = true;
-		const handle = window.requestIdleCallback(() => {
-			void (async () => {
-				const more = await prefetchNextRouteModules();
-				if (more && active) nextPrefetchRound();
-			})();
-		});
-		return () => {
-			active = false;
-			window.cancelIdleCallback(handle);
-		};
-	}, [ready, editing, fetching, prefetchRound]);
+		if (!screenIdle) return;
+		setScreenIdle(true);
+		return () => setScreenIdle(false);
+	}, [screenIdle]);
 
 	if (!ready) {
 		return <ConfigurationLoadingScreen />;

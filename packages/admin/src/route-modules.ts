@@ -77,6 +77,17 @@ export const ADMIN_EDITOR_MODULES: ReadonlySet<AdminRouteModule> = new Set<Admin
 	"components/Widgets",
 ]);
 
+/**
+ * Modules the admin downloads before their screen opens, in order: the
+ * content list, the likeliest next screen, then the editor, whose download is
+ * the longest. Other screens load when a link to them is hovered, focused or
+ * touched.
+ */
+export const ADMIN_PREFETCH_MODULES = [
+	"components/ContentList",
+	"components/ContentEditor",
+] as const satisfies readonly AdminRouteModule[];
+
 function segments(path: string): string[] {
 	return path.split("/").filter(Boolean);
 }
