@@ -268,37 +268,21 @@ describe("fetchCalendarRange", () => {
 		globalThis.fetch = originalFetch;
 	});
 
-	it("stops after ten pages and drops entries that repeat across pages", async () => {
-		let page = 0;
-		const fetchSpy = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) => {
-			page += 1;
-			return Response.json({
-				success: true,
-				data: { items: [entry("repeated"), entry(`page-${page}`)], nextCursor: `cursor-${page}` },
-			});
-		});
-		globalThis.fetch = fetchSpy;
-
-		const result = await fetchCalendarRange("2026-09-26T10:00:00.000Z", "2026-11-01T14:00:00.000Z");
-
-		expect(fetchSpy).toHaveBeenCalledTimes(10);
-		expect(fetchSpy.mock.calls[1]?.[0]).toEqual(expect.stringContaining("cursor=cursor-1"));
-		expect(result.truncated).toBe(true);
-		expect(result.items.map((item) => item.id)).toEqual([
-			"repeated",
-			...Array.from({ length: 10 }, (_, index) => `page-${index + 1}`),
-		]);
-	});
-
-	it("reports a complete walk when the last page has no cursor", async () => {
+	it("loads the range in one request and passes on its truncation", async () => {
 		const fetchSpy = vi.fn(async (_input: string | URL | Request, _init?: RequestInit) =>
-			Response.json({ success: true, data: { items: [entry("only")] } }),
+			Response.json({ success: true, data: { items: [entry("first")], truncated: true } }),
 		);
 		globalThis.fetch = fetchSpy;
 
 		const result = await fetchCalendarRange("2026-09-26T10:00:00.000Z", "2026-11-01T14:00:00.000Z");
 
 		expect(fetchSpy).toHaveBeenCalledTimes(1);
-		expect(result).toEqual({ items: [entry("only")], truncated: false });
+		const url = new URL(fetchSpy.mock.calls[0]?.[0] as string, location.origin);
+		expect(url.pathname).toMatch(/\/calendar\/range$/);
+		expect(Object.fromEntries(url.searchParams)).toEqual({
+			from: "2026-09-26T10:00:00.000Z",
+			to: "2026-11-01T14:00:00.000Z",
+		});
+		expect(result).toEqual({ items: [entry("first")], truncated: true });
 	});
 });

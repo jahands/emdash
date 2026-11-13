@@ -1,6 +1,12 @@
+import { sql } from "kysely";
 import { afterEach, beforeEach, expect, it } from "vitest";
 
-import { handleCalendarEntries, type CalendarEntry } from "../../../src/api/handlers/calendar.js";
+import {
+	CALENDAR_RANGE_LIMIT,
+	handleCalendarEntries,
+	handleCalendarRange,
+	type CalendarEntry,
+} from "../../../src/api/handlers/calendar.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import { encodeCursor } from "../../../src/database/repositories/types.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
@@ -46,8 +52,8 @@ describeEachDialect("calendar handler", (dialect) => {
 		return repo.schedule(type, item.id, scheduledAt, BEFORE_FIXTURES);
 	}
 
-	async function entries(range = MARCH, limit = 100): Promise<CalendarEntry[]> {
-		const result = await handleCalendarEntries(ctx.db, { ...range, limit });
+	async function entries(bounds = MARCH, limit = 100): Promise<CalendarEntry[]> {
+		const result = await handleCalendarEntries(ctx.db, { ...bounds, limit });
 		if (!result.success) throw new Error(`calendar failed: ${result.error.code}`);
 		return result.data.items;
 	}
@@ -116,6 +122,153 @@ describeEachDialect("calendar handler", (dialect) => {
 		}
 
 		expect(walked).toEqual(all);
+	});
+
+	async function walk(bounds = MARCH, limit = 2): Promise<CalendarEntry[]> {
+		const walked: CalendarEntry[] = [];
+		let cursor: string | undefined;
+		for (let page = 0; page < 100; page++) {
+			// oxlint-disable-next-line no-await-in-loop -- each page needs the previous cursor
+			const result = await handleCalendarEntries(ctx.db, { ...bounds, limit, cursor });
+			if (!result.success) throw new Error(`calendar failed: ${result.error.code}`);
+			walked.push(...result.data.items);
+			cursor = result.data.nextCursor;
+			if (!cursor) return walked;
+		}
+		throw new Error("calendar walk did not end");
+	}
+
+	async function range(bounds = MARCH) {
+		const result = await handleCalendarRange(ctx.db, bounds);
+		if (!result.success) throw new Error(`calendar range failed: ${result.error.code}`);
+		return result.data;
+	}
+
+	/** Writes published `post` rows directly; the repository is too slow for the entry cap. */
+	async function insertPublished(rows: { id: string; at: string; deleted?: boolean }[]) {
+		for (let start = 0; start < rows.length; start += 200) {
+			const values = rows
+				.slice(start, start + 200)
+				.map(
+					(row) =>
+						sql`(${row.id}, ${row.id}, 'published', ${row.id}, ${row.at}, ${row.deleted ? row.at : null})`,
+				);
+			// oxlint-disable-next-line no-await-in-loop -- inserts run one batch at a time
+			await sql`
+				INSERT INTO ec_post (id, slug, status, title, published_at, deleted_at)
+				VALUES ${sql.join(values)}
+			`.execute(ctx.db);
+		}
+	}
+
+	it("returns the whole range in the order the pages walk it", async () => {
+		const tie = "2030-03-03T10:00:00.000Z";
+		const alpha = await published("post", "Alpha", tie);
+		const bravo = await published("post", "Bravo", tie);
+		await published("page", "Charlie", tie);
+		await scheduled("post", "Delta", tie);
+		await scheduled("page", "Echo", "2030-03-04T10:00:00.000Z");
+		await published("post", "Foxtrot", MARCH.from);
+		await published("post", "Too late", MARCH.to);
+		const tiedPosts = [alpha, bravo].toSorted((a, b) => (a.id < b.id ? -1 : 1));
+
+		const result = await range();
+
+		expect(result.truncated).toBe(false);
+		expect(result.items.map((e) => e.title)).toEqual([
+			"Foxtrot",
+			"Charlie",
+			...tiedPosts.map((item) => item.data.title),
+			"Delta",
+			"Echo",
+		]);
+		expect(result.items).toEqual(await walk());
+	});
+
+	it("stops at the entry cap with the earliest entries and reports the cut", async () => {
+		const day = Date.parse("2030-03-02T00:00:00.000Z");
+		const rows = Array.from({ length: CALENDAR_RANGE_LIMIT + 1 }, (_, index) => ({
+			id: `e${String(index).padStart(5, "0")}`,
+			at: new Date(day + index * 60_000).toISOString(),
+		}));
+		await insertPublished(rows);
+
+		const cut = await range();
+
+		expect(cut.truncated).toBe(true);
+		expect(cut.items.map((e) => e.id)).toEqual(
+			rows.slice(0, CALENDAR_RANGE_LIMIT).map((row) => row.id),
+		);
+
+		await sql`DELETE FROM ec_post WHERE id = ${rows.at(-1)!.id}`.execute(ctx.db);
+		const exact = await range();
+
+		expect(exact.truncated).toBe(false);
+		expect(exact.items).toHaveLength(CALENDAR_RANGE_LIMIT);
+	});
+
+	it("leaves trashed entries out of the range and the entry cap", async () => {
+		const day = Date.parse("2030-03-02T00:00:00.000Z");
+		await insertPublished(
+			Array.from({ length: CALENDAR_RANGE_LIMIT + 1 }, (_, index) => ({
+				id: `t${String(index).padStart(5, "0")}`,
+				at: new Date(day + index * 60_000).toISOString(),
+				deleted: true,
+			})),
+		);
+		await published("post", "Kept", "2030-03-20T10:00:00.000Z");
+		const trashedSchedule = await scheduled("page", "Trashed schedule", "2030-03-21T10:00:00.000Z");
+		await repo.delete("page", trashedSchedule.id);
+
+		const result = await range();
+
+		expect(result).toMatchObject({ truncated: false, items: [{ title: "Kept" }] });
+		expect(result.items).toHaveLength(1);
+	});
+
+	it("lists each locale's entry with its locale", async () => {
+		const english = await published("post", "Launch", "2030-03-05T10:00:00.000Z");
+		const french = await repo.create({
+			type: "post",
+			slug: "launch",
+			data: { title: "Lancement" },
+			status: "published",
+			publishedAt: "2030-03-06T10:00:00.000Z",
+			locale: "fr",
+			translationOf: english.id,
+		});
+
+		const result = await range();
+
+		expect(result.items.map((e) => [e.id, e.locale, e.title])).toEqual([
+			[english.id, "en", "Launch"],
+			[french.id, "fr", "Lancement"],
+		]);
+	});
+
+	it("merges many collections in time order", async () => {
+		const registry = new SchemaRegistry(ctx.db);
+		const slugs = Array.from({ length: 9 }, (_, index) => `extra_${index}`);
+		for (const slug of slugs) {
+			// oxlint-disable-next-line no-await-in-loop -- schema changes run one at a time
+			await registry.createCollection({ slug, label: slug, labelSingular: slug });
+			// oxlint-disable-next-line no-await-in-loop -- schema changes run one at a time
+			await registry.createField(slug, { slug: "title", label: "Title", type: "string" });
+		}
+		const expected: string[] = [];
+		for (const [index, slug] of slugs.toReversed().entries()) {
+			const day = `2030-03-${String(index + 2).padStart(2, "0")}`;
+			// oxlint-disable-next-line no-await-in-loop -- entries are created in order
+			await scheduled(slug, `Scheduled ${slug}`, `${day}T09:00:00.000Z`);
+			// oxlint-disable-next-line no-await-in-loop -- entries are created in order
+			await published(slug, `Published ${slug}`, `${day}T10:00:00.000Z`);
+			expected.push(`Scheduled ${slug}`, `Published ${slug}`);
+		}
+
+		const result = await range();
+
+		expect(result.items.map((e) => e.title)).toEqual(expected);
+		expect(result.items).toEqual(await walk(MARCH, 3));
 	});
 
 	it("uses the collection's title field, then title, then slug", async () => {

@@ -14,6 +14,7 @@ import {
 } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
 import { validateIdentifier } from "../../database/validate.js";
+import { chunks } from "../../utils/chunks.js";
 import type { ApiResult } from "../types.js";
 
 export type CalendarEntryKind = "published" | "scheduled";
@@ -33,12 +34,27 @@ export interface CalendarEntriesResponse {
 	nextCursor?: string;
 }
 
+export interface CalendarRangeParams {
+	from: string;
+	to: string;
+}
+
+export interface CalendarRangeResponse {
+	items: CalendarEntry[];
+	/** More events exist in the range than `CALENDAR_RANGE_LIMIT`. */
+	truncated: boolean;
+}
+
 export interface CalendarEntriesParams {
 	from: string;
 	to: string;
 	cursor?: string;
 	limit: number;
 }
+
+export const CALENDAR_RANGE_LIMIT = 1000;
+/** D1 binds at most 100 parameters per statement, and each stream binds up to five. */
+const STREAMS_PER_QUERY = 16;
 
 const KINDS: readonly CalendarEntryKind[] = ["published", "scheduled"];
 const KIND_COLUMN = { published: "published_at", scheduled: "scheduled_at" } as const;
@@ -59,6 +75,7 @@ interface CalendarCursor {
 }
 
 interface StreamRow {
+	stream: number;
 	id: string;
 	locale: string;
 	status: string;
@@ -166,34 +183,87 @@ function keysetCondition(stream: Stream, cursor: CalendarCursor | undefined) {
 	return sql``;
 }
 
-async function queryStream(
-	db: Kysely<Database>,
+function streamQuery(
 	stream: Stream,
-	params: CalendarEntriesParams,
+	index: number,
+	range: CalendarRangeParams,
+	limit: number,
 	cursor: CalendarCursor | undefined,
-): Promise<StreamRow[]> {
+) {
 	const column = sql.ref(KIND_COLUMN[stream.kind]);
-	const lower = cursor && cursor.at > params.from ? cursor.at : params.from;
-	const result = await sql<StreamRow>`
-		SELECT id, locale, status, ${stream.title} AS title, ${column} AS event_at
-		FROM ${sql.ref(`ec_${stream.collection}`)}
-		WHERE deleted_at IS NULL
-			AND ${column} IS NOT NULL
-			AND ${column} >= ${lower}
-			AND ${column} < ${params.to}
-			${stream.kind === "published" ? sql`AND status = 'published'` : sql``}
-			${keysetCondition(stream, cursor)}
-		ORDER BY ${column} ASC, id ASC
-		LIMIT ${params.limit + 1}
-	`.execute(db);
-	return result.rows;
+	const lower = cursor && cursor.at > range.from ? cursor.at : range.from;
+	return sql`
+		SELECT * FROM (
+			SELECT ${sql.lit(index)} AS stream, id, locale, status, ${stream.title} AS title,
+				${column} AS event_at
+			FROM ${sql.ref(`ec_${stream.collection}`)}
+			WHERE deleted_at IS NULL
+				AND ${column} IS NOT NULL
+				AND ${column} >= ${lower}
+				AND ${column} < ${range.to}
+				${stream.kind === "published" ? sql`AND status = 'published'` : sql``}
+				${keysetCondition(stream, cursor)}
+			ORDER BY ${column} ASC, id ASC
+			LIMIT ${limit}
+		) AS ${sql.ref(`s${index}`)}
+	`;
 }
 
 /**
- * Each stream (one collection and kind) is read in its own query, and the
- * rows are merged by time. Ties keep the stream order and then each stream's
- * SQL order, which matches the next page's keyset conditions.
+ * Up to `limit` events in time order, merged from every stream in one query
+ * per group of streams. Ties keep the stream order and then each stream's ID
+ * order, which matches the next page's keyset conditions.
  */
+async function queryEvents(
+	db: Kysely<Database>,
+	streams: Stream[],
+	range: CalendarRangeParams,
+	limit: number,
+	cursor: CalendarCursor | undefined,
+): Promise<CalendarEntry[]> {
+	const indexed = streams.map((stream, index) => ({ stream, index }));
+	const results = await Promise.all(
+		chunks(indexed, STREAMS_PER_QUERY).map(async (group) => {
+			const result = await sql<StreamRow>`
+				${sql.join(
+					group.map(({ stream, index }) => streamQuery(stream, index, range, limit, cursor)),
+					sql` UNION ALL `,
+				)}
+				ORDER BY event_at ASC, stream ASC, id ASC
+				LIMIT ${limit}
+			`.execute(db);
+			return result.rows;
+		}),
+	);
+
+	const rows = results.length === 1 ? results[0] : mergeGroups(results);
+	return rows.slice(0, limit).map((row): CalendarEntry => {
+		const stream = streams[Number(row.stream)];
+		return {
+			collection: stream.collection,
+			id: row.id,
+			locale: row.locale,
+			title: row.title,
+			status: row.status,
+			kind: stream.kind,
+			at: row.event_at,
+		};
+	});
+}
+
+/** Each group is already in order, and a stream sits in one group only. */
+function mergeGroups(groups: StreamRow[][]): StreamRow[] {
+	return groups
+		.flatMap((rows) => rows.map((row, position) => ({ row, position })))
+		.toSorted(
+			(a, b) =>
+				compareText(a.row.event_at, b.row.event_at) ||
+				Number(a.row.stream) - Number(b.row.stream) ||
+				a.position - b.position,
+		)
+		.map(({ row }) => row);
+}
+
 export async function handleCalendarEntries(
 	db: Kysely<Database>,
 	params: CalendarEntriesParams,
@@ -201,42 +271,44 @@ export async function handleCalendarEntries(
 	try {
 		const cursor = params.cursor ? decodeCalendarCursor(params.cursor) : undefined;
 		const streams = await loadStreams(db);
-		const results = await Promise.all(
-			streams.map(async (stream) => {
-				const rows = await queryStream(db, stream, params, cursor);
-				return rows.map((row, position) => ({ row, stream, position }));
-			}),
-		);
-
-		const merged = results
-			.flat()
-			.toSorted(
-				(a, b) =>
-					compareText(a.row.event_at, b.row.event_at) ||
-					compareStreams(a.stream, b.stream) ||
-					a.position - b.position,
-			);
-
-		const items = merged.slice(0, params.limit).map(
-			({ row, stream }): CalendarEntry => ({
-				collection: stream.collection,
-				id: row.id,
-				locale: row.locale,
-				title: row.title,
-				status: row.status,
-				kind: stream.kind,
-				at: row.event_at,
-			}),
-		);
+		const events = await queryEvents(db, streams, params, params.limit + 1, cursor);
+		const items = events.slice(0, params.limit);
 		const last = items.at(-1);
 		const nextCursor =
-			merged.length > params.limit && last ? encodeCalendarCursor(last) : undefined;
+			events.length > params.limit && last ? encodeCalendarCursor(last) : undefined;
 
 		return { success: true, data: nextCursor ? { items, nextCursor } : { items } };
 	} catch (error) {
 		if (error instanceof InvalidCursorError) {
 			return { success: false, error: { code: "INVALID_CURSOR", message: error.message } };
 		}
+		console.error("Calendar error:", error);
+		return {
+			success: false,
+			error: { code: "CALENDAR_ERROR", message: "Failed to load calendar" },
+		};
+	}
+}
+
+/**
+ * The first `CALENDAR_RANGE_LIMIT` events in the range, in the order the
+ * paginated endpoint walks them.
+ */
+export async function handleCalendarRange(
+	db: Kysely<Database>,
+	range: CalendarRangeParams,
+): Promise<ApiResult<CalendarRangeResponse>> {
+	try {
+		const streams = await loadStreams(db);
+		const events = await queryEvents(db, streams, range, CALENDAR_RANGE_LIMIT + 1, undefined);
+		return {
+			success: true,
+			data: {
+				items: events.slice(0, CALENDAR_RANGE_LIMIT),
+				truncated: events.length > CALENDAR_RANGE_LIMIT,
+			},
+		};
+	} catch (error) {
 		console.error("Calendar error:", error);
 		return {
 			success: false,

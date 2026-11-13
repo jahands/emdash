@@ -22,6 +22,8 @@ interface CalendarToolbarProps {
 	onPreviewNext?: () => void;
 	/** The filters, across from the view switcher. */
 	tools?: React.ReactNode;
+	/** Shown where the loading indicator was, so it moves nothing when the range loads. */
+	notice?: React.ReactNode;
 }
 
 /**
@@ -41,6 +43,7 @@ export function CalendarToolbar({
 	onPreviewPrevious,
 	onPreviewNext,
 	tools,
+	notice,
 }: CalendarToolbarProps) {
 	const { t } = useLingui();
 	const siteZone = display.zoneShortName(zoneTime);
@@ -110,7 +113,11 @@ export function CalendarToolbar({
 					</p>
 				</div>
 				<div className="flex h-7 shrink-0 items-center gap-1">
-					{loading && <Loader size="sm" aria-label={t`Loading`} className="me-1" />}
+					{(loading || notice) && (
+						<div className="flex size-7 items-center justify-center">
+							{loading ? <Loader size="sm" aria-label={t`Loading`} /> : notice}
+						</div>
+					)}
 					<Button
 						variant="ghost"
 						shape="square"

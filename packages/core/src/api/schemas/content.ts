@@ -234,14 +234,23 @@ const calendarBound = z.iso
 	.datetime({ offset: true, message: "must be an ISO 8601 datetime" })
 	.transform((value) => new Date(value).toISOString());
 
+function refineCalendarRange<T extends z.ZodType<{ from: string; to: string }>>(schema: T) {
+	return schema
+		.refine((query) => query.from < query.to, { message: "to must be after from", path: ["to"] })
+		.refine((query) => Date.parse(query.to) - Date.parse(query.from) <= MAX_CALENDAR_RANGE_MS, {
+			message: "the range can span at most 62 days",
+			path: ["to"],
+		});
+}
+
 /** Calendar range: `from` inclusive, `to` exclusive, at most 62 days apart. */
-export const calendarQuery = cursorPaginationQuery
-	.extend({ from: calendarBound, to: calendarBound })
-	.refine((query) => query.from < query.to, { message: "to must be after from", path: ["to"] })
-	.refine((query) => Date.parse(query.to) - Date.parse(query.from) <= MAX_CALENDAR_RANGE_MS, {
-		message: "the range can span at most 62 days",
-		path: ["to"],
-	});
+export const calendarQuery = refineCalendarRange(
+	cursorPaginationQuery.extend({ from: calendarBound, to: calendarBound }),
+);
+
+export const calendarRangeQuery = refineCalendarRange(
+	z.object({ from: calendarBound, to: calendarBound }),
+);
 
 /** ISO 8601 datetime for `publishedAt` / `createdAt`. Routes gate writes behind `content:publish_any`. */
 const contentDateOverride = contentDateTime.nullish();

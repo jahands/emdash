@@ -133,6 +133,11 @@ export function injectCoreRoutes(
 	});
 
 	injectRoute({
+		pattern: "/_emdash/api/calendar/range",
+		entrypoint: resolveRoute("api/calendar/range.ts"),
+	});
+
+	injectRoute({
 		pattern: "/_emdash/api/admin/scheduled-policy-rejections/[collection]/[id]",
 		entrypoint: resolveRoute("api/admin/scheduled-policy-rejections/[collection]/[id].ts"),
 	});
