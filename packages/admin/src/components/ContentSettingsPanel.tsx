@@ -498,6 +498,7 @@ export function PreviewButton({
 }: PreviewButtonProps) {
 	const { t } = useLingui();
 	const { blocked } = useRoomOperations();
+	const label = hasPendingChanges ? t`Preview draft` : t`Preview`;
 	return (
 		<Button
 			type="button"
@@ -507,20 +508,15 @@ export function PreviewButton({
 			onClick={onPreview}
 			disabled={isLoadingPreview || blocked}
 			icon={isLoadingPreview ? <Loader size="sm" /> : <Eye />}
+			// The reserved label's generated text would join the button's name.
+			aria-label={compact ? label : undefined}
 		>
 			{compact ? (
-				<BarLabelSlot
-					label={hasPendingChanges ? t`Preview draft` : t`Preview`}
-					labels={[t`Preview`, t`Preview draft`]}
-				>
-					<span className={compactBarLabelClassName}>
-						{hasPendingChanges ? t`Preview draft` : t`Preview`}
-					</span>
+				<BarLabelSlot label={label} labels={[t`Preview`, t`Preview draft`]}>
+					<span className={compactBarLabelClassName}>{label}</span>
 				</BarLabelSlot>
-			) : hasPendingChanges ? (
-				t`Preview draft`
 			) : (
-				t`Preview`
+				label
 			)}
 		</Button>
 	);
