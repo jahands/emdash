@@ -86,6 +86,16 @@ function duplicateRows(profile) {
 	return rows;
 }
 
+const range = (s) => (s.min === s.max ? `${s.min}` : `${s.min}-${s.max}`);
+
+/** How a candidate regression was judged: the pooled samples, the statistic and their range. */
+export function describeConfirmation(r) {
+	const c = r.confirmation;
+	if (!c) return "first pass only";
+	if (!c.remeasured) return "first pass only, not measured again";
+	return `${c.statistic} of ${c.before.n} vs ${c.after.n} samples; before ${range(c.before)}, after ${range(c.after)}`;
+}
+
 function compareCell(rows, where, metric) {
 	const r = rows.find((x) => x.where === where && x.metric === metric);
 	if (!r) return "-";
@@ -177,36 +187,51 @@ export function renderSummary(run) {
 		lines.push(
 			regs.length === 0
 				? "No regressions over the thresholds.\n"
-				: `${regs.length} regression(s), shown as medians when they were re-measured:\n`,
+				: `${regs.length} regression(s), shown as medians when they were measured again:\n`,
 		);
 		if (regs.length > 0) {
 			lines.push(
 				table(
-					["Profile", "Where", "Metric", "Before", "After"],
+					["Profile", "Where", "Metric", "Before", "After", "Judged on"],
 					regs.map((r) => [
 						r.profile,
 						r.where,
 						r.metric,
 						r.medianBefore ?? r.before,
 						r.medianAfter ?? r.after,
+						describeConfirmation(r),
 					]),
 				),
 			);
 		}
 		if (noise.length > 0) {
-			lines.push(
-				`${noise.length} first-pass difference(s) did not hold up when measured again (medians of ${run.options.confirmSamples + 1} samples per workspace):\n`,
-			);
+			lines.push(`${noise.length} first-pass difference(s) did not hold up when measured again:\n`);
 			lines.push(
 				table(
-					["Profile", "Where", "Metric", "First pass", "Medians"],
+					["Profile", "Where", "Metric", "First pass", "Medians", "Judged on"],
 					noise.map((r) => [
 						r.profile,
 						r.where,
 						r.metric,
 						`${r.before} -> ${r.after}`,
 						`${r.medianBefore} -> ${r.medianAfter}`,
+						describeConfirmation(r),
 					]),
+				),
+			);
+		}
+		const incomparable = new Map();
+		for (const r of run.comparison.rows.filter((x) => x.incomparable)) {
+			incomparable.set(`${r.profile}\u0000${r.where}`, r);
+		}
+		if (incomparable.size > 0) {
+			lines.push(
+				`${incomparable.size} screen(s) not compared, because one side's capture never finished loading. Their numbers are neither regressions nor improvements:\n`,
+			);
+			lines.push(
+				table(
+					["Profile", "Screen", "Why"],
+					Array.from(incomparable.values(), (r) => [r.profile, r.where, r.incomparable]),
 				),
 			);
 		}
@@ -365,7 +390,7 @@ export function renderSummary(run) {
 					`${page.viewport} ${page.name}`,
 					ms(page.lcpMs),
 					ms(page.tbtMs),
-					page.api.count,
+					page.api.polling ? `${page.api.count} (+${page.api.polling} polls)` : page.api.count,
 					page.api.waves,
 					ms(page.api.scriptsToFirstApiMs),
 					ms(page.api.lastResponseMs),

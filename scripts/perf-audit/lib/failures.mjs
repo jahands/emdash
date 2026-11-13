@@ -19,20 +19,40 @@ function sameOrigin(url, origin) {
 	}
 }
 
-/** Why a measured screen does not count as rendered, or an empty list. */
-export function pageProblems(page, origin) {
+/** What the screen still lacks of what `content.expected` asks for, from `screenState`. */
+export function contentProblems(content) {
+	const problems = [];
+	if (content.booting) problems.push("still showing the admin boot loader");
+	const expected = content.expected ?? {};
+	if (expected.selector && !content.found) problems.push(`no ${expected.selector} element`);
+	if (expected.heading && !content.heading) problems.push(`no ${expected.heading} element`);
+	if (expected.minImages && content.images < expected.minImages) {
+		problems.push(`${content.images} images, expected at least ${expected.minImages}`);
+	}
+	return problems;
+}
+
+/**
+ * Why a capture does not show the finished screen: no usable document, the
+ * page never settled, or the expected content was missing. Its numbers
+ * describe a screen that was still loading, so they cannot be compared.
+ */
+export function pageIncomplete(page) {
 	const problems = [];
 	if (page.status === null || page.status === undefined) problems.push("no document response");
 	else if (page.status >= 400) problems.push(`document status ${page.status}`);
-	const content = page.content;
-	if (content) {
-		if (content.booting) problems.push("still showing the admin boot loader");
-		const expected = content.expected ?? {};
-		if (expected.selector && !content.found) problems.push(`no ${expected.selector} element`);
-		if (expected.minImages && content.images < expected.minImages) {
-			problems.push(`${content.images} images, expected at least ${expected.minImages}`);
-		}
+	if (page.settle && !page.settle.settled) {
+		problems.push(
+			`did not settle in ${Math.round(page.settle.ms / 1000)} s${page.settle.reason ? ` (${page.settle.reason})` : ""}`,
+		);
 	}
+	if (page.content) problems.push(...contentProblems(page.content));
+	return problems;
+}
+
+/** Why a measured screen does not count as rendered, or an empty list. */
+export function pageProblems(page, origin) {
+	const problems = pageIncomplete(page);
 	for (const r of page.waterfall ?? []) {
 		if (!BROKEN_RESOURCE_TYPES.has(r.type) || !(r.status >= 400) || r.status >= 500) continue;
 		if (origin && !sameOrigin(r.url, origin)) continue;

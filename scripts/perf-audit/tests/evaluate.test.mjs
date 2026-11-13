@@ -15,6 +15,7 @@ const page = (over = {}) => ({
 	name: "admin media library",
 	viewport: "desktop",
 	url: "/_emdash/admin/media",
+	status: 200,
 	cls: 0.01,
 	api: { count: 8 },
 	bytesByType: { Image: 200_000 },

@@ -3,6 +3,7 @@
  */
 
 import { compositionDeltas } from "./bundle-composition.mjs";
+import { pageIncomplete } from "./failures.mjs";
 
 const KiB = 1024;
 const FRAME_BUDGET_MS = 50;
@@ -114,15 +115,26 @@ function pct(before, after) {
 /**
  * Compare `after` (the workspace under test) against `before` (the
  * --compare workspace). Rows cover each page and the profile-level numbers;
- * a row is a regression when it crosses its threshold.
+ * a row is a regression when it crosses its threshold. When either side's
+ * capture of a screen is incomplete, that screen's rows are marked
+ * `incomparable` with the reason and are never regressions.
  */
 export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 	const rows = [];
 	for (const after of afterProfiles) {
 		const before = beforeProfiles.find((p) => p.profile === after.profile);
 		if (!before) continue;
+		let incomparable = null;
 		const add = (where, metric, b, a, regression) =>
-			rows.push({ profile: after.profile, where, metric, before: b, after: a, regression });
+			rows.push({
+				profile: after.profile,
+				where,
+				metric,
+				before: b,
+				after: a,
+				regression: incomparable ? false : regression,
+				...(incomparable ? { incomparable } : {}),
+			});
 
 		const gzB = serverGzipBytes(before);
 		const gzA = serverGzipBytes(after);
@@ -153,6 +165,14 @@ export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 			);
 			if (!pageB) continue;
 			const where = `${pageA.viewport} ${pageA.name}`;
+			const sides = [
+				{ side: "before", problems: pageIncomplete(pageB) },
+				{ side: "after", problems: pageIncomplete(pageA) },
+			].filter((s) => s.problems.length > 0);
+			incomparable =
+				sides.length > 0
+					? sides.map((s) => `${s.side}: ${s.problems.join("; ")}`).join(" | ")
+					: null;
 			add(where, "CLS", pageB.cls, pageA.cls, pageA.cls - pageB.cls > thresholds.cls);
 			const gapB = pageB.api.scriptsToFirstApiMs;
 			const gapA = pageA.api.scriptsToFirstApiMs;
@@ -166,6 +186,9 @@ export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 				pageA.api.count,
 				pageA.api.count - pageB.api.count > thresholds.apiRequests,
 			);
+			if (pageA.api.polling || pageB.api.polling) {
+				add(where, "API polling requests", pageB.api.polling ?? 0, pageA.api.polling ?? 0, false);
+			}
 			const ib = imageBytes(pageB);
 			const ia = imageBytes(pageA);
 			add(
@@ -192,6 +215,7 @@ export function compareResults(beforeProfiles, afterProfiles, thresholds) {
 				pageA.oversizedImages.length > pageB.oversizedImages.length,
 			);
 		}
+		incomparable = null;
 		for (const wA of after.writes ?? []) {
 			const wB = (before.writes ?? []).find((w) => w.op === wA.op);
 			if (!wB) continue;
@@ -307,58 +331,126 @@ export function median(values) {
 	return sorted.length % 2 === 1 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
+/** The numbers a re-measured screen is compared on, from one capture. */
+export function pageSample(page) {
+	return {
+		valid: pageIncomplete(page).length === 0,
+		cls: page.cls,
+		apiCount: page.api.count,
+		apiPolling: page.api.polling ?? 0,
+		imageBytes: page.bytesByType?.Image ?? 0,
+		oversized: page.oversizedImages.length,
+		lateDiscovered: page.lateDiscovered?.length ?? null,
+	};
+}
+
+const PAGE_METRICS = {
+	CLS: (s) => s.cls,
+	"API requests": (s) => s.apiCount,
+	"image bytes": (s) => s.imageBytes,
+	"oversized images": (s) => s.oversized,
+	"late-discovered JS/CSS": (s) => s.lateDiscovered,
+};
+
+const WRITE_METRICS = {
+	queries: (o) => o.queries,
+	"DB waves": (o) => o.dbWaves,
+	"TTFB ms": (o) => o.ttfbMs,
+	"total round trips": (o) =>
+		typeof o.dbRoundTrips === "number" && typeof o.afterResponse?.roundTrips === "number"
+			? o.dbRoundTrips + o.afterResponse.roundTrips
+			: null,
+};
+
+/** One cold-start measurement's raw restarts that got a response below 400. */
+function coldSamples(sample) {
+	if (!sample) return [];
+	const values = sample.samplesTtfbMs ?? [sample.ttfbMs];
+	const statuses = sample.samplesStatus ?? [sample.status];
+	return values.filter((v, i) => typeof v === "number" && !(statuses[i] >= 400));
+}
+
 /**
- * A copy of `profile` whose re-measured screens and cold starts carry the
- * median of the original measurement and the extra samples.
+ * Every raw sample of one comparison row's metric from one workspace: the
+ * first pass and the re-measurements in `extra`, leaving out incomplete
+ * screen captures. Null when the row's metric is not re-measured.
+ */
+export function pooledSamples(profile, extra, row) {
+	if (row.where === "cold start") {
+		const [key] = row.metric.split(" ");
+		return [profile.coldStart?.[key], ...(extra?.coldStart ?? []).map((c) => c[key])].flatMap(
+			coldSamples,
+		);
+	}
+	if (row.where.startsWith("write ")) {
+		const pick = WRITE_METRICS[row.metric];
+		const op = row.where.slice("write ".length);
+		if (!pick) return null;
+		return [
+			profile.writes?.find((w) => w.op === op),
+			...(extra?.writes ?? []).map((ops) => ops.find((o) => o.op === op)),
+		]
+			.filter(Boolean)
+			.map(pick)
+			.filter((v) => typeof v === "number");
+	}
+	const pick = PAGE_METRICS[row.metric];
+	const page = (profile.pages ?? []).find((p) => `${p.viewport} ${p.name}` === row.where);
+	if (!pick || !page) return null;
+	return [pageSample(page), ...(extra?.pages?.[row.where] ?? [])]
+		.filter((s) => s.valid !== false)
+		.map(pick)
+		.filter((v) => typeof v === "number");
+}
+
+/**
+ * A copy of `profile` whose re-measured screens, cold starts and writes
+ * carry the median of all their raw samples (see `pooledSamples`).
  */
 export function withSamples(profile, extra) {
 	if (!extra) return profile;
+	const mid = (row) => median(pooledSamples(profile, extra, row) ?? []);
 	const pages = (profile.pages ?? []).map((page) => {
-		const samples = extra.pages?.[`${page.viewport} ${page.name}`];
-		if (!samples || samples.length === 0) return page;
-		const all = [
-			{
-				cls: page.cls,
-				apiCount: page.api.count,
-				imageBytes: page.bytesByType?.Image ?? 0,
-				oversized: page.oversizedImages.length,
-			},
-			...samples,
-		];
+		const where = `${page.viewport} ${page.name}`;
+		if (!(extra.pages?.[where]?.length > 0)) return page;
+		const at = (metric) => mid({ where, metric });
+		const late = at("late-discovered JS/CSS");
 		return {
 			...page,
-			cls: median(all.map((s) => s.cls)),
-			api: { ...page.api, count: median(all.map((s) => s.apiCount)) },
-			bytesByType: { ...page.bytesByType, Image: median(all.map((s) => s.imageBytes)) },
-			oversizedImages: Array.from({ length: Math.round(median(all.map((s) => s.oversized))) }),
+			cls: at("CLS"),
+			api: { ...page.api, count: at("API requests") },
+			bytesByType: { ...page.bytesByType, Image: at("image bytes") },
+			oversizedImages: Array.from({ length: Math.round(at("oversized images") ?? 0) }),
+			...(late === null ? {} : { lateDiscovered: Array.from({ length: Math.round(late) }) }),
 		};
 	});
 	let coldStart = profile.coldStart;
 	if (coldStart && extra.coldStart?.length > 0) {
-		const all = [coldStart, ...extra.coldStart];
 		coldStart = Object.fromEntries(
 			Object.keys(coldStart).map((key) => [
 				key,
-				{ ...coldStart[key], ttfbMs: median(all.map((c) => c[key]?.ttfbMs)) },
+				{ ...coldStart[key], ttfbMs: mid({ where: "cold start", metric: `${key} ttfb ms` }) },
 			]),
 		);
 	}
 	let writes = profile.writes;
 	if (writes && extra.writes?.length > 0) {
 		writes = writes.map((w) => {
-			const all = [w, ...extra.writes.map((ops) => ops.find((o) => o.op === w.op)).filter(Boolean)];
-			const mid = (pick) => median(all.map(pick));
+			const at = (metric) => mid({ where: `write ${w.op}`, metric });
+			const ops = [w, ...extra.writes.map((o) => o.find((x) => x.op === w.op)).filter(Boolean)];
 			return {
 				...w,
-				queries: mid((o) => o.queries),
-				ttfbMs: mid((o) => o.ttfbMs),
-				...(typeof w.dbWaves === "number" ? { dbWaves: mid((o) => o.dbWaves) } : {}),
-				...(typeof w.dbRoundTrips === "number" ? { dbRoundTrips: mid((o) => o.dbRoundTrips) } : {}),
+				queries: at("queries"),
+				ttfbMs: at("TTFB ms"),
+				...(typeof w.dbWaves === "number" ? { dbWaves: at("DB waves") } : {}),
+				...(typeof w.dbRoundTrips === "number"
+					? { dbRoundTrips: median(ops.map((o) => o.dbRoundTrips)) }
+					: {}),
 				...(w.afterResponse
 					? {
 							afterResponse: {
 								...w.afterResponse,
-								roundTrips: mid((o) => o.afterResponse?.roundTrips),
+								roundTrips: median(ops.map((o) => o.afterResponse?.roundTrips)),
 							},
 						}
 					: {}),
@@ -387,9 +479,20 @@ export function confirmationPlan(regressions) {
 	return plan;
 }
 
+function spread(values) {
+	return values.length === 0
+		? null
+		: { n: values.length, min: Math.min(...values), max: Math.max(...values) };
+}
+
 /**
- * Re-judge candidate regressions on medians. A candidate stays a regression
- * only when the median comparison still crosses its threshold.
+ * Re-judge candidate regressions on the medians of pooled raw samples from
+ * each workspace. A candidate stays a regression only when the median
+ * comparison still crosses its threshold. Each candidate's `confirmation`
+ * says how many samples each side pooled and their range; `remeasured` is
+ * false when either side got no valid repeat sample (scenarios and build
+ * output are never measured again), and then `confirmed` is the first-pass
+ * judgement.
  */
 export function confirmRegressions(candidates, before, after, extraBefore, extraAfter, thresholds) {
 	const medianBefore = before.map((p) => withSamples(p, extraBefore[p.profile]));
@@ -397,12 +500,24 @@ export function confirmRegressions(candidates, before, after, extraBefore, extra
 	const { rows } = compareResults(medianBefore, medianAfter, thresholds);
 	const byKey = new Map(rows.map((r) => [rowKey(r), r]));
 	return candidates.map((c) => {
-		const m = byKey.get(rowKey(c));
+		const pool = (profiles, extra) => {
+			const p = profiles.find((x) => x.profile === c.profile);
+			const all = p ? pooledSamples(p, extra[c.profile], c) : null;
+			const firstPass = p ? pooledSamples(p, null, c) : null;
+			return all && firstPass && all.length > firstPass.length ? all : null;
+		};
+		const b = pool(before, extraBefore);
+		const a = pool(after, extraAfter);
+		const remeasured = b !== null && a !== null;
+		const m = remeasured ? byKey.get(rowKey(c)) : null;
 		return {
 			...c,
 			medianBefore: m?.before ?? c.before,
 			medianAfter: m?.after ?? c.after,
 			confirmed: m ? m.regression : c.regression,
+			confirmation: remeasured
+				? { remeasured, statistic: "median", before: spread(b), after: spread(a) }
+				: { remeasured },
 		};
 	});
 }

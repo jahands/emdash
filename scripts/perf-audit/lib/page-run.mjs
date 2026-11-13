@@ -7,6 +7,7 @@ import { dirname } from "node:path";
 import { promisify } from "node:util";
 import zlib from "node:zlib";
 
+import { contentProblems } from "./failures.mjs";
 import { measurePixels } from "./image-pixels.mjs";
 import {
 	auditImages,
@@ -17,6 +18,7 @@ import {
 	isCompressibleMime,
 	lateDiscoveries,
 	parseServerTiming,
+	pollingKey,
 	summarizeRequests,
 } from "./metrics.mjs";
 import { collectProbe, installProbe } from "./probe.mjs";
@@ -114,24 +116,36 @@ async function sizeAsCompressed(cdp, record) {
  * Record every request the page makes through the DevTools protocol. With
  * `sizeCompressed`, uncompressed text responses also get `compressedBytes`
  * once `pendingSizes` settles.
+ *
+ * `inflight`, `pending` and `lastActivity` leave out polls (see
+ * `pollingKey`), so a screen that keeps polling can still settle.
  */
 export function recordNetwork(cdp, { sizeCompressed = false } = {}) {
 	const byId = new Map();
+	const polled = new Set();
 	const state = {
 		navStart: null,
 		inflight: 0,
 		lastActivity: Date.now(),
 		requests: [],
+		/** Requests still in flight, polls left out, by request id. */
+		pending: new Map(),
 		/** @type {Promise<void>[]} */
 		pendingSizes: [],
+	};
+	const settleRecord = (r) => {
+		byId.delete(r.id);
+		if (r.poll) return;
+		state.pending.delete(r.id);
+		state.inflight--;
+		state.lastActivity = Date.now();
 	};
 	cdp.on("Network.requestWillBeSent", (e) => {
 		if (e.redirectResponse && byId.has(e.requestId)) {
 			const prev = byId.get(e.requestId);
 			prev.end = e.timestamp;
 			prev.status = e.redirectResponse.status;
-			byId.delete(e.requestId);
-			state.inflight--;
+			settleRecord(prev);
 		}
 		if (state.navStart === null && e.type === "Document") state.navStart = e.timestamp;
 		const record = {
@@ -151,9 +165,17 @@ export function recordNetwork(cdp, { sizeCompressed = false } = {}) {
 			fromCache: false,
 			encoding: null,
 			compressedBytes: null,
+			poll: false,
 		};
+		const key = pollingKey(record.method, record.url);
+		if (key !== null) {
+			record.poll = polled.has(key);
+			polled.add(key);
+		}
 		byId.set(e.requestId, record);
 		state.requests.push(record);
+		if (record.poll) return;
+		state.pending.set(e.requestId, record);
 		state.inflight++;
 		state.lastActivity = Date.now();
 	});
@@ -172,7 +194,7 @@ export function recordNetwork(cdp, { sizeCompressed = false } = {}) {
 		r.serverTiming = parseServerTiming(headers["server-timing"]);
 		r.encoding = headers["content-encoding"] ?? null;
 		r.emulated = headers["x-perf-audit-emulated"] ?? null;
-		state.lastActivity = Date.now();
+		if (!r.poll) state.lastActivity = Date.now();
 	});
 	const finish = (e, failed) => {
 		const r = byId.get(e.requestId);
@@ -191,9 +213,7 @@ export function recordNetwork(cdp, { sizeCompressed = false } = {}) {
 		) {
 			state.pendingSizes.push(sizeAsCompressed(cdp, r));
 		}
-		byId.delete(e.requestId);
-		state.inflight--;
-		state.lastActivity = Date.now();
+		settleRecord(r);
 	};
 	cdp.on("Network.loadingFinished", (e) => finish(e, false));
 	cdp.on("Network.loadingFailed", (e) => finish(e, true));
@@ -221,24 +241,58 @@ export function normalizeRequests(state) {
 		fromCache: r.fromCache,
 		encoding: r.encoding,
 		compressedBytes: r.compressedBytes,
+		poll: r.poll,
 	}));
 }
 
-/** Wait until the network is quiet and nothing has shifted for `quietMs`. */
-export async function waitForSettle(page, network, { quietMs = 1000, maxMs = 25_000 } = {}) {
+function networkBusy(network, quietMs) {
+	if (network.inflight > 0) {
+		const urls = [...(network.pending?.values() ?? [])].slice(0, 3).map((r) => r.url);
+		return `${network.inflight} request(s) in flight${urls.length > 0 ? `: ${urls.join(", ")}` : ""}`;
+	}
+	if (Date.now() - network.lastActivity < quietMs) return "network active";
+	return null;
+}
+
+/**
+ * Wait until the screen is finished: no request in flight and none started
+ * or finished for `quietMs`, nothing shifted for `quietMs`, and, with
+ * `expected`, the content `screenState` checks is present. The network is
+ * checked again after reading the page, since a request can start while
+ * that read is awaited. Unsettled results carry the last `reason`.
+ */
+export async function waitForSettle(
+	page,
+	network,
+	{ quietMs = 1000, maxMs = 25_000, expected = null } = {},
+) {
 	const started = Date.now();
+	let reason = null;
 	while (Date.now() - started < maxMs) {
 		await sleep(100);
-		if (network.inflight > 0 || Date.now() - network.lastActivity < quietMs) continue;
-		const sinceShift = await page
-			.evaluate(() => {
-				const last = window.__perfProbe?.shifts.at(-1);
-				return last ? performance.now() - last.startTime : Infinity;
-			})
-			.catch(() => Infinity);
-		if (sinceShift >= quietMs) return { settled: true, ms: Date.now() - started };
+		reason = networkBusy(network, quietMs);
+		if (reason) continue;
+		const mark = network.lastActivity;
+		const state = await page.evaluate(screenState, expected).catch(() => null);
+		reason =
+			networkBusy(network, quietMs) ?? (network.lastActivity === mark ? null : "network active");
+		if (reason) continue;
+		if (state === null || typeof state !== "object") {
+			reason = "page could not be read";
+			continue;
+		}
+		if (state.sinceShift < quietMs) {
+			reason = "layout still shifting";
+			continue;
+		}
+		const missing = expected ? contentProblems(state) : [];
+		if (missing.length > 0) {
+			reason = missing.join("; ");
+			continue;
+		}
+		return { settled: true, ms: Date.now() - started };
 	}
-	return { settled: false, ms: Date.now() - started };
+	return { settled: false, ms: Date.now() - started, reason };
 }
 
 /** Requests the admin waits for before it renders a screen. */
@@ -286,13 +340,19 @@ async function installHold(context, page, substring, screenshotPath, notes, afte
 	);
 }
 
-/** Runs in the page: whether the screen shows what `expected` asks for. */
-export function renderedContent(expected) {
+/**
+ * Runs in the page: whether the screen shows what `expected` asks for, and
+ * how long ago the layout last shifted.
+ */
+export function screenState(expected) {
+	const last = window.__perfProbe?.shifts.at(-1);
 	return {
 		expected,
 		found: expected?.selector ? document.querySelector(expected.selector) !== null : null,
+		heading: expected?.heading ? document.querySelector(expected.heading) !== null : null,
 		booting: document.getElementById("emdash-boot-loader") !== null,
 		images: document.images.length,
+		sinceShift: last ? performance.now() - last.startTime : Infinity,
 	};
 }
 
@@ -338,9 +398,14 @@ export async function measurePage({
 		const url = `${site.origin}${target.path}`;
 		const response = await page.goto(url, { waitUntil: "load", timeout: 60_000 });
 		const throttled = options.network || options.cpu > 1 || options.slowApi > 0 || options.hold;
-		const settle = await waitForSettle(page, network, { maxMs: throttled ? 180_000 : 25_000 });
+		const settle = await waitForSettle(page, network, {
+			maxMs: throttled ? 180_000 : 25_000,
+			// An error document never shows the screen; waiting for it would only time out.
+			expected: response && response.status() < 400 ? (target.expect ?? null) : null,
+		});
 		const probe = await page.evaluate(collectProbe);
-		const content = await page.evaluate(renderedContent, target.expect ?? null);
+		const content = await page.evaluate(screenState, target.expect ?? null);
+		delete content.sinceShift;
 		if (options.screenshots) {
 			mkdirSync(dirname(paths.screenshot), { recursive: true });
 			await page.screenshot({ path: paths.screenshot });

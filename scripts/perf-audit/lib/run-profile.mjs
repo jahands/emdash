@@ -11,8 +11,8 @@ import { measureBuildOutput, measureInitialAdminJs } from "./build-output.mjs";
 import { adminComposition, serverComposition } from "./bundle-composition.mjs";
 import { burstPlan, measureColdBursts } from "./cold-burst.mjs";
 import { measureColdStarts } from "./cold-start.mjs";
-import { failedResponses } from "./evaluate.mjs";
-import { pageProblems } from "./failures.mjs";
+import { failedResponses, pageSample } from "./evaluate.mjs";
+import { pageIncomplete, pageProblems } from "./failures.mjs";
 import { RestoreLedger } from "./ledger.mjs";
 import { measurePage } from "./page-run.mjs";
 import { prepareProfile, SEEDED } from "./prepare.mjs";
@@ -116,6 +116,24 @@ export function screenshotRoot(resultsDir, label, profileId) {
 }
 
 /**
+ * Measure a screen with `measure(phase)`, and once more after `beforeRetry`
+ * when the capture never finished loading (see `pageIncomplete`). Error
+ * documents are not retried. The page keeps the first attempt's problems in
+ * `retried`, and stays incomplete if the second attempt is too. Returns the
+ * phase whose queries belong to the returned page.
+ */
+export async function measureScreen(measure, { phase, beforeRetry }) {
+	const first = await measure(phase);
+	const problems = pageIncomplete(first);
+	if (problems.length === 0 || first.status >= 400) return { page: first, phase };
+	await beforeRetry();
+	const retryPhase = `${phase}:retry`;
+	const page = await measure(retryPhase);
+	page.retried = { problems };
+	return { page, phase: retryPhase };
+}
+
+/**
  * Build output and bundle composition. They are seconds of synchronous work,
  * so they run once the server is closed: blocking the event loop that long
  * while keep-alive connections to the server are pooled lets the server close
@@ -206,20 +224,27 @@ export async function runProfile(ctx) {
 				const shotBase = join(shots, viewport, slug(target.name));
 				try {
 					await ensureClean(name);
-					const page = await measurePage({
-						browser,
-						site,
-						target,
-						viewport,
-						cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
-						options,
-						phase,
-						paths: { screenshot: `${shotBase}.png`, hold: `${shotBase}-hold.png` },
-						pixelCache,
-					});
-					const sql = eventsForPhase(site, phase).map((e) => e.sql);
-					page.serverQueriesLogged = sql.length;
-					ledger.record(name, { observedSql: sql });
+					const { page, phase: measuredPhase } = await measureScreen(
+						async (attemptPhase) => {
+							const measured = await measurePage({
+								browser,
+								site,
+								target,
+								viewport,
+								cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
+								options,
+								phase: attemptPhase,
+								paths: { screenshot: `${shotBase}.png`, hold: `${shotBase}-hold.png` },
+								pixelCache,
+							});
+							ledger.record(name, {
+								observedSql: eventsForPhase(site, attemptPhase).map((e) => e.sql),
+							});
+							return measured;
+						},
+						{ phase, beforeRetry: () => ensureClean(`${name} (retry)`) },
+					);
+					page.serverQueriesLogged = eventsForPhase(site, measuredPhase).length;
 					await ensureClean(`${name} (server pass)`);
 					page.serverPass = await serverPass(site, page, {
 						cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
@@ -229,8 +254,9 @@ export async function runProfile(ctx) {
 						observedSql: page.serverPass.flatMap((r) => r.sql),
 					});
 					result.pages.push({ name: target.name, kind: target.kind, viewport, ...page });
+					const incomplete = pageIncomplete(page);
 					log(
-						`  ${viewport.padEnd(7)} ${target.name.padEnd(34)} CLS ${page.cls.toFixed(3)}  LCP ${page.lcpMs ?? "-"} ms  API ${page.api.count}  oversized ${page.oversizedImages.length}`,
+						`  ${viewport.padEnd(7)} ${target.name.padEnd(34)} CLS ${page.cls.toFixed(3)}  LCP ${page.lcpMs ?? "-"} ms  API ${page.api.count}${page.api.polling ? ` (+${page.api.polling} polls)` : ""}  oversized ${page.oversizedImages.length}${page.retried ? "  retried" : ""}${incomplete.length > 0 ? `  INCOMPLETE: ${incomplete.join("; ")}` : ""}`,
 					);
 				} catch (error) {
 					result.errors.push({
@@ -399,28 +425,28 @@ export async function remeasureProfile(ctx, { pages, coldStart, writes, samples 
 			out.pages[key] = [];
 			for (let i = 0; i < samples; i++) {
 				await ensureClean(key);
-				const phase = `confirm:${viewport}:${slug(name)}:${i}`;
-				const page = await measurePage({
-					browser,
-					site,
-					target,
-					viewport,
-					cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
-					options: { ...options, screenshots: false, hold: null },
-					phase,
-					paths: {},
-				});
-				ledger.record(key, { observedSql: eventsForPhase(site, phase).map((e) => e.sql) });
+				const { page } = await measureScreen(
+					async (phase) => {
+						const measured = await measurePage({
+							browser,
+							site,
+							target,
+							viewport,
+							cookies: target.kind === "admin" && !target.signedOut ? cookies : null,
+							options: { ...options, screenshots: false, hold: null },
+							phase,
+							paths: {},
+						});
+						ledger.record(key, { observedSql: eventsForPhase(site, phase).map((e) => e.sql) });
+						return measured;
+					},
+					{ phase: `confirm:${viewport}:${slug(name)}:${i}`, beforeRetry: () => ensureClean(key) },
+				);
 				const problems = pageProblems(page, site.origin);
 				if (problems.length > 0) {
 					out.errors.push({ measurement: `${key} sample ${i + 1}`, error: problems.join("; ") });
 				}
-				out.pages[key].push({
-					cls: page.cls,
-					apiCount: page.api.count,
-					imageBytes: page.bytesByType?.Image ?? 0,
-					oversized: page.oversizedImages.length,
-				});
+				out.pages[key].push(pageSample(page));
 			}
 		}
 		if (coldStart) {

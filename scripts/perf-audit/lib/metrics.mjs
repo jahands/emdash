@@ -159,6 +159,27 @@ export function isApiRequest(url) {
 	}
 }
 
+/**
+ * API endpoints the admin polls while a screen stays open: media-usage
+ * indexing progress, and the calendar's refresh of the range that contains
+ * now. The first request with a given method and URL to one of them is part
+ * of loading the screen; each repeat of it is a poll.
+ */
+export const POLLING_API_PATHS = [
+	"/_emdash/api/admin/media-usage/progress",
+	"/_emdash/api/calendar",
+];
+
+/** The key that identifies repeats of a polled request, or null when `url` is not a polling endpoint. */
+export function pollingKey(method, url) {
+	try {
+		const { pathname, search } = new URL(url);
+		return POLLING_API_PATHS.includes(pathname) ? `${method} ${pathname}${search}` : null;
+	} catch {
+		return null;
+	}
+}
+
 /** Whether a CDN or compressing server would encode a response of this MIME type. */
 export function isCompressibleMime(mime) {
 	if (!mime) return false;
@@ -184,11 +205,15 @@ export function isCompressibleMime(mime) {
  * - `inferred-timing`: an API call issued within 60 ms of another API
  *   response finishing. Chromium does not record which response a script
  *   awaited, so this is a guess; hold the request to prove it.
+ *
+ * Requests marked `poll` are counted in `api.polling` and left out of every
+ * other API number.
  */
 export function summarizeRequests(requests) {
 	const byUrl = new Map();
 	for (const r of requests) if (!byUrl.has(r.url)) byUrl.set(r.url, r);
-	const api = requests.filter((r) => isApiRequest(r.url));
+	const api = requests.filter((r) => isApiRequest(r.url) && !r.poll);
+	const polls = requests.filter((r) => r.poll);
 	const sortedApi = api.toSorted((a, b) => a.start - b.start);
 
 	const withDeps = requests.map((r) => {
@@ -266,6 +291,7 @@ export function summarizeRequests(requests) {
 			scriptsToFirstApiMs: scriptsDone === null ? null : Math.round(firstApi.start - scriptsDone),
 			waves: computeWaves(apiIntervals, { toleranceMs: 2 }).waves,
 			failed: api.filter((r) => r.failed || (r.status ?? 0) >= 400).length,
+			polling: polls.length,
 		},
 		criticalChain: chain,
 		inferredLinks: withDeps.filter((r) => r.waitedOnSource === "inferred-timing").length,
@@ -285,6 +311,7 @@ export function summarizeRequests(requests) {
 				waitedOnSource: r.waitedOnSource,
 				depth: depth.get(r),
 				dbCount: r.dbCount ?? null,
+				...(r.poll ? { poll: true } : {}),
 			})),
 	};
 }

@@ -60,11 +60,21 @@ The state is then snapshotted: the database, uploads and sessions, or `.wrangler
 
 The screens are the admin dashboard, each collection's list, the long entry's editor, a new entry, the collection's content type, media, every settings page, menus, the taxonomy, users, calendar, comments, bylines and the byline schema, content types and relations, redirects, widgets, sections, plugins, the WordPress importer, and the signed-out login page; then the public home, the long entry and an archive. The plugin and theme marketplaces are left out because they load from external registries.
 
+A screen is measured once it has finished loading. That means all of these hold at the same time:
+
+- no request is in flight, and none started or finished in the last second
+- nothing on the page has shifted in the last second
+- the screen shows what it must: signed-in admin screens are past the boot loader and show their heading inside the shell's `<main>`, the login screen shows its heading, public pages show `<main>` and an `<h1>`, and the image-heavy entry shows at least one image
+
+The harness checks the network again after reading the page, because a request can start while it reads. A screen that hasn't finished after 25 seconds (180 with throttling or `--hold`) is measured once more. If it still hasn't finished, the summary lists it under "Failed checks" with what it was waiting for, and its numbers are never compared.
+
+Some screens keep polling while they are open: media-usage indexing progress and the calendar's refresh. The first request with a given method and URL to `/_emdash/api/admin/media-usage/progress` or `/_emdash/api/calendar` counts as part of loading the screen, and each repeat of it counts as a poll. Polls don't keep a screen from finishing, and they are counted separately from the screen's API requests.
+
 For each screen:
 
 - CLS with Chrome's session windows, plus the elements that moved, by how much, and when
 - LCP, FCP and total blocking time, in Chromium's new headless mode so paint timing is real
-- API requests, their bytes, the time to the last API response, and API waves (calls that waited for an earlier response)
+- API requests, their bytes, the time to the last API response, and API waves (calls that waited for an earlier response). Polls are left out of these and counted on their own.
 - the time from the last script that finished before the first API request to that request, which shows main-thread work or idle waiting between loading the admin and asking for data
 - scripts and stylesheets on the critical path that the browser only found by parsing another script, with the chain that led to each. The critical path ends at the screen's first API request, or at `load` on public pages.
 - the request waterfall, with the request each one waited on and how that is known: the initiator Chromium recorded, or, for an API call issued right after another API response, a guess from timing, labelled `inferred-timing`. Chromium does not record which response a script awaited, so hold the request (`--hold`) to prove a dependency.
@@ -134,7 +144,7 @@ A run exits with code 1 and lists the cause under "Failed checks" in `summary.md
 
 - a profile, a measurement or a confirmation sample throws, or the server exits during the run
 - a page load, server-pass replay, cold start, write or query-plan request gets a 5xx
-- a screen gets an error status, or doesn't render what it must: the template's `<main>` on public pages, the admin shell's `<main>` on signed-in admin screens, the heading on the login screen, and at least one image on the image-heavy entry; a same-origin script, stylesheet or image that gets a 4xx also fails the screen
+- a screen gets an error status, doesn't finish loading, or doesn't render what it must (see [What is measured](#what-is-measured)); a same-origin script, stylesheet or image that gets a 4xx also fails the screen
 - a scenario errors, including one of several repeated runs
 - any cold-start restart gets a 4xx or 5xx
 - a query-plan request fails, an `EXPLAIN` fails, or no query is explained
@@ -150,9 +160,11 @@ Budget overruns and failed cold-start burst requests also exit with code 1. Comp
 - typing's input-to-frame p95 is over 50 ms and more than 25% above the other workspace's faster run in both of this workspace's runs. The row notes the machine's CPU use in each workspace.
 - a write runs at least one more query, has at least one more DB wave, makes at least one more round trip during and after the response together, or its TTFB rises by more than 20% and 10 ms. Round trips after the response are shown but not flagged on their own, because moving work into `after()` is how a write gets faster.
 
-The table also shows each screen's JS-done-to-first-API time, which is never flagged because it moves with machine load. When bundle composition changes, the summary lists each package that grew or shrank by 2 KiB or more, so a growing bundle names its cause. Change the thresholds with `--threshold-cls`, `--threshold-server-gz`, `--threshold-api`, `--threshold-image-bytes`, `--threshold-cold-start`, `--threshold-write-queries`, `--threshold-write-waves` and `--threshold-write-ttfb`.
+When either workspace's capture of a screen didn't finish loading, the screen isn't compared. The summary lists it with the reason instead of reporting its numbers as a regression or an improvement. A boot loader that never went away, for example, would otherwise show up as fewer API requests and images on one side.
 
-Layout races, cold starts and write timings vary between runs of the same code, so each first-pass regression is measured twice more in both workspaces and judged on the median of three. Differences that don't hold up are listed separately in the summary. Set the number of extra samples with `--confirm-samples` (0 turns confirmation off).
+The table also shows each screen's JS-done-to-first-API time, which is never flagged because it moves with machine load, and its polls, which are never flagged because their number depends on how long the screen stayed open. When bundle composition changes, the summary lists each package that grew or shrank by 2 KiB or more, so a growing bundle names its cause. Change the thresholds with `--threshold-cls`, `--threshold-server-gz`, `--threshold-api`, `--threshold-image-bytes`, `--threshold-cold-start`, `--threshold-write-queries`, `--threshold-write-waves` and `--threshold-write-ttfb`.
+
+Layout races, cold starts and write timings vary between runs of the same code, so each first-pass regression is measured twice more in both workspaces. It is then judged on the median of every raw sample from that workspace: the first-pass screen plus the repeats, or every cold-start restart (three per pass, so nine), or every write pass. Captures that didn't finish loading are left out. For each regression the summary says how many samples each side pooled and their range. Differences that don't hold up are listed separately. Typing scenarios and build output aren't measured again; their rows say "first pass only". The raw repeat samples are kept in `results.json` under `comparison.confirmationSamples`. Set the number of extra samples with `--confirm-samples` (0 turns confirmation off).
 
 Both workspaces need `pnpm install` and `pnpm build`. The compare workspace's sites live in `.perf-audit/work/<slot>/compare/`.
 

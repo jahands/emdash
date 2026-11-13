@@ -30,7 +30,7 @@ import {
 	resolveProfile,
 	selectProfiles,
 } from "./lib/profiles.mjs";
-import { renderSummary } from "./lib/report.mjs";
+import { describeConfirmation, renderSummary } from "./lib/report.mjs";
 import { remeasureProfile, runProfile } from "./lib/run-profile.mjs";
 
 const harnessRoot = resolve(import.meta.dirname, "../..");
@@ -316,6 +316,7 @@ async function main() {
 					options.thresholds,
 				);
 				run.comparison.candidates = judged;
+				run.comparison.confirmationSamples = { compare: extraBefore, primary: extraAfter };
 				run.comparison.regressions = judged.filter((c) => c.confirmed);
 			}
 		}
@@ -344,12 +345,20 @@ async function main() {
 		);
 		for (const r of run.comparison.regressions) {
 			console.log(
-				`  ${r.profile} ${r.where} ${r.metric}: ${r.medianBefore ?? r.before} -> ${r.medianAfter ?? r.after}`,
+				`  ${r.profile} ${r.where} ${r.metric}: ${r.medianBefore ?? r.before} -> ${r.medianAfter ?? r.after} (${describeConfirmation(r)})`,
 			);
 		}
 		const noise = (run.comparison.candidates ?? []).filter((c) => !c.confirmed);
 		if (noise.length > 0) {
 			console.log(`Compare: ${noise.length} candidate(s) did not hold up on repeat samples.`);
+		}
+		const incomparable = new Set(
+			run.comparison.rows.filter((r) => r.incomparable).map((r) => `${r.profile} ${r.where}`),
+		);
+		if (incomparable.size > 0) {
+			console.log(
+				`Compare: ${incomparable.size} screen(s) not compared because a capture was incomplete.`,
+			);
 		}
 	}
 	for (const f of run.budgetFailures) {
