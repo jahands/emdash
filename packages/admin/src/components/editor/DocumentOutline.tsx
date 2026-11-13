@@ -168,9 +168,17 @@ export function DocumentOutline({ editor, className }: DocumentOutlineProps) {
 			if (!frame) frame = requestAnimationFrame(updateCurrent);
 		};
 		const updateHeadings = () => {
+			const previous = headingsRef.current;
 			const next = extractHeadings(editor);
 			headingsRef.current = next;
-			setHeadings(next);
+			// Typing moves the headings after the caret; the list only shows their text and nesting.
+			const listChanged =
+				next.length !== previous.length ||
+				next.some(
+					(heading, index) =>
+						heading.text !== previous[index]!.text || heading.depth !== previous[index]!.depth,
+				);
+			if (listChanged) setHeadings(next);
 			scheduleCurrent();
 		};
 
@@ -202,7 +210,8 @@ export function DocumentOutline({ editor, className }: DocumentOutlineProps) {
 		if (currentIndex !== -1) setIndicator({ index: currentIndex, slide: previousIndex !== -1 });
 	}
 
-	const handleHeadingClick = (heading: HeadingItem, event: React.MouseEvent) => {
+	const handleHeadingClick = (listed: HeadingItem, event: React.MouseEvent) => {
+		const heading = headingsRef.current.find(({ key }) => key === listed.key) ?? listed;
 		// Keyboard activation clicks with a detail of 0 and no pointer.
 		const pointerType = event.detail > 0 ? pointerTypeRef.current : null;
 		pointerTypeRef.current = null;

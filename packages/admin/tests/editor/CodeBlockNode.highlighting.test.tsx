@@ -92,3 +92,67 @@ describe("CodeBlockExtension highlighting", () => {
 		expect(editor!.getJSON().content?.[0]?.content?.[0]?.text).toBe('const greeting = "hello";');
 	});
 });
+
+describe("CodeBlockExtension highlighting while editing around code", () => {
+	function DocumentEditor({ onEditor }: { onEditor: (editor: Editor) => void }) {
+		const editor = useEditor({
+			extensions: [StarterKit.configure({ codeBlock: false }), CodeBlockExtension],
+			content: {
+				type: "doc",
+				content: [
+					{ type: "paragraph", content: [{ type: "text", text: "Intro" }] },
+					{
+						type: "codeBlock",
+						attrs: { language: "javascript" },
+						content: [{ type: "text", text: "let a" }],
+					},
+				],
+			},
+			immediatelyRender: true,
+		});
+		useEffect(() => {
+			if (editor) onEditor(editor);
+		}, [editor, onEditor]);
+		return <EditorContent editor={editor} />;
+	}
+
+	async function renderDocument() {
+		let editor: Editor | undefined;
+		const screen = await render(<DocumentEditor onEditor={(instance) => (editor = instance)} />);
+		await vi.waitFor(() => expect(editor).toBeTruthy());
+		const tokens = (selector: string) =>
+			Array.from(screen.container.querySelectorAll(`pre ${selector}`), (span) => span.textContent);
+		await vi.waitFor(() => expect(tokens(".hljs-keyword")).toEqual(["let"]));
+		return { editor: editor!, tokens };
+	}
+
+	it("keeps the code highlighted while text before it changes", async () => {
+		const { editor, tokens } = await renderDocument();
+
+		editor.commands.insertContentAt(6, " and more");
+
+		expect(editor.state.doc.firstChild?.textContent).toBe("Intro and more");
+		expect(tokens(".hljs-keyword")).toEqual(["let"]);
+	});
+
+	it("highlights code as it is typed", async () => {
+		const { editor, tokens } = await renderDocument();
+		const codeEnd = editor.state.doc.content.size - 1;
+
+		editor.chain().setTextSelection(codeEnd).insertContent(' = "hi"').run();
+
+		await vi.waitFor(() => expect(tokens(".hljs-string")).toEqual(['"hi"']));
+	});
+
+	it("highlights a code block added to the document", async () => {
+		const { editor, tokens } = await renderDocument();
+
+		editor.commands.insertContentAt(0, {
+			type: "codeBlock",
+			attrs: { language: "javascript" },
+			content: [{ type: "text", text: "const b" }],
+		});
+
+		await vi.waitFor(() => expect(tokens(".hljs-keyword")).toEqual(["const", "let"]));
+	});
+});
