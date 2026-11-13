@@ -4602,6 +4602,7 @@ export class EmDashRuntime {
 		let stagedWrite: ContentWrite | undefined;
 		let stagedRow: ContentItemInternal | null = null;
 		let stagedRevision: Revision | null = null;
+		let supersededCleanup: Promise<unknown> | undefined;
 		if (processedData || bodyWithoutRev.references) {
 			if (collectionInfo?.supports?.includes("revisions")) {
 				usesDraftRevisions = true;
@@ -4782,21 +4783,18 @@ export class EmDashRuntime {
 
 					const supersededRevisionId = existing.draftRevisionId;
 					if (credit.replaces && supersededRevisionId) {
-						after(async () => {
-							try {
-								await revisionRepo.deleteIfUnreferenced(
-									collection,
-									resolvedId,
-									supersededRevisionId,
-									{ autosaveOnly: true },
-								);
-							} catch (error) {
+						// Started now and awaited before the response, so it overlaps the response's
+						// reads, and a revision list read after the save no longer holds the replaced one.
+						supersededCleanup = revisionRepo
+							.deleteIfUnreferenced(collection, resolvedId, supersededRevisionId, {
+								autosaveOnly: true,
+							})
+							.catch((error: unknown) => {
 								console.error(
 									`[emdash] Failed to clean up superseded revision ${supersededRevisionId}:`,
 									error,
 								);
-							}
-						});
+							});
 					} else {
 						after(async () => {
 							try {
@@ -4859,6 +4857,7 @@ export class EmDashRuntime {
 		const hydrated = await this.hydrateDraftData(result, {
 			knownRevision: stagedRevision ?? undefined,
 		});
+		await supersededCleanup;
 		if (hydrated.success && hydrated.data) {
 			const translationGroup = hydrated.data.item.translationGroup;
 			const syncedData = !usesDraftRevisions ? processedData : undefined;
