@@ -81,14 +81,15 @@ describe("admin EmDashOrderedList", () => {
 	});
 
 	it("keeps counting lists after text before them changes", () => {
-		const nested = (labels: string[]) => list({ start: 1, listStart: 1, listId: "nested" }, labels);
+		const nested = (start: number, labels: string[]) =>
+			list({ start, listStart: 1, listId: "nested" }, labels);
 		const editor = createEditor({
 			type: "doc",
 			content: [
 				{ type: "paragraph", content: [{ type: "text", text: "Intro" }] },
 				list({ start: 1, listStart: 1, listId: "shared" }, ["One", "Two"]),
 				{ type: "paragraph", content: [{ type: "text", text: "Between" }] },
-				list({ start: 1, listStart: 1, listId: "shared" }, ["Three"]),
+				list({ start: 3, listStart: 1, listId: "shared" }, ["Three"]),
 				{
 					type: "bulletList",
 					content: [
@@ -96,9 +97,9 @@ describe("admin EmDashOrderedList", () => {
 							type: "listItem",
 							content: [
 								{ type: "paragraph", content: [{ type: "text", text: "Item" }] },
-								nested(["a", "b"]),
+								nested(1, ["a", "b"]),
 								{ type: "paragraph", content: [{ type: "text", text: "Aside" }] },
-								nested(["c"]),
+								nested(3, ["c"]),
 							],
 						},
 					],
