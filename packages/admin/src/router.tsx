@@ -783,7 +783,12 @@ function ContentListPage() {
 		listPage && "trashTotal" in listPage && typeof listPage.trashTotal === "number"
 			? listPage.trashTotal
 			: 0;
-	const trashedCount = trash.query.data ? trash.pagination.totalCount : listTrashTotal;
+	// Whichever answered last is current: a trash page cached from an earlier
+	// visit stays put while the list refetches after an entry is trashed.
+	const trashedCount =
+		trash.query.data && trash.query.dataUpdatedAt >= contentList.query.dataUpdatedAt
+			? trash.pagination.totalCount
+			: listTrashTotal;
 
 	const deleteMutation = useMutation({
 		mutationFn: (id: string) => deleteContent(collection, id),

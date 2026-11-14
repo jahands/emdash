@@ -1379,6 +1379,22 @@ describe("ContentListPage – numbered pages", () => {
 		]);
 		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("25");
 	});
+
+	it("shows the list's newer trash count over a trash page cached earlier", async () => {
+		const { screen, router, queryClient } = await renderPosts();
+		await screen.getByRole("tab", { name: /Trash/ }).click();
+		await expect.element(screen.getByText("posts entry 1", { exact: true })).toBeInTheDocument();
+
+		await router.navigate({ to: "/content/$collection/new", params: { collection: "posts" } });
+		await expect.element(screen.getByRole("tab", { name: /Trash/ })).not.toBeInTheDocument();
+		totals.posts = 44;
+		totals["posts/trash"] = 26;
+		await queryClient.invalidateQueries({ queryKey: ["content", "posts"] });
+		await router.navigate({ to: "/content/$collection", params: { collection: "posts" } });
+
+		await expect.element(screen.getByText("Showing 1-20 of 44")).toBeInTheDocument();
+		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("26");
+	});
 });
 
 // ---------------------------------------------------------------------------
