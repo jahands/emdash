@@ -9,6 +9,7 @@ import { ulid } from "ulidx";
 
 import { normalizeFocalPoint, type FocalPointUpdate } from "../../media/focal-point.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
+import { settleAll } from "../../utils/settle.js";
 import { jsonTextValues } from "../json-recordset.js";
 import type { Database, MediaRow } from "../types.js";
 import { chunkJsonRows } from "./media-usage.js";
@@ -578,16 +579,16 @@ export class MediaRepository {
 		const limit = normalizeListLimit(options.limit);
 		const offset = (options.page - 1) * limit;
 		const filtered = this.applyListFilters(this.db.selectFrom("media"), options);
-		const rows = await filtered
-			.selectAll()
-			.orderBy("created_at", "desc")
-			.orderBy("id", "desc")
-			.limit(limit)
-			.offset(offset)
-			.execute();
-		const count = await filtered
-			.select((eb) => eb.fn.count<number>("id").as("count"))
-			.executeTakeFirst();
+		const [rows, count] = await settleAll([
+			filtered
+				.selectAll()
+				.orderBy("created_at", "desc")
+				.orderBy("id", "desc")
+				.limit(limit)
+				.offset(offset)
+				.execute(),
+			filtered.select((eb) => eb.fn.count<number>("id").as("count")).executeTakeFirst(),
+		]);
 
 		return {
 			items: rows.map((row) => this.rowToItem(row)),

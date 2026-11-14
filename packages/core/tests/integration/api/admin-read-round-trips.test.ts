@@ -22,6 +22,7 @@ import { loadAdminBootData } from "../../../src/api/admin-boot.js";
 import { handleCommentCounts } from "../../../src/api/handlers/comments.js";
 import { handleContentAuthors } from "../../../src/api/handlers/content.js";
 import { handleDashboardStats } from "../../../src/api/handlers/dashboard.js";
+import { handleMediaList } from "../../../src/api/handlers/media.js";
 import { GET as getCommentCounts } from "../../../src/astro/routes/api/admin/comments/counts.js";
 import { GET as getCurrentUser } from "../../../src/astro/routes/api/auth/me.js";
 import { GET as getEntry } from "../../../src/astro/routes/api/content/[collection]/[id].js";
@@ -344,6 +345,15 @@ describeEachDialect("admin read round trips", (dialect) => {
 		if (!result.success) throw new Error(result.error.message);
 		expect(result.data).toEqual({ pending: 0, approved: 0, spam: 0, trash: 0 });
 		expect(spans.spans).toHaveLength(1);
+	});
+
+	it("reads a numbered media page in one round trip", async () => {
+		spans.spans = [];
+		const result = await handleMediaList(handlers.db, { page: 1, limit: 35, folderId: null });
+
+		if (!result.success) throw new Error(result.error.message);
+		expect(result.data.items).toEqual([]);
+		expect(sequentialWaves(spans.spans)).toBe(1);
 	});
 
 	it("lists whole entries when no fields are selected", async () => {
