@@ -19,6 +19,7 @@ import * as React from "react";
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AdminBrandingProvider, type AdminBranding } from "./lib/admin-branding-context";
 import type { AdminManifest } from "./lib/api/client";
+import type { CommentCounts } from "./lib/api/comments";
 import {
 	currentUserQueryKey,
 	refetchCurrentUserOnForbidden,
@@ -135,6 +136,8 @@ export interface AdminAppProps {
 export interface AdminInitialData {
 	manifest: AdminManifest;
 	currentUser: CurrentUser;
+	/** Comment counts by status, for users who moderate comments. */
+	commentCounts?: CommentCounts;
 }
 
 /**
@@ -177,6 +180,9 @@ export function AdminApp({
 		if (initialData && queryClient.getQueryData(["manifest"]) === undefined) {
 			queryClient.setQueryData(["manifest"], initialData.manifest);
 			queryClient.setQueryData(currentUserQueryKey, initialData.currentUser);
+			if (initialData.commentCounts) {
+				queryClient.setQueryData(["commentCounts"], initialData.commentCounts);
+			}
 		}
 	}
 

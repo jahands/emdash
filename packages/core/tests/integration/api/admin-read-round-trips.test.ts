@@ -22,6 +22,7 @@ import { loadAdminBootData } from "../../../src/api/admin-boot.js";
 import { handleCommentCounts } from "../../../src/api/handlers/comments.js";
 import { handleContentAuthors } from "../../../src/api/handlers/content.js";
 import { handleDashboardStats } from "../../../src/api/handlers/dashboard.js";
+import { GET as getCommentCounts } from "../../../src/astro/routes/api/admin/comments/counts.js";
 import { GET as getCurrentUser } from "../../../src/astro/routes/api/auth/me.js";
 import { GET as getEntry } from "../../../src/astro/routes/api/content/[collection]/[id].js";
 import { GET as listEntries } from "../../../src/astro/routes/api/content/[collection]/index.js";
@@ -191,15 +192,39 @@ describeEachDialect("admin read round trips", (dialect) => {
 
 		const manifest = await inRequest(() => getManifest(routeContext("/manifest")));
 		const me = await inRequest(() => getCurrentUser(routeContext("/auth/me")));
+		const counts = await inRequest(() => getCommentCounts(routeContext("/admin/comments/counts")));
 		spans.spans = [];
 		const embedded = await runWithContext({ editMode: false }, () => loadAdminBootData(locals));
 
 		expect(embedded).toEqual({
 			manifest: JSON.parse(manifest.text).data,
 			currentUser: JSON.parse(me.text).data,
+			commentCounts: JSON.parse(counts.text).data,
 		});
 		expect(sequentialWaves(spans.spans)).toBeLessThanOrEqual(MANIFEST_MAX_WAVES);
-		expect(spans.spans.length).toBeLessThanOrEqual(MANIFEST_MAX_QUERIES);
+		// The comment counts are one statement beside the manifest's reads.
+		expect(spans.spans.length).toBeLessThanOrEqual(MANIFEST_MAX_QUERIES + 1);
+	});
+
+	it("embeds no comment counts for users who can't moderate comments", async () => {
+		const author = {
+			id: "user_author",
+			role: Role.AUTHOR,
+			email: "author@example.com",
+			name: "Author",
+			avatarUrl: null,
+			emailVerified: true,
+			disabled: false,
+			data: null,
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		};
+		const embedded = await runWithContext({ editMode: false }, () =>
+			loadAdminBootData({ emdash: handlers, user: author }),
+		);
+
+		expect(embedded).not.toBeNull();
+		expect(embedded).not.toHaveProperty("commentCounts");
 	});
 
 	it("answers an unchanged manifest with 304 and a changed one in full", async () => {

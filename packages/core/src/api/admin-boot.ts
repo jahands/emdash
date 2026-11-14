@@ -1,16 +1,22 @@
-import type { User } from "@emdash-cms/auth";
+import { hasPermission, type User } from "@emdash-cms/auth";
 
 import { ADMIN_BOOT_DATA_ID } from "#api/admin-boot-id.js";
 import { buildAdminManifest } from "#api/admin-manifest.js";
 import { type CurrentUserData, loadCurrentUserData } from "#api/current-user.js";
+import { handleCommentCounts } from "#api/handlers/comments.js";
 
 import type { EmDashHandlers, EmDashManifest } from "../astro/types.js";
+import type { CommentStatus } from "../database/repositories/comment.js";
 import { safeJsonLdSerialize } from "../page/metadata.js";
 
-/** What `/api/manifest` and `/api/auth/me` would answer for the signed-in user. */
+/**
+ * What `/api/manifest`, `/api/auth/me` and, for moderators, the sidebar's
+ * `/api/admin/comments/counts` would answer for the signed-in user.
+ */
 export interface AdminBootData {
 	manifest: EmDashManifest;
 	currentUser: CurrentUserData;
+	commentCounts?: Record<CommentStatus, number>;
 }
 
 /**
@@ -25,11 +31,14 @@ export async function loadAdminBootData(locals: {
 	const { user, emdash } = locals;
 	if (!user || !emdash) return null;
 	try {
-		const [manifest, currentUser] = await Promise.all([
+		const [manifest, currentUser, comments] = await Promise.all([
 			buildAdminManifest(emdash),
 			loadCurrentUserData(user, locals.__playgroundDb ? emdash.db : undefined),
+			hasPermission(user, "comments:moderate") ? handleCommentCounts(emdash.db) : undefined,
 		]);
-		return { manifest, currentUser };
+		return comments?.success
+			? { manifest, currentUser, commentCounts: comments.data }
+			: { manifest, currentUser };
 	} catch (error) {
 		console.error("[emdash] Failed to embed the admin boot data:", error);
 		return null;

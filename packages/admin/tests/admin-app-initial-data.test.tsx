@@ -1,9 +1,11 @@
+import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { AdminApp } from "../src/App.js";
 import { apiFetch } from "../src/lib/api/client.js";
+import { fetchCommentCounts } from "../src/lib/api/comments.js";
 import type { AdminManifest } from "../src/lib/api/index.js";
 import { createMockFetch } from "./utils/test-helpers.js";
 
@@ -13,14 +15,18 @@ vi.mock("../src/components/Shell.js", () => ({
 
 vi.mock("../src/components/Dashboard.js", () => ({
 	Dashboard: () => {
+		const { data: counts } = useQuery({ queryKey: ["commentCounts"], queryFn: fetchCommentCounts });
 		const [probe, setProbe] = React.useState(false);
 		React.useEffect(() => {
 			if (probe) void apiFetch("/_emdash/api/forbidden-probe");
 		}, [probe]);
 		return (
-			<button type="button" onClick={() => setProbe(true)}>
-				Dashboard content
-			</button>
+			<>
+				<button type="button" onClick={() => setProbe(true)}>
+					Dashboard content
+				</button>
+				<p>{`${counts?.pending ?? "?"} pending`}</p>
+			</>
 		);
 	},
 }));
@@ -49,7 +55,7 @@ describe("AdminApp with the data the admin page embedded", () => {
 		window.history.replaceState(null, "", initialUrl);
 	});
 
-	it("shows the first screen without fetching the manifest or the user, and refetches the user when asked", async () => {
+	it("shows the first screen without fetching the manifest, the user or the comment counts, and refetches the user when asked", async () => {
 		mockFetch = createMockFetch();
 		mockFetch
 			.on("GET", "/_emdash/api/manifest", { data: MANIFEST })
@@ -65,6 +71,7 @@ describe("AdminApp with the data the admin page embedded", () => {
 				initialData={{
 					manifest: MANIFEST,
 					currentUser: { id: "user_01", email: "a@b.c", role: 50 },
+					commentCounts: { pending: 3, approved: 0, spam: 0, trash: 0 },
 				}}
 			/>,
 		);
@@ -72,6 +79,8 @@ describe("AdminApp with the data the admin page embedded", () => {
 		await expect.element(screen.getByText("Dashboard content")).toBeInTheDocument();
 		expect(requested(fetchSpy, "/_emdash/api/manifest")).toBe(0);
 		expect(requested(fetchSpy, "/_emdash/api/auth/me")).toBe(0);
+		await expect.element(screen.getByText("3 pending")).toBeInTheDocument();
+		expect(requested(fetchSpy, "/_emdash/api/admin/comments/counts")).toBe(0);
 
 		await screen.getByText("Dashboard content").click();
 		await expect.poll(() => requested(fetchSpy, "/_emdash/api/auth/me")).toBe(1);
