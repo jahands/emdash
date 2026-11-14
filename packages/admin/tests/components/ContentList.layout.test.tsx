@@ -661,11 +661,12 @@ describe("Content list filters while authors load", () => {
 
 describe("Content list while its first page loads", () => {
 	it.each([
-		{ width: 1280, direction: "ltr" },
-		{ width: 390, direction: "rtl" },
+		{ width: 1280, direction: "ltr", count: 20, total: 61 },
+		{ width: 390, direction: "rtl", count: 20, total: 61 },
+		{ width: 1280, direction: "ltr", count: 2, total: 2 },
 	])(
-		"records no layout shift when the rows arrive at $width px in $direction",
-		async ({ width, direction }) => {
+		"records no layout shift when $count rows arrive at $width px in $direction",
+		async ({ width, direction, count, total }) => {
 			await page.viewport(width, 800);
 			const loading = { ...pagination(0), isPending: true };
 			const props = {
@@ -687,7 +688,7 @@ describe("Content list while its first page loads", () => {
 			const screen = await render(
 				shell(<ContentList {...props} items={[]} isLoading pagination={loading} />),
 			);
-			await expect.element(screen.getByText("Loading...")).toBeVisible();
+			await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
 			await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 50)));
 
 			const shifts: PerformanceEntry[] = [];
@@ -698,8 +699,8 @@ describe("Content list while its first page loads", () => {
 					shell(
 						<ContentList
 							{...props}
-							items={posts.slice(0, 20)}
-							pagination={{ ...pagination(61), perPage: 20 }}
+							items={posts.slice(0, count)}
+							pagination={{ ...pagination(total), perPage: 20 }}
 						/>,
 					),
 				);
@@ -726,6 +727,52 @@ describe("Content list while its first page loads", () => {
 				),
 			);
 			expect(moved).toEqual([]);
+		},
+	);
+});
+
+describe("Content list placeholder rows", () => {
+	const rowTops = () =>
+		Array.from(document.querySelectorAll("tbody > tr"), (row) =>
+			Math.round(row.getBoundingClientRect().top),
+		);
+
+	it.each([
+		{ width: 1280, direction: "ltr" },
+		{ width: 390, direction: "rtl" },
+	])(
+		"stand in for several entries at their size at $width px in $direction",
+		async ({ width, direction }) => {
+			await page.viewport(width, 800);
+			const props = {
+				collection: "posts",
+				collectionLabel: "Posts",
+				onSearchChange: vi.fn(),
+				onStatusFilterChange: vi.fn(),
+				onBulkDelete: vi.fn(async () => []),
+			};
+			const screen = await render(
+				<div dir={direction}>
+					<ContentList
+						{...props}
+						items={[]}
+						isLoading
+						pagination={{ ...pagination(0), isPending: true }}
+					/>
+				</div>,
+			);
+			await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+			const placeholders = rowTops();
+
+			await screen.rerender(
+				<div dir={direction}>
+					<ContentList {...props} items={posts.slice(0, 20)} pagination={pagination(20)} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("link", { name: "Post 0", exact: true })).toBeVisible();
+
+			expect(placeholders.length).toBeGreaterThan(1);
+			expect(rowTops().slice(0, placeholders.length)).toEqual(placeholders);
 		},
 	);
 });
