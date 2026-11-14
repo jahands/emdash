@@ -19,6 +19,8 @@ vi.mock("../../../src/after.js", () => ({
 }));
 
 import { loadAdminBootData } from "../../../src/api/admin-boot.js";
+import { handleCommentCounts } from "../../../src/api/handlers/comments.js";
+import { handleContentAuthors } from "../../../src/api/handlers/content.js";
 import { handleDashboardStats } from "../../../src/api/handlers/dashboard.js";
 import { GET as getCurrentUser } from "../../../src/astro/routes/api/auth/me.js";
 import { GET as getEntry } from "../../../src/astro/routes/api/content/[collection]/[id].js";
@@ -294,6 +296,29 @@ describeEachDialect("admin read round trips", (dialect) => {
 			listEntries(context("/content/posts?limit=20", { collection: "posts" })),
 		);
 		expect(JSON.parse(plain.text).data).not.toHaveProperty("trashTotal");
+	});
+
+	it("lists a collection's authors in one round trip", async () => {
+		spans.spans = [];
+		const result = await runWithContext({ editMode: false }, () =>
+			handleContentAuthors(handlers.db, "posts"),
+		);
+
+		if (!result.success) throw new Error(result.error.message);
+		expect(result.data.items).toEqual([
+			{ id: user.id, name: "Editor", email: "editor@example.com", avatarUrl: null },
+		]);
+		expect(sequentialWaves(spans.spans)).toBe(1);
+		expect(spans.spans).toHaveLength(1);
+	});
+
+	it("counts comments by status in one query", async () => {
+		spans.spans = [];
+		const result = await handleCommentCounts(handlers.db);
+
+		if (!result.success) throw new Error(result.error.message);
+		expect(result.data).toEqual({ pending: 0, approved: 0, spam: 0, trash: 0 });
+		expect(spans.spans).toHaveLength(1);
 	});
 
 	it("lists whole entries when no fields are selected", async () => {
