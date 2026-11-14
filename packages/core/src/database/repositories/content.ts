@@ -12,7 +12,7 @@ import type { OutsideValue } from "../../rooms/types.js";
 import { isIndexableFieldType, isStoragelessFieldRow, type FieldType } from "../../schema/types.js";
 import { buildFtsPrefixMatch, buildSlugGlobPrefix } from "../../search/match.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
-import { isMissingTableError } from "../../utils/db-errors.js";
+import { isMissingTableError, isTooManyResultColumnsError } from "../../utils/db-errors.js";
 import { slugify } from "../../utils/slugify.js";
 import { ContentDatetimeNormalizer, type DatetimeContextCache } from "../content-datetime.js";
 import { executeAtomicBatchIfSupported, isPostgres } from "../dialect-helpers.js";
@@ -56,6 +56,7 @@ const MAX_INDEXED_FIELD_FILTERS = 20;
 const MAX_IN_FILTER_VALUES = SQL_BATCH_SIZE;
 const MAX_FILTER_STRING_LENGTH = 2048;
 const FOLD_COLUMN = "_emdash_fold";
+const D1_MAX_BOUND_PARAMETERS = 100;
 
 function readyToPublishCondition(now: string): RawBuilder<unknown> {
 	return sql`scheduled_at IS NOT NULL AND scheduled_at <= ${now} AND deleted_at IS NULL`;
@@ -1093,7 +1094,22 @@ export class ContentRepository {
 			options.offset === undefined
 				? query.limit(limit + 1)
 				: query.limit(limit).offset(options.offset);
-		if (options.fold) query = query.select(options.fold.as(FOLD_COLUMN));
+		// D1 refuses a statement with more than 100 bound parameters or result
+		// columns; locale aliases add parameters to the fold and the fold adds a
+		// column. The fold is extra, so the page is read without it instead.
+		let foldedQuery = options.fold ? query.select(options.fold.as(FOLD_COLUMN)) : undefined;
+		if (foldedQuery && foldedQuery.compile().parameters.length > D1_MAX_BOUND_PARAMETERS) {
+			foldedQuery = undefined;
+		}
+		const readPage = async (): Promise<{ rows: unknown[]; folded: boolean }> => {
+			if (!foldedQuery) return { rows: await query.execute(), folded: false };
+			try {
+				return { rows: await foldedQuery.execute(), folded: true };
+			} catch (error) {
+				if (!isTooManyResultColumnsError(error)) throw error;
+				return { rows: await query.execute(), folded: false };
+			}
+		};
 
 		// Run the page fetch and the unbounded count together — the UI needs
 		// both to render a stable denominator (kept on every page intentionally),
@@ -1104,17 +1120,17 @@ export class ContentRepository {
 		// holding a pooled connection, so a Postgres pool destroyed in that window
 		// never finishes closing.
 		const [rowsResult, countResult] = await Promise.allSettled([
-			query.execute(),
+			readPage(),
 			this.countWithResolvedFilters(type, options.where, resolvedFieldFilters),
 		]);
 		if (rowsResult.status === "rejected") throw rowsResult.reason;
 		if (countResult.status === "rejected") throw countResult.reason;
-		const rows = rowsResult.value;
+		const { rows, folded } = rowsResult.value;
 		const total = countResult.value;
 		const hasMore = rows.length > limit;
 		const items = rows.slice(0, limit);
 
-		const folds = options.fold
+		const folds = folded
 			? items.map((row) => {
 					const record = row as Record<string, unknown>;
 					const value = record[FOLD_COLUMN];

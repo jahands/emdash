@@ -85,3 +85,8 @@ export function isMissingTableError(error: unknown): boolean {
 
 	return false;
 }
+
+/** D1 (and SQLite at its compile-time limit) refusing a statement's result width. */
+export function isTooManyResultColumnsError(error: unknown): boolean {
+	return messageOf(error).includes("too many columns in result set");
+}

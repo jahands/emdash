@@ -233,7 +233,9 @@ export interface FindManyOptions {
 	offset?: number;
 	/**
 	 * An expression read alongside each row, correlated on the content table
-	 * by its name. Its values come back in `folds`, in item order.
+	 * by its name. Its values come back in `folds`, in item order. The page is
+	 * read without it, and `folds` left unset, when it would take the
+	 * statement past D1's limits on bound parameters or result columns.
 	 */
 	fold?: RawBuilder<unknown>;
 }
