@@ -25,6 +25,7 @@ import {
 	isListConflict,
 	parseApiResponse,
 	throwResponseError,
+	type AdminManifest,
 } from "../lib/api/client.js";
 import { createTerm, createTermTranslation, withLocale } from "../lib/api/taxonomies.js";
 import { ListSaver } from "../lib/co-editing/outside-lists.js";
@@ -119,9 +120,18 @@ function useApplicableTaxonomies(
 	activeLocale?: string,
 	defaultLocale?: string,
 ): TaxonomyDef[] {
+	const queryClient = useQueryClient();
+	// The manifest already lists every definition, so the terms can load
+	// without waiting on this request; later invalidations still refetch.
 	const { data: taxonomies = [] } = useQuery({
 		queryKey: ["taxonomy-defs"],
 		queryFn: fetchTaxonomyDefs,
+		initialData: () => {
+			const defs = queryClient.getQueryData<AdminManifest>(["manifest"])?.taxonomies;
+			const withIds = defs?.filter((def): def is TaxonomyDef => typeof def.id === "string");
+			return withIds?.length === defs?.length ? withIds : undefined;
+		},
+		initialDataUpdatedAt: () => queryClient.getQueryState(["manifest"])?.dataUpdatedAt,
 	});
 	return resolveTaxonomyDefinitions(taxonomies, activeLocale, defaultLocale).filter((taxonomy) =>
 		taxonomy.collections.includes(collection),

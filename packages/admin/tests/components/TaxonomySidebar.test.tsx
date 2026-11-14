@@ -431,6 +431,27 @@ describe("TaxonomySidebar", () => {
 		},
 	);
 
+	it("loads the terms from the manifest's definitions without listing them again", async () => {
+		// The admin's client keeps data fresh for a minute.
+		const queryClient = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: 60_000 } },
+		});
+		queryClient.setQueryData(["manifest"], { taxonomies: [tagsTaxonomy] });
+		const screen = await render(<TaxonomySidebar collection="products" canManageTaxonomies />, {
+			wrapper: ({ children }) => (
+				<QueryClientProvider client={queryClient}>
+					<Toasty>{children}</Toasty>
+				</QueryClientProvider>
+			),
+		});
+
+		await openPicker(screen, "Tags");
+		await expect.element(screen.getByRole("checkbox", { name: "Alpha" })).toBeInTheDocument();
+		const urls = vi.mocked(apiFetch).mock.calls.map(([input]) => requestUrl(input));
+		expect(urls.some((url) => url.endsWith("/_emdash/api/taxonomies"))).toBe(false);
+		expect(urls.some((url) => url.includes("/_emdash/api/taxonomies/tags/terms"))).toBe(true);
+	});
+
 	it("places the picker trigger beside the visible taxonomy label", async () => {
 		const screen = await render(<TaxonomySidebar collection="products" canManageTaxonomies />, {
 			wrapper: Wrapper,
