@@ -135,6 +135,17 @@ describe("Dashboard while its stats load", () => {
 		},
 	);
 
+	it("asks for the update status while the stats load", async () => {
+		mockUseCurrentUser.mockReturnValue({ data: { role: 50 } });
+		mockFetchCoreUpdateStatus.mockClear();
+		mockFetchDashboardStats.mockReturnValue(deferred<DashboardStats>().promise);
+
+		const screen = await render(<Dashboard manifest={manifest} />);
+		await expect.element(screen.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+
+		await expect.poll(() => mockFetchCoreUpdateStatus.mock.calls.length).toBe(1);
+	});
+
 	it.each([{ width: 390 }, { width: 1440 }])(
 		"keeps the dashboard in place when the scheduler warning and update notice arrive ($width px)",
 		async ({ width }) => {

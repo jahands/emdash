@@ -65,6 +65,8 @@ export function Dashboard({ manifest }: DashboardProps) {
 		queryFn: fetchDashboardStats,
 		refetchOnWindowFocus: true,
 	});
+	// Requested with the stats, though its notice waits for them to show.
+	useCoreUpdateStatus();
 	const hasDashboardData = stats !== undefined;
 	const showDashboardData = !isError || hasDashboardData;
 	const dashboardDataSettled = hasDashboardData || isError;
