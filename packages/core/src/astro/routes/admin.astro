@@ -55,23 +55,25 @@ Astro.response.headers.set("Cache-Control", "private, no-store");
 // Otherwise fall back to the Site Icon configured in Settings → General, so
 // the admin shell is branded like the public site (WordPress-style Site Icon,
 // which also brands wp-admin), and finally the bundled EmDash mark below.
+// Read after the head's preloads are sent, so the admin's code downloads meanwhile.
 const emdash = Astro.locals.emdash;
-let siteFavicon: string | undefined;
-let siteFaviconType: string | undefined;
-if (!adminConfig?.favicon && emdash?.db) {
+const faviconLink: Promise<{ href?: string; type?: string }> = (async () => {
+	if (adminConfig?.favicon) return { href: adminConfig.favicon };
+	if (!emdash?.db) return {};
 	try {
 		const settings = await getSiteSettingsWithDb(emdash.db, emdash.storage ?? null);
-		siteFavicon = settings.favicon?.url ?? undefined;
-		siteFaviconType = settings.favicon?.contentType ?? undefined;
+		// The media-file URL has no extension, so browsers need the MIME type —
+		// Chromium ignores SVG favicons without type="image/svg+xml". Only set for
+		// Site Icons; build-time `admin.favicon` strings keep their current behavior.
+		return {
+			href: settings.favicon?.url ?? undefined,
+			type: settings.favicon?.contentType ?? undefined,
+		};
 	} catch {
-		// Settings unavailable (e.g. pre-setup) — fall back to the config/default.
+		// Settings unavailable (e.g. pre-setup) — fall back to the default.
+		return {};
 	}
-}
-const favicon = adminConfig?.favicon ?? siteFavicon;
-// The media-file URL has no extension, so browsers need the MIME type —
-// Chromium ignores SVG favicons without type="image/svg+xml". Only set for
-// Site Icons; build-time `admin.favicon` strings keep their current behavior.
-const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
+})();
 ---
 
 <!doctype html>
@@ -106,15 +108,19 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 				<Font cssVariable="--font-emdash" preload={[{ subset: "latin", style: "normal" }]} />
 			) : null
 		}
-		{favicon ? (
-			<link rel="icon" href={favicon} type={faviconType} />
-		) : (
-			<link
-				rel="icon"
-				href="data:image/svg+xml,<svg width='75' height='75' viewBox='0 0 75 75' fill='none' xmlns='http://www.w3.org/2000/svg'> <g clip-path='url(%23clip0_50_99)'> <rect x='3' y='3' width='69' height='69' rx='10.518' stroke='url(%23paint0_linear_50_99)' stroke-width='6'/> <rect x='18' y='34' width='39.3661' height='6.56101' fill='url(%23paint1_linear_50_99)'/> </g> <defs> <linearGradient id='paint0_linear_50_99' x1='-42.9996' y1='124' x2='92.4233' y2='-41.7456' gradientUnits='userSpaceOnUse'> <stop stop-color='%230F006B'/> <stop offset='0.0833333' stop-color='%23281A81'/> <stop offset='0.166667' stop-color='%235D0C83'/> <stop offset='0.25' stop-color='%23911475'/> <stop offset='0.333333' stop-color='%23CE2F55'/> <stop offset='0.416667' stop-color='%23FF6633'/> <stop offset='0.5' stop-color='%23F6821F'/> <stop offset='0.583333' stop-color='%23FBAD41'/> <stop offset='0.666667' stop-color='%23FFCD89'/> <stop offset='0.75' stop-color='%23FFE9CB'/> <stop offset='0.833333' stop-color='%23FFF7EC'/> <stop offset='0.916667' stop-color='%23FFF8EE'/> <stop offset='1' stop-color='white'/> </linearGradient> <linearGradient id='paint1_linear_50_99' x1='91.4992' y1='27.4982' x2='28.1217' y2='54.1775' gradientUnits='userSpaceOnUse'> <stop stop-color='white'/> <stop offset='0.129253' stop-color='%23FFF8EE'/> <stop offset='0.617058' stop-color='%23FBAD41'/> <stop offset='0.848019' stop-color='%23F6821F'/> <stop offset='1' stop-color='%23FF6633'/> </linearGradient> <clipPath id='clip0_50_99'> <rect width='75' height='75' fill='white'/> </clipPath> </defs> </svg>"
-			/>
-		)}
 		<title>{pageTitle}</title>
+		{
+			faviconLink.then(({ href, type }) =>
+				href ? (
+					<link rel="icon" href={href} type={type} />
+				) : (
+					<link
+						rel="icon"
+						href="data:image/svg+xml,<svg width='75' height='75' viewBox='0 0 75 75' fill='none' xmlns='http://www.w3.org/2000/svg'> <g clip-path='url(%23clip0_50_99)'> <rect x='3' y='3' width='69' height='69' rx='10.518' stroke='url(%23paint0_linear_50_99)' stroke-width='6'/> <rect x='18' y='34' width='39.3661' height='6.56101' fill='url(%23paint1_linear_50_99)'/> </g> <defs> <linearGradient id='paint0_linear_50_99' x1='-42.9996' y1='124' x2='92.4233' y2='-41.7456' gradientUnits='userSpaceOnUse'> <stop stop-color='%230F006B'/> <stop offset='0.0833333' stop-color='%23281A81'/> <stop offset='0.166667' stop-color='%235D0C83'/> <stop offset='0.25' stop-color='%23911475'/> <stop offset='0.333333' stop-color='%23CE2F55'/> <stop offset='0.416667' stop-color='%23FF6633'/> <stop offset='0.5' stop-color='%23F6821F'/> <stop offset='0.583333' stop-color='%23FBAD41'/> <stop offset='0.666667' stop-color='%23FFCD89'/> <stop offset='0.75' stop-color='%23FFE9CB'/> <stop offset='0.833333' stop-color='%23FFF7EC'/> <stop offset='0.916667' stop-color='%23FFF8EE'/> <stop offset='1' stop-color='white'/> </linearGradient> <linearGradient id='paint1_linear_50_99' x1='91.4992' y1='27.4982' x2='28.1217' y2='54.1775' gradientUnits='userSpaceOnUse'> <stop stop-color='white'/> <stop offset='0.129253' stop-color='%23FFF8EE'/> <stop offset='0.617058' stop-color='%23FBAD41'/> <stop offset='0.848019' stop-color='%23F6821F'/> <stop offset='1' stop-color='%23FF6633'/> </linearGradient> <clipPath id='clip0_50_99'> <rect width='75' height='75' fill='white'/> </clipPath> </defs> </svg>"
+					/>
+				),
+			)
+		}
 	</head>
 	<body class="isolate">
 		<div id="admin-root" class="min-h-screen">
