@@ -2,13 +2,19 @@
  * Content CRUD handlers
  */
 
-import type { Kysely } from "kysely";
+import type { Kysely, RawBuilder } from "kysely";
 import { sql } from "kysely";
 
 import { after } from "../../after.js";
+import { primeBylineFieldsVersion } from "../../bylines/field-defs-cache.js";
 import type { ContentFieldFilters } from "../../content-list-query.js";
 import { ContentDatetimeNormalizer } from "../../database/content-datetime.js";
-import { isSqlite } from "../../database/dialect-helpers.js";
+import { isPostgres, isSqlite } from "../../database/dialect-helpers.js";
+import {
+	creditFromFoldedAuthorByline,
+	creditsFromFoldedBylines,
+	foldedBylineSubqueries,
+} from "../../database/folded-bylines.js";
 import { BylineRepository } from "../../database/repositories/byline.js";
 import type { ContentBylineInput } from "../../database/repositories/byline.js";
 import { CommentRepository } from "../../database/repositories/comment.js";
@@ -22,7 +28,7 @@ import { OptionsRepository } from "../../database/repositories/options.js";
 import { RedirectRepository, redirectPathVariants } from "../../database/repositories/redirect.js";
 import { RelationRepository } from "../../database/repositories/relation.js";
 import { RevisionRepository, type Revision } from "../../database/repositories/revision.js";
-import { SeoRepository, seoFromRow } from "../../database/repositories/seo.js";
+import { SeoRepository, seoFromRow, type SeoRowColumns } from "../../database/repositories/seo.js";
 import { TaxonomyRepository } from "../../database/repositories/taxonomy.js";
 import {
 	ContentCollectionNotFoundError,
@@ -708,6 +714,154 @@ async function overlayUnpublishedDrafts(
 }
 
 /**
+ * An entry's SEO row, its bylines and, while it is unpublished, its pending
+ * draft's data, read in the statement that reads a page of entries so none
+ * of them waits for the page's IDs. One JSON column keeps the row within
+ * D1's result-column limit. Read back by {@link applyListFold}.
+ */
+function listFold(db: Kysely<Database>, collection: string): RawBuilder<unknown> {
+	validateIdentifier(collection, "collection");
+	const table = `ec_${collection}`;
+	const t = sql.ref(table);
+	const pg = isPostgres(db);
+	const seoPairs =
+		"'seo_title', s.seo_title, 'seo_description', s.seo_description, 'seo_image', s.seo_image, 'seo_canonical', s.seo_canonical, 'seo_no_index', s.seo_no_index";
+	const seo = sql`(SELECT ${sql.raw(pg ? `json_build_object(${seoPairs})` : `json_object(${seoPairs})`)} FROM ${sql.ref("_emdash_seo")} AS s WHERE s.collection = ${collection} AND s.content_id = ${t}.id)`;
+	// Text, so both dialects embed it as a JSON string.
+	const draft = sql`CASE WHEN ${t}.status <> ${"published"} AND ${t}.live_revision_id IS NULL THEN (SELECT r.data FROM ${sql.ref("revisions")} AS r WHERE r.id = ${t}.draft_revision_id AND r.collection = ${collection} AND r.entry_id = ${t}.id) END`;
+	const { credits, author, fieldsVersion } = foldedBylineSubqueries(db, collection, table);
+	return pg
+		? sql`json_build_object('seo', ${seo}, 'credits', ${credits}, 'author', ${author}, 'fieldsVersion', ${fieldsVersion}, 'draft', ${draft})`
+		: sql`json_object('seo', json(${seo}), 'credits', json(${credits}), 'author', json(${author}), 'fieldsVersion', ${fieldsVersion}, 'draft', ${draft})`;
+}
+
+function isRecordValue(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+interface ListFold {
+	seo: SeoRowColumns | undefined;
+	credits: unknown[];
+	author: Record<string, unknown> | null;
+	fieldsVersion: number;
+	draft: string | null;
+}
+
+function foldText(row: Record<string, unknown>, key: string): string | null {
+	const column = row[key];
+	return typeof column === "string" ? column : null;
+}
+
+function parseFold(value: unknown): ListFold | null {
+	let fold: unknown = value;
+	if (typeof value === "string") {
+		try {
+			fold = JSON.parse(value);
+		} catch {
+			return null;
+		}
+	}
+	if (!isRecordValue(fold) || !Array.isArray(fold.credits)) return null;
+	const { seo } = fold;
+	return {
+		seo: isRecordValue(seo)
+			? {
+					seo_title: foldText(seo, "seo_title"),
+					seo_description: foldText(seo, "seo_description"),
+					seo_image: foldText(seo, "seo_image"),
+					seo_canonical: foldText(seo, "seo_canonical"),
+					seo_no_index: Number(seo.seo_no_index),
+				}
+			: undefined,
+		credits: fold.credits,
+		author: isRecordValue(fold.author) ? fold.author : null,
+		fieldsVersion: Number.parseInt(String(fold.fieldsVersion), 10),
+		draft: typeof fold.draft === "string" ? fold.draft : null,
+	};
+}
+
+async function overlayFoldedDrafts(
+	db: Kysely<Database>,
+	collection: string,
+	drafts: { item: ContentItem; data: Record<string, unknown> }[],
+): Promise<void> {
+	if (drafts.length === 0) return;
+	const normalized = await new ContentDatetimeNormalizer(db).normalizeDataMany(
+		collection,
+		drafts.map((draft) => draft.data),
+	);
+	for (const [index, { item }] of drafts.entries()) {
+		const fields = Object.fromEntries(
+			Object.entries(normalized[index] ?? {}).filter(([key]) => !key.startsWith("_")),
+		);
+		item.data = { ...item.data, ...fields };
+	}
+}
+
+/**
+ * Hydrate a page read with {@link listFold} the way {@link overlayUnpublishedDrafts},
+ * {@link hydrateSeoMany} and {@link hydrateBylinesMany} would. Falls back to
+ * them when a fold can't be read, or for bylines when an entry has no locale,
+ * which the fold's locale-correlated subqueries can't match.
+ */
+async function applyListFold(
+	db: Kysely<Database>,
+	collection: string,
+	items: ContentItem[],
+	folds: unknown[] | undefined,
+	hasSeo: boolean,
+): Promise<void> {
+	const parsed: ListFold[] = [];
+	for (const [index] of items.entries()) {
+		const fold = parseFold(folds?.[index]);
+		if (!fold) {
+			await settleAll([
+				overlayUnpublishedDrafts(db, collection, items),
+				hydrateSeoMany(db, collection, items, hasSeo),
+				hydrateBylinesMany(db, collection, items),
+			]);
+			return;
+		}
+		parsed.push(fold);
+	}
+
+	const bylinesFolded = items.every((item) => item.locale);
+	const version = parsed[0]?.fieldsVersion;
+	if (bylinesFolded && version !== undefined && Number.isFinite(version)) {
+		primeBylineFieldsVersion(version);
+	}
+
+	const drafts: { item: ContentItem; data: Record<string, unknown> }[] = [];
+	const summaries: BylineSummary[] = [];
+	for (const [index, item] of items.entries()) {
+		const fold = parsed[index];
+		if (!fold) continue;
+		if (fold.draft !== null) {
+			const data: unknown = JSON.parse(fold.draft);
+			if (isRecordValue(data)) drafts.push({ item, data });
+		}
+		if (hasSeo) item.seo = seoFromRow(fold.seo);
+		if (!bylinesFolded) continue;
+		const credits: ContentBylineCredit[] = creditsFromFoldedBylines(fold.credits).map(
+			({ byline, sortOrder, roleLabel, source }) => ({ byline, sortOrder, roleLabel, source }),
+		);
+		if (credits.length === 0 && !item.primaryBylineId && item.authorId && fold.author) {
+			credits.push(creditFromFoldedAuthorByline(fold.author));
+		}
+		item.bylines = credits;
+		item.byline = credits[0]?.byline ?? null;
+		for (const credit of credits) summaries.push(credit.byline);
+	}
+
+	let bylineWork: Promise<void> | undefined;
+	if (!bylinesFolded) bylineWork = hydrateBylinesMany(db, collection, items);
+	else if (summaries.length > 0) {
+		bylineWork = new BylineRepository(db).hydrateBylineCustomFields(summaries);
+	}
+	await settleAll([overlayFoldedDrafts(db, collection, drafts), bylineWork]);
+}
+
+/**
  * Batch-hydrate bylines for multiple items using two bulk queries instead of N+1.
  *
  * Items may live at different locales (e.g. a list endpoint returning the
@@ -1220,7 +1374,13 @@ export async function handleContentList(
 		}
 
 		const writeMeta = getCollectionWriteMeta(db, collection);
-		const [result] = await settleAll([
+		// An unpublished entry's folded draft is normalized like a stored
+		// revision; reading the field types now keeps that off a later round trip.
+		const datetimeContext =
+			where.status === "published"
+				? undefined
+				: new ContentDatetimeNormalizer(db).writableFieldSlugs(collection).catch(() => {});
+		const findPage = (fold?: RawBuilder<unknown>) =>
 			repo.findMany(collection, {
 				cursor: params.cursor,
 				offset,
@@ -1230,16 +1390,20 @@ export async function handleContentList(
 					? { field: params.orderBy, direction: params.order || "desc" }
 					: undefined,
 				sortableExtras,
-			}),
-			writeMeta,
-		]);
+				fold,
+			});
+		let result: Awaited<ReturnType<typeof findPage>>;
+		try {
+			[result] = await settleAll([findPage(listFold(db, collection)), writeMeta, datetimeContext]);
+		} catch (error) {
+			// The fold reads standard columns a damaged table may lack; without it
+			// the read reports the column the list itself needs.
+			if (!isMissingColumnError(error)) throw error;
+			[result] = await settleAll([findPage(), writeMeta]);
+		}
 		const { hasSeo } = await writeMeta;
 
-		await settleAll([
-			overlayUnpublishedDrafts(db, collection, result.items),
-			hydrateSeoMany(db, collection, result.items, hasSeo),
-			hydrateBylinesMany(db, collection, result.items),
-		]);
+		await applyListFold(db, collection, result.items, result.folds, hasSeo);
 		const selected = params.fields ? new Set(params.fields) : undefined;
 		for (const item of result.items) {
 			// Bylines can finish before SEO; keep the serialized key order fixed.

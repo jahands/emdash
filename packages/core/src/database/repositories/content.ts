@@ -55,6 +55,7 @@ const LIKE_WILDCARD_RE = /[\\%_]/g;
 const MAX_INDEXED_FIELD_FILTERS = 20;
 const MAX_IN_FILTER_VALUES = SQL_BATCH_SIZE;
 const MAX_FILTER_STRING_LENGTH = 2048;
+const FOLD_COLUMN = "_emdash_fold";
 
 function readyToPublishCondition(now: string): RawBuilder<unknown> {
 	return sql`scheduled_at IS NOT NULL AND scheduled_at <= ${now} AND deleted_at IS NULL`;
@@ -1092,6 +1093,7 @@ export class ContentRepository {
 			options.offset === undefined
 				? query.limit(limit + 1)
 				: query.limit(limit).offset(options.offset);
+		if (options.fold) query = query.select(options.fold.as(FOLD_COLUMN));
 
 		// Run the page fetch and the unbounded count together — the UI needs
 		// both to render a stable denominator (kept on every page intentionally),
@@ -1112,9 +1114,18 @@ export class ContentRepository {
 		const hasMore = rows.length > limit;
 		const items = rows.slice(0, limit);
 
+		const folds = options.fold
+			? items.map((row) => {
+					const record = row as Record<string, unknown>;
+					const value = record[FOLD_COLUMN];
+					delete record[FOLD_COLUMN];
+					return value;
+				})
+			: undefined;
 		const mappedResult: FindManyResult<ContentItem> = {
 			items: items.map((row) => this.mapRow(type, row as Record<string, unknown>)),
 			total,
+			...(folds ? { folds } : {}),
 		};
 
 		if (hasMore && items.length > 0) {

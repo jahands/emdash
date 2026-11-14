@@ -15,13 +15,13 @@ import type { LiveLoader } from "astro/loaders";
 import { Kysely, type RawBuilder, sql, type Dialect, type SqlBool } from "kysely";
 
 import { buildStatusCondition, isPostgres } from "./database/dialect-helpers.js";
+import { creditsFromFoldedBylines, foldedBylineSubqueries } from "./database/folded-bylines.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
 import { jsonTextValues } from "./database/json-recordset.js";
 import {
 	parseTaxonomyCollections,
 	selectTaxonomyDefs,
 } from "./database/repositories/taxonomy-def.js";
-import type { BylineSummary, ContentBylineCredit } from "./database/repositories/types.js";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "./database/repositories/types.js";
 import { validateIdentifier } from "./database/validate.js";
 import { getI18nConfig, getLocaleCandidates, type I18nConfig } from "./i18n/config.js";
@@ -163,16 +163,6 @@ function foldedHydrationSelects(db: Kysely<any>, type: string, outer: string) {
 	const pg = isPostgres(db);
 	const obj = (pairs: string) =>
 		pg ? sql.raw(`json_build_object(${pairs})`) : sql.raw(`json_object(${pairs})`);
-	const agg = (inner: RawBuilder<unknown>) =>
-		pg ? sql`coalesce(json_agg(${inner}), '[]'::json)` : sql`json_group_array(${inner})`;
-
-	// Pin the byline join order on SQLite (#1722). Taxonomy hydration uses
-	// LEFT JOINs below, whose order is already fixed by SQL semantics. SQLite
-	// honours `CROSS JOIN` ordering, forcing the byline subquery to drive from
-	// its pivot by content reference and probe by translation_group. Postgres
-	// keeps statistics and rejects `CROSS JOIN … ON`, so it stays a plain JOIN.
-	const foldJoin = pg ? sql`JOIN` : sql`CROSS JOIN`;
-
 	const termObj = obj(
 		"'id', coalesce(exact_term.id, default_term.id), 'name', coalesce(exact_term.name, default_term.name), 'slug', coalesce(exact_term.slug, default_term.slug), 'label', coalesce(exact_term.label, default_term.label), 'parent_id', coalesce(exact_term.parent_id, default_term.parent_id), 'locale', coalesce(exact_term.locale, default_term.locale), 'translation_group', coalesce(exact_term.translation_group, default_term.translation_group)",
 	);
@@ -199,44 +189,10 @@ function foldedHydrationSelects(db: Kysely<any>, type: string, outer: string) {
 		WHERE ct.collection = ${type} AND ct.entry_id = ${o}.translation_group) AS ${sql.ref("_emdash_terms")}`
 		: sql`(SELECT ${termAgg} FROM ${sql.ref("content_taxonomies")} AS ct LEFT JOIN ${sql.ref("taxonomies")} AS exact_term ON exact_term.translation_group = ct.taxonomy_id AND exact_term.locale = ${o}.locale LEFT JOIN ${sql.ref("taxonomies")} AS default_term ON default_term.translation_group = ct.taxonomy_id AND default_term.locale = ${defaultLocale} WHERE ct.collection = ${type} AND ct.entry_id = ${o}.translation_group) AS ${sql.ref("_emdash_terms")}`;
 
-	const bylineInner = obj(
-		"'id', b.id, 'slug', b.slug, 'displayName', b.display_name, 'bio', b.bio, 'avatarMediaId', b.avatar_media_id, 'avatarStorageKey', m.storage_key, 'avatarAlt', m.alt, 'avatarBlurhash', m.blurhash, 'avatarDominantColor', m.dominant_color, 'websiteUrl', b.website_url, 'userId', b.user_id, 'isGuest', b.is_guest, 'createdAt', b.created_at, 'updatedAt', b.updated_at, 'locale', b.locale, 'translationGroup', b.translation_group",
-	);
-	const creditObj = pg
-		? sql.raw(
-				"json_build_object('roleLabel', cb.role_label, 'sortOrder', cb.sort_order, 'byline', ",
-			)
-		: sql.raw("json_object('roleLabel', cb.role_label, 'sortOrder', cb.sort_order, 'byline', ");
-	const credit = sql`${creditObj}${bylineInner})`;
-	// The locale match differs with locale aliases: a row's locale may be any
-	// of its configured locale's codes, so both subqueries compare canonical
-	// locales and pick one byline per match, as the query path does.
-	const credits = hasLocaleAliases
-		? sql`(SELECT ${agg(credit)} FROM ${sql.ref("_emdash_content_bylines")} AS cb
-		${foldJoin} ${sql.ref("_emdash_bylines")} AS b ON b.id = (
-			SELECT candidate.id FROM _emdash_bylines AS candidate
-			WHERE candidate.translation_group = cb.byline_id
-				AND ${canonicalLocaleColumn("candidate.locale")} = ${canonicalLocaleColumn(`${outer}.locale`)}
-			ORDER BY ${storedLocaleOrder("candidate.locale")}, candidate.id LIMIT 1
-		)
-		LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id
-		WHERE cb.collection_slug = ${type} AND cb.content_id = ${o}.id)`
-		: sql`(SELECT ${agg(credit)} FROM ${sql.ref("_emdash_content_bylines")} AS cb ${foldJoin} ${sql.ref("_emdash_bylines")} AS b ON b.translation_group = cb.byline_id LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id WHERE cb.collection_slug = ${type} AND cb.content_id = ${o}.id AND b.locale = ${o}.locale)`;
-	// The author fallback for an entry with no explicit credit: the byline
-	// linked to its author in its locale. Without aliases `(user_id, locale)`
-	// is unique, so this is one index probe per row and matches
-	// `findByUserIds` exactly; with them, the same canonical-locale match and
-	// ordering as the credits above picks one.
-	const author = hasLocaleAliases
-		? sql`(SELECT ${bylineInner} FROM ${sql.ref("_emdash_bylines")} AS b LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id
-		WHERE b.user_id = ${o}.author_id
-			AND ${canonicalLocaleColumn("b.locale")} = ${canonicalLocaleColumn(`${outer}.locale`)}
-		ORDER BY ${storedLocaleOrder("b.locale")}, b.id LIMIT 1)`
-		: sql`(SELECT ${bylineInner} FROM ${sql.ref("_emdash_bylines")} AS b LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id WHERE b.user_id = ${o}.author_id AND b.locale = ${o}.locale LIMIT 1)`;
+	const { credits, author, fieldsVersion } = foldedBylineSubqueries(db, type, outer);
 	// D1 caps result sets at 100 columns, so credits, author and schema version
 	// share one column to keep the entry read's width unchanged. SQLite's
 	// `json()` keeps each subquery's JSON text from being nested as a string.
-	const fieldsVersion = sql`(SELECT value FROM ${sql.ref("options")} WHERE name = ${"byline_fields_version"})`;
 	const bylines = pg
 		? sql`json_build_object('credits', ${credits}, 'author', ${author}, 'fieldsVersion', ${fieldsVersion}) AS ${sql.ref("_emdash_bylines")}`
 		: sql`json_object('credits', json(${credits}), 'author', json(${author}), 'fieldsVersion', ${fieldsVersion}) AS ${sql.ref("_emdash_bylines")}`;
@@ -315,36 +271,6 @@ function expandFoldedSeo(row: Record<string, unknown>): void {
 	for (const [col, alias] of Object.entries(SEO_COLUMN_ALIASES)) {
 		row[alias] = parsed[col] ?? null;
 	}
-}
-
-/**
- * A folded byline object as a `BylineSummary`. The fold's JSON keys are the
- * `BylineSummary` keys (see `bylineInner` in {@link foldedHydrationSelects}).
- */
-function foldedBylineSummary(raw: unknown): BylineSummary {
-	const byline = isPlainObject(raw) ? raw : {};
-	// Folded rows omit custom-field values.
-	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- keys set by the fold's SQL
-	return { ...byline, isGuest: Boolean(byline.isGuest), customFields: {} } as BylineSummary;
-}
-
-export function creditsFromFoldedBylines(folded: unknown[]): ContentBylineCredit[] {
-	return folded
-		.map((raw) => {
-			const credit = isPlainObject(raw) ? raw : {};
-			return {
-				roleLabel: typeof credit.roleLabel === "string" ? credit.roleLabel : null,
-				sortOrder: Number(credit.sortOrder ?? 0),
-				source: "explicit" as const,
-				byline: foldedBylineSummary(credit.byline),
-			};
-		})
-		.toSorted((a, b) => a.sortOrder - b.sortOrder);
-}
-
-/** The inferred credit for a folded author-fallback byline. */
-export function creditFromFoldedAuthorByline(raw: Record<string, unknown>): ContentBylineCredit {
-	return { byline: foldedBylineSummary(raw), sortOrder: 0, roleLabel: null, source: "inferred" };
 }
 
 /**

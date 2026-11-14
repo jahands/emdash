@@ -25,6 +25,10 @@
  */
 
 import { primeBylineFieldsVersion } from "./bylines/field-defs-cache.js";
+import {
+	creditFromFoldedAuthorByline,
+	creditsFromFoldedBylines,
+} from "./database/folded-bylines.js";
 import type { ContentSeo } from "./database/repositories/types.js";
 import {
 	getFallbackChain,
@@ -35,8 +39,6 @@ import {
 } from "./i18n/config.js";
 import { resolveLocale } from "./i18n/resolve.js";
 import {
-	creditFromFoldedAuthorByline,
-	creditsFromFoldedBylines,
 	CURSOR_RAW_VALUES,
 	encodeSortCursor,
 	FOLDED_AUTHOR_BYLINE,

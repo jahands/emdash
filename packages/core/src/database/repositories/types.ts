@@ -1,3 +1,5 @@
+import type { RawBuilder } from "kysely";
+
 import type { ContentFieldFilters } from "../../content-list-query.js";
 import type { CustomFieldValue } from "../../schema/types.js";
 import { encodeBase64, decodeBase64 } from "../../utils/base64.js";
@@ -229,6 +231,11 @@ export interface FindManyOptions {
 	cursor?: string; // Base64-encoded JSON: {orderValue: string, id: string}
 	/** Rows to skip before the page, for numbered pages. Cannot be combined with `cursor`. */
 	offset?: number;
+	/**
+	 * An expression read alongside each row, correlated on the content table
+	 * by its name. Its values come back in `folds`, in item order.
+	 */
+	fold?: RawBuilder<unknown>;
 }
 
 export interface FindManyResult<T> {
@@ -240,6 +247,8 @@ export interface FindManyResult<T> {
 	 * it should set it so the UI can render a stable pagination denominator.
 	 */
 	total?: number;
+	/** The value of `FindManyOptions.fold` for each item, when one was given. */
+	folds?: unknown[];
 }
 
 /**

@@ -41,7 +41,7 @@ const MANIFEST_MAX_WAVES = 1;
 const MANIFEST_MAX_QUERIES = 6;
 const DASHBOARD_MAX_WAVES = 2;
 const DASHBOARD_MAX_QUERIES = 10;
-const LIST_MAX_WAVES = 2;
+const LIST_MAX_WAVES = 1;
 const LIST_MAX_QUERIES = 6;
 
 const body = [
