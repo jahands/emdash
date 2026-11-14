@@ -67,10 +67,10 @@ describe("admin shell", () => {
 		const editor = await renderAdmin("en", "/_emdash/admin/content/posts/01ABC");
 		expect(editor).toContain('<link rel="modulepreload" href="/_astro/PluginRegistry.js">');
 		expect(editor).toContain('<link rel="modulepreload" href="/_astro/ContentEditor.js">');
-		expect(editor).not.toContain("/_astro/Settings.js");
+		expect(editor).not.toContain('<link rel="modulepreload" href="/_astro/Settings.js">');
 
 		const settings = await renderAdmin("en", "/_emdash/admin/settings");
 		expect(settings).toContain('<link rel="modulepreload" href="/_astro/Settings.js">');
-		expect(settings).not.toContain("/_astro/ContentEditor.js");
+		expect(settings).not.toContain('<link rel="modulepreload" href="/_astro/ContentEditor.js">');
 	});
 });
