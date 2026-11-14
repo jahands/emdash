@@ -21,7 +21,10 @@ export interface ListResponse<T> {
 /**
  * Content API responses
  */
-export interface ContentListResponse extends ListResponse<ContentItem> {}
+export interface ContentListResponse extends ListResponse<ContentItem> {
+	/** Trashed entries in the requested locale, when the caller asked for them. */
+	trashTotal?: number;
+}
 
 export interface ContentResponse {
 	item: ContentItem;

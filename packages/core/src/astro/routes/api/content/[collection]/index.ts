@@ -28,10 +28,11 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
 
 	// Subscribers must only see published content; force the status filter
 	// regardless of caller-supplied value. Any user with content:read_drafts
-	// (CONTRIBUTOR+) keeps the requested filter.
+	// (CONTRIBUTOR+) keeps the requested filter. Reading the trash needs the
+	// same permission, so subscribers get no trash count either.
 	const params_ = hasPermission(user, "content:read_drafts")
 		? query
-		: { ...query, status: "published" };
+		: { ...query, status: "published", trashTotal: false };
 
 	const result = await emdash.handleContentList(collection, params_);
 

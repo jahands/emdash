@@ -1254,8 +1254,12 @@ describe("ContentListPage – numbered pages", () => {
 				requests.push(`${url.pathname}${url.search}`);
 				const [, collection = "", trash = ""] = list;
 				if (holdCollection?.collection === collection) await holdCollection.release;
+				const page = listPage(collection, url, totals[`${collection}${trash}`] ?? 0);
 				return Response.json({
-					data: listPage(collection, url, totals[`${collection}${trash}`] ?? 0),
+					data:
+						url.searchParams.get("trashTotal") === "1"
+							? { ...page, trashTotal: totals[`${collection}/trash`] ?? 0 }
+							: page,
 				});
 			}
 			return mockedFetch(input, init);
@@ -1274,14 +1278,14 @@ describe("ContentListPage – numbered pages", () => {
 		return { ...harness, screen };
 	}
 
-	it("loads one page of the list and of the trash at a time", async () => {
+	it("loads one page of the list at a time, with the trash count from the list", async () => {
 		const { screen } = await renderPosts();
 
-		expect(requests).toContain("/_emdash/api/content/posts/trash?page=1&limit=20&locale=fr");
 		expect(
 			requests.some((url) => url.startsWith("/_emdash/api/content/posts?page=1&limit=20&")),
 		).toBe(true);
 		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("25");
+		expect(requests.filter((url) => url.includes("/trash?"))).toEqual([]);
 
 		await screen.getByRole("button", { name: "Next page" }).click();
 
@@ -1347,7 +1351,7 @@ describe("ContentListPage – numbered pages", () => {
 		]);
 	});
 
-	it("waits for the manifest before loading the trash", async () => {
+	it("waits for the manifest before loading the list", async () => {
 		let releaseManifest = () => {};
 		holdManifest = new Promise<void>((resolve) => {
 			releaseManifest = resolve;
@@ -1361,9 +1365,19 @@ describe("ContentListPage – numbered pages", () => {
 		releaseManifest();
 
 		await expect.element(screen.getByText("Showing 1-20 of 45")).toBeInTheDocument();
+	});
+
+	it("loads the trash once its tab opens", async () => {
+		const { screen } = await renderPosts();
+		expect(requests.filter((url) => url.includes("/trash?"))).toEqual([]);
+
+		await screen.getByRole("tab", { name: /Trash/ }).click();
+
+		await expect.element(screen.getByText("posts entry 1", { exact: true })).toBeInTheDocument();
 		expect(requests.filter((url) => url.includes("/trash?"))).toEqual([
 			"/_emdash/api/content/posts/trash?page=1&limit=20&locale=fr",
 		]);
+		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("25");
 	});
 });
 

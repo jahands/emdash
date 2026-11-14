@@ -3990,6 +3990,8 @@ export class EmDashRuntime {
 			includeInferredBylines?: boolean;
 			fieldFilters?: ContentFieldFilters;
 			fields?: string[];
+			/** Count the trashed entries in `locale` too, as `trashTotal`. */
+			trashTotal?: boolean;
 		},
 	) {
 		return handleContentList(this.db, collection, params);

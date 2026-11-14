@@ -147,6 +147,8 @@ export interface ContentListProps {
 	hasMore?: boolean;
 	hasMoreTrashed?: boolean;
 	trashedCount?: number;
+	/** Called when the user switches between all entries and the trash. */
+	onTabChange?: (tab: "all" | "trash") => void;
 	/** i18n config — present when multiple locales are configured */
 	i18n?: { defaultLocale: string; locales: string[]; prefixDefaultLocale?: boolean };
 	/** Currently active locale filter */
@@ -294,6 +296,7 @@ export function ContentList({
 	hasMore,
 	hasMoreTrashed,
 	trashedCount = 0,
+	onTabChange,
 	i18n,
 	activeLocale,
 	onLocaleChange,
@@ -577,7 +580,10 @@ export function ContentList({
 				variant="underline"
 				value={activeTab}
 				onValueChange={(v) => {
-					if (v === "all" || v === "trash") setActiveTab(v);
+					if (v === "all" || v === "trash") {
+						setActiveTab(v);
+						onTabChange?.(v);
+					}
 				}}
 				tabs={[
 					{ value: "all", label: t`All` },

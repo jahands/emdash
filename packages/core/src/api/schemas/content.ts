@@ -215,6 +215,11 @@ export const contentListQuery = cursorPaginationQuery
 		 * slugs are ignored. Omit it for full entries.
 		 */
 		fields: fieldSelectionParam,
+		/**
+		 * Also count the collection's trashed entries in `locale`, returned as
+		 * `trashTotal`. Ignored for callers who can't read the trash.
+		 */
+		trashTotal: booleanParam,
 	})
 	.refine(({ cursor, page }) => cursor === undefined || page === undefined, {
 		message: "cursor and page cannot be used together",
@@ -502,6 +507,8 @@ export const contentListResponseSchema = z
 		items: z.array(contentItemSchema),
 		nextCursor: z.string().optional(),
 		total: z.number().int().nonnegative().optional(),
+		/** Trashed entries in the requested locale, when `trashTotal` was requested. */
+		trashTotal: z.number().int().nonnegative().optional(),
 	})
 	.meta({ id: "ContentListResponse" });
 

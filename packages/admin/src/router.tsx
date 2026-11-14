@@ -759,21 +759,31 @@ function ContentListPage() {
 				authorId: authorFilter || undefined,
 				...dateApiParams,
 				...bylineApiParams,
+				trashTotal: true,
 			}),
 		pageSizes: CONTENT_LIST_PAGE_SIZES,
 		enabled: !!manifest,
 	});
 
-	// A failed trash request (subscribers can't read the trash) only hides the
-	// trash rows; it never replaces the list with an error screen.
+	// The list's response carries the trash count for the tab's badge, so the
+	// trash itself loads only once its tab opens. A failed trash request
+	// (subscribers can't read the trash) only hides the trash rows; it never
+	// replaces the list with an error screen.
+	const [trashOpened, setTrashOpened] = React.useState(false);
 	const trash = usePagedQuery({
 		scope: ["content", collection, "trash"],
 		queryKey: [{ locale: activeLocale }],
 		queryFn: ({ page, perPage }) =>
 			fetchTrashedContent(collection, { locale: activeLocale, page, limit: perPage }),
 		pageSizes: CONTENT_LIST_PAGE_SIZES,
-		enabled: !!manifest,
+		enabled: !!manifest && trashOpened,
 	});
+	const listPage = contentList.query.data;
+	const listTrashTotal =
+		listPage && "trashTotal" in listPage && typeof listPage.trashTotal === "number"
+			? listPage.trashTotal
+			: 0;
+	const trashedCount = trash.query.data ? trash.pagination.totalCount : listTrashTotal;
 
 	const deleteMutation = useMutation({
 		mutationFn: (id: string) => deleteContent(collection, id),
@@ -941,7 +951,10 @@ function ContentListPage() {
 			loadFailed={contentList.query.isError && contentList.items.length === 0}
 			onRetry={() => void contentList.query.refetch()}
 			isTrashedLoading={trash.query.isLoading}
-			trashedCount={trash.pagination.totalCount}
+			trashedCount={trashedCount}
+			onTabChange={(tab) => {
+				if (tab === "trash") setTrashOpened(true);
+			}}
 			onDelete={(id) => deleteMutation.mutateAsync(id)}
 			onRestore={(id) => restoreMutation.mutate(id)}
 			onPermanentDelete={(id) => permanentDeleteMutation.mutateAsync(id)}

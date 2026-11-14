@@ -207,8 +207,10 @@ export async function fetchContentList(
 		includeInferredBylines?: boolean;
 		/** Return only these fields in each item's `data`; omit for whole entries. */
 		fields?: string[];
+		/** Also count the trash in `locale`, as `trashTotal`. */
+		trashTotal?: boolean;
 	},
-): Promise<FindManyResult<ContentItem>> {
+): Promise<FindManyResult<ContentItem> & { trashTotal?: number }> {
 	const params = new URLSearchParams();
 	if (options?.cursor) params.set("cursor", options.cursor);
 	if (options?.page !== undefined) params.set("page", String(options.page));
@@ -237,10 +239,11 @@ export async function fetchContentList(
 		params.set("includeInferredBylines", "1");
 	}
 	if (options?.fields) params.set("fields", options.fields.join(","));
+	if (options?.trashTotal) params.set("trashTotal", "1");
 
 	const url = `${API_BASE}/content/${collection}${params.toString() ? `?${params}` : ""}`;
 	const response = await apiFetch(url);
-	return parseApiResponse<FindManyResult<ContentItem>>(
+	return parseApiResponse<FindManyResult<ContentItem> & { trashTotal?: number }>(
 		response,
 		i18n._(msg`Failed to fetch content`),
 	);

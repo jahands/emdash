@@ -325,6 +325,8 @@ export interface EmDashHandlers {
 			fieldFilters?: ContentFieldFilters;
 			/** Field slugs to return in each item's `data`; omit for every field. */
 			fields?: string[];
+			/** Count the trashed entries in `locale` too, as `trashTotal`. */
+			trashTotal?: boolean;
 		},
 	) => Promise<HandlerResponse>;
 

@@ -267,6 +267,35 @@ describeEachDialect("admin read round trips", (dialect) => {
 		expect(result.spans.length).toBeLessThanOrEqual(LIST_MAX_QUERIES);
 	});
 
+	it("counts the trash with the list for callers who can read it", async () => {
+		const trashed = await handlers.handleContentDelete("posts", draftEntryId);
+		if (!trashed.success) throw new Error(trashed.error.message);
+
+		const result = await inRequest(() =>
+			listEntries(context("/content/posts?limit=20&trashTotal=1", { collection: "posts" })),
+		);
+		expect(result.response.status, result.text).toBe(200);
+		const { items, total, trashTotal } = JSON.parse(result.text).data;
+		expect(items).toHaveLength(2);
+		expect(total).toBe(2);
+		expect(trashTotal).toBe(1);
+		expect(sequentialWaves(result.spans)).toBeLessThanOrEqual(LIST_MAX_WAVES);
+
+		const subscriberList = await inRequest(() =>
+			listEntries({
+				...context("/content/posts?limit=20&trashTotal=1", { collection: "posts" }),
+				locals: { emdash: handlers, user: { id: "user_subscriber", role: Role.SUBSCRIBER } },
+			} as unknown as APIContext),
+		);
+		expect(subscriberList.response.status, subscriberList.text).toBe(200);
+		expect(JSON.parse(subscriberList.text).data).not.toHaveProperty("trashTotal");
+
+		const plain = await inRequest(() =>
+			listEntries(context("/content/posts?limit=20", { collection: "posts" })),
+		);
+		expect(JSON.parse(plain.text).data).not.toHaveProperty("trashTotal");
+	});
+
 	it("lists whole entries when no fields are selected", async () => {
 		const result = await inRequest(() =>
 			listEntries(context("/content/posts?limit=20", { collection: "posts" })),

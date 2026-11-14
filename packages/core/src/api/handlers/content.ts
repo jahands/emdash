@@ -1313,6 +1313,8 @@ export async function handleContentList(
 		fieldFilters?: ContentFieldFilters;
 		/** Field slugs to return in each item's `data`; omit for every field. */
 		fields?: string[];
+		/** Count the trashed entries in `locale` too, as `trashTotal`. */
+		trashTotal?: boolean;
 	},
 ): Promise<ApiResult<ContentListResponse>> {
 	try {
@@ -1392,14 +1394,20 @@ export async function handleContentList(
 				sortableExtras,
 				fold,
 			});
+		const trashTotal = params.trashTotal ? repo.countTrashed(collection, { locale }) : undefined;
 		let result: Awaited<ReturnType<typeof findPage>>;
 		try {
-			[result] = await settleAll([findPage(listFold(db, collection)), writeMeta, datetimeContext]);
+			[result] = await settleAll([
+				findPage(listFold(db, collection)),
+				writeMeta,
+				datetimeContext,
+				trashTotal,
+			]);
 		} catch (error) {
 			// The fold reads standard columns a damaged table may lack; without it
 			// the read reports the column the list itself needs.
 			if (!isMissingColumnError(error)) throw error;
-			[result] = await settleAll([findPage(), writeMeta]);
+			[result] = await settleAll([findPage(), writeMeta, trashTotal]);
 		}
 		const { hasSeo } = await writeMeta;
 
@@ -1427,6 +1435,7 @@ export async function handleContentList(
 				items: result.items,
 				nextCursor: result.nextCursor,
 				total: result.total,
+				...(trashTotal ? { trashTotal: await trashTotal } : {}),
 			},
 		};
 	} catch (error) {
