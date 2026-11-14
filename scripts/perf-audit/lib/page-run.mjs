@@ -295,8 +295,12 @@ export async function waitForSettle(
 	return { settled: false, ms: Date.now() - started, reason };
 }
 
-/** Requests the admin waits for before it renders a screen. */
+/**
+ * Requests the admin waits for before it renders a screen. An admin page that
+ * embeds their answers (an element with this id) makes none of them.
+ */
 export const ADMIN_BOOT_REQUESTS = ["/_emdash/api/manifest", "/_emdash/api/auth/me"];
+const ADMIN_BOOT_DATA_MARKER = 'id="emdash-admin-boot"';
 
 /** What `--hold-after` and `--hold-after-boot` wait for on this screen. */
 export function holdTriggers(options, target) {
@@ -318,8 +322,13 @@ async function installHold(context, page, substring, screenshotPath, notes, afte
 	let done = false;
 	const waiting = new Set(after);
 	if (waiting.size > 0) {
-		page.on("response", (response) => {
+		page.on("response", async (response) => {
 			for (const text of waiting) if (response.url().includes(text)) waiting.delete(text);
+			if (response.request().resourceType() !== "document") return;
+			const body = await response.text().catch(() => "");
+			if (body.includes(ADMIN_BOOT_DATA_MARKER)) {
+				for (const text of ADMIN_BOOT_REQUESTS) waiting.delete(text);
+			}
 		});
 		notes.push(`holding only after responses for ${after.join(", ")}`);
 	}

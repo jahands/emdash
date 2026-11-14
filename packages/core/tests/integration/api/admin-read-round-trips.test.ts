@@ -18,7 +18,9 @@ vi.mock("../../../src/after.js", () => ({
 	},
 }));
 
+import { loadAdminBootData } from "../../../src/api/admin-boot.js";
 import { handleDashboardStats } from "../../../src/api/handlers/dashboard.js";
+import { GET as getCurrentUser } from "../../../src/astro/routes/api/auth/me.js";
 import { GET as getEntry } from "../../../src/astro/routes/api/content/[collection]/[id].js";
 import { GET as listEntries } from "../../../src/astro/routes/api/content/[collection]/index.js";
 import { GET as getManifest } from "../../../src/astro/routes/api/manifest.js";
@@ -167,6 +169,35 @@ describeEachDialect("admin read round trips", (dialect) => {
 		expect(Object.keys(JSON.parse(result.text).data.collections)).toEqual(["pages", "posts"]);
 		expect(sequentialWaves(result.spans)).toBeLessThanOrEqual(MANIFEST_MAX_WAVES);
 		expect(result.spans.length).toBeLessThanOrEqual(MANIFEST_MAX_QUERIES);
+	});
+
+	it("embeds in the admin page what the manifest and auth/me routes return", async () => {
+		const sessionUser = {
+			...user,
+			email: "editor@example.com",
+			name: "Editor",
+			avatarUrl: null,
+			emailVerified: true,
+			disabled: false,
+			data: { welcomeDismissed: true },
+			createdAt: new Date(),
+			updatedAt: new Date(),
+		};
+		const locals = { emdash: handlers, user: sessionUser } as unknown as APIContext["locals"];
+		const routeContext = (path: string) =>
+			({ ...context(path, {}), locals }) as unknown as APIContext;
+
+		const manifest = await inRequest(() => getManifest(routeContext("/manifest")));
+		const me = await inRequest(() => getCurrentUser(routeContext("/auth/me")));
+		spans.spans = [];
+		const embedded = await runWithContext({ editMode: false }, () => loadAdminBootData(locals));
+
+		expect(embedded).toEqual({
+			manifest: JSON.parse(manifest.text).data,
+			currentUser: JSON.parse(me.text).data,
+		});
+		expect(sequentialWaves(spans.spans)).toBeLessThanOrEqual(MANIFEST_MAX_WAVES);
+		expect(spans.spans.length).toBeLessThanOrEqual(MANIFEST_MAX_QUERIES);
 	});
 
 	it("answers an unchanged manifest with 304 and a changed one in full", async () => {

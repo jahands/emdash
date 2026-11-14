@@ -18,7 +18,12 @@ import * as React from "react";
 
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AdminBrandingProvider, type AdminBranding } from "./lib/admin-branding-context";
-import { refetchCurrentUserOnForbidden } from "./lib/api/current-user";
+import type { AdminManifest } from "./lib/api/client";
+import {
+	currentUserQueryKey,
+	refetchCurrentUserOnForbidden,
+	type CurrentUser,
+} from "./lib/api/current-user";
 import { AuthProviderProvider, type AuthProviders } from "./lib/auth-provider-context";
 import { PluginAdminProvider, type PluginAdmins } from "./lib/plugin-context";
 import { setRoutePrefetchFiles, type RoutePrefetchFiles } from "./lib/route-prefetch.js";
@@ -123,6 +128,13 @@ export interface AdminAppProps {
 	messages?: Messages;
 	/** Files of the screens to download before they open, read from the build. Without them, screens load when opened or when a link to them shows intent. */
 	routePrefetchFiles?: RoutePrefetchFiles;
+	/** The manifest and signed-in user the admin page embedded. Without them, the admin fetches both before showing a screen. */
+	initialData?: AdminInitialData;
+}
+
+export interface AdminInitialData {
+	manifest: AdminManifest;
+	currentUser: CurrentUser;
 }
 
 /**
@@ -140,6 +152,7 @@ export function AdminApp({
 	locale = "en",
 	messages = {},
 	routePrefetchFiles = NO_PREFETCH_FILES,
+	initialData,
 }: AdminAppProps) {
 	React.useEffect(() => {
 		document.getElementById("emdash-boot-loader")?.remove();
@@ -154,6 +167,17 @@ export function AdminApp({
 		i18n.loadAndActivate({ locale, messages });
 		void loadDateLocale(locale);
 		i18nInitialized.current = true;
+	}
+
+	// Seeded once, as fetched data rather than `initialData`, so a reset after
+	// an authorization failure refetches instead of restoring the seed.
+	const initialDataSeeded = React.useRef(false);
+	if (!initialDataSeeded.current) {
+		initialDataSeeded.current = true;
+		if (initialData && queryClient.getQueryData(["manifest"]) === undefined) {
+			queryClient.setQueryData(["manifest"], initialData.manifest);
+			queryClient.setQueryData(currentUserQueryKey, initialData.currentUser);
+		}
 	}
 
 	return (

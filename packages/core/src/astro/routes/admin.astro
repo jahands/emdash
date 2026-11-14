@@ -24,9 +24,13 @@ export const prerender = false;
 
 import { resolveLocale, getLocaleDir, DEFAULT_LOCALE } from "@emdash-cms/admin/locales/config";
 import { loadAdminBootLabels } from "@emdash-cms/admin/locales/server";
+import { adminBootDataScript, loadAdminBootData } from "#api/admin-boot.js";
 import { getSiteSettingsWithDb } from "#settings/index.js";
 import { adminPrefetchFiles, adminPreloadHrefs } from "#utils/admin-preloads.js";
 
+// Started before the shell is sent and awaited after it, so the browser loads
+// the admin's code while the database work runs.
+const bootDataScript = loadAdminBootData(Astro.locals).then(adminBootDataScript);
 const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
 const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls[DEFAULT_LOCALE];
@@ -196,5 +200,6 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 				routePrefetchFiles={routePrefetchFiles}
 			/>
 		</div>
+		<Fragment set:html={bootDataScript} />
 	</body>
 </html>
