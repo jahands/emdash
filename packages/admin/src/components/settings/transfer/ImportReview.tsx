@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, Loader, Radio, Select } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Loader, Radio, Select, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -106,12 +106,34 @@ export function ImportReview({
 
 	if (planQuery.isPending || usersQuery.isPending) {
 		return (
-			<SettingRow>
-				<div className="flex items-center gap-2 text-sm text-kumo-subtle" role="status">
-					<Loader size="sm" />
-					{t`Loading the import plan…`}
-				</div>
-			</SettingRow>
+			<>
+				<ReviewIntro />
+				<SettingRow>
+					<span role="status" className="sr-only">
+						{t`Loading the import plan…`}
+					</span>
+					<dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">
+						{[t`Exported`, t`Exported with`, t`Source site ID`, t`Size`].map((label, index) => (
+							<div key={label}>
+								<dt className="text-kumo-subtle">{label}</dt>
+								<dd aria-hidden="true">
+									<SkeletonLine
+										blockHeight="1lh"
+										minWidth={PLAN_VALUE_WIDTHS[index]}
+										maxWidth={PLAN_VALUE_WIDTHS[index]}
+									/>
+								</dd>
+							</div>
+						))}
+					</dl>
+				</SettingRow>
+				<SettingRow>
+					<h4 className="text-sm font-medium leading-5">{t`What will be imported`}</h4>
+					<div aria-hidden="true" className="mt-2 text-sm">
+						<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
+					</div>
+				</SettingRow>
+			</>
 		);
 	}
 	if (planQuery.error || usersQuery.error) {
@@ -135,6 +157,23 @@ export function ImportReview({
 			capabilities={capabilities}
 			onExecuted={onExecuted}
 		/>
+	);
+}
+
+// Fixed, so the outline keeps its shape if the review remounts while loading.
+const PLAN_VALUE_WIDTHS = [55, 40, 70, 80];
+
+function ReviewIntro() {
+	const { t } = useLingui();
+	return (
+		<SettingRow>
+			<div className="grid gap-1 text-sm leading-5">
+				<h3 className="font-medium">{t`Review the import`}</h3>
+				<p className="max-w-2xl text-pretty text-kumo-subtle">
+					{t`The package was checked against this site. Review what will be imported, choose who the content belongs to, then start the import.`}
+				</p>
+			</div>
+		</SettingRow>
 	);
 }
 
@@ -244,14 +283,7 @@ export function PlanReview({
 
 	return (
 		<>
-			<SettingRow>
-				<div className="grid gap-1 text-sm leading-5">
-					<h3 className="font-medium">{t`Review the import`}</h3>
-					<p className="max-w-2xl text-pretty text-kumo-subtle">
-						{t`The package was checked against this site. Review what will be imported, choose who the content belongs to, then start the import.`}
-					</p>
-				</div>
-			</SettingRow>
+			<ReviewIntro />
 
 			<SettingRow>
 				<dl className="grid gap-x-6 gap-y-2 text-sm sm:grid-cols-2">

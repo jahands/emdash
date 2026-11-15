@@ -17,7 +17,7 @@
  * immediately rather than an empty list.
  */
 
-import { Button, Checkbox, Dialog, Input, Loader, Select } from "@cloudflare/kumo";
+import { Button, Checkbox, Dialog, Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { MagnifyingGlass, FolderOpen, X } from "@phosphor-icons/react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
@@ -75,6 +75,9 @@ interface ContentPickerModalProps {
 
 const EMPTY_SELECTED: ReadonlySet<string> = new Set<string>();
 
+// Fixed, so placeholders shown again after a remount don't change shape.
+const ENTRY_PLACEHOLDER_WIDTHS = [55, 40, 62, 48, 35, 58];
+
 export function ContentPickerModal({
 	open,
 	onOpenChange,
@@ -93,7 +96,7 @@ export function ContentPickerModal({
 	// Staged picks (multiple mode) — keyed by id so we retain title/slug.
 	const [picked, setPicked] = React.useState<Record<string, PickedContentEntry>>({});
 
-	const { data: collections = [] } = useQuery({
+	const { data: collections = [], isPending: collectionsPending } = useQuery({
 		queryKey: ["collections"],
 		queryFn: fetchCollections,
 		enabled: open && !locked,
@@ -128,19 +131,32 @@ export function ContentPickerModal({
 	}, [open, locked]);
 
 	const trimmedSearch = debouncedSearch.trim();
-	const { data, isLoading, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
-		useInfiniteQuery({
-			queryKey: ["content-picker", activeCollection, trimmedSearch],
-			queryFn: ({ pageParam }) =>
-				fetchContentList(activeCollection, {
-					limit: 50,
-					cursor: pageParam,
-					search: trimmedSearch || undefined,
-				}),
-			initialPageParam: undefined as string | undefined,
-			getNextPageParam: (lastPage) => lastPage.nextCursor,
-			enabled: open && !!activeCollection,
-		});
+	const {
+		data,
+		isLoading,
+		isPlaceholderData,
+		error,
+		refetch,
+		fetchNextPage,
+		hasNextPage,
+		isFetchingNextPage,
+	} = useInfiniteQuery({
+		queryKey: ["content-picker", activeCollection, trimmedSearch],
+		queryFn: ({ pageParam }) =>
+			fetchContentList(activeCollection, {
+				limit: 50,
+				cursor: pageParam,
+				search: trimmedSearch || undefined,
+			}),
+		initialPageParam: undefined as string | undefined,
+		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		enabled: open && !!activeCollection,
+		// Only a new search keeps the old results: entries chosen while they show are
+		// confirmed under the active collection, so another collection's must not linger.
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === activeCollection ? previous : undefined,
+	});
+	const loading = isLoading || (!locked && !activeCollection && collectionsPending);
 
 	const items = React.useMemo(() => {
 		const flat = data?.pages.flatMap((page) => page.items) ?? [];
@@ -265,9 +281,22 @@ export function ContentPickerModal({
 
 				{/* Content list */}
 				<div className="flex-1 overflow-y-auto py-4">
-					{isLoading ? (
-						<div className="flex items-center justify-center h-32">
-							<div className="text-kumo-subtle">{t`Loading content...`}</div>
+					{loading ? (
+						<div className="space-y-1">
+							<span role="status" className="sr-only">
+								{t`Loading content...`}
+							</span>
+							{ENTRY_PLACEHOLDER_WIDTHS.map((width) => (
+								<div key={width} className="flex items-start gap-3 px-3 py-2" aria-hidden="true">
+									{multiple && <div className="skeleton-line mt-1 size-4 shrink-0 rounded" />}
+									<div className="min-w-0 flex-1">
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+										<div className="text-sm">
+											<SkeletonLine blockHeight="1lh" minWidth={25} maxWidth={25} />
+										</div>
+									</div>
+								</div>
+							))}
 						</div>
 					) : error && items.length === 0 ? (
 						// A failed read has nothing to say about what the collection
@@ -294,7 +323,7 @@ export function ContentPickerModal({
 							)}
 						</div>
 					) : (
-						<div className="space-y-1">
+						<div className="space-y-1" aria-busy={isPlaceholderData || undefined}>
 							{items.map((item) => {
 								const status = getDraftStatus(item);
 								const alreadyLinked = selectedIds.has(selectionKey(item));
@@ -365,14 +394,9 @@ export function ContentPickerModal({
 										size="sm"
 										onClick={() => void fetchNextPage()}
 										disabled={isFetchingNextPage}
+										loading={isFetchingNextPage}
 									>
-										{isFetchingNextPage ? (
-											<>
-												<Loader size="sm" /> {t`Loading...`}
-											</>
-										) : (
-											t`Load more`
-										)}
+										{t`Load more`}
 									</Button>
 								</div>
 							)}

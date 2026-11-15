@@ -5,7 +5,7 @@
  * interactions to the plugin's admin route and renders the returned blocks.
  */
 
-import { Loader } from "@cloudflare/kumo";
+import { SkeletonLine } from "@cloudflare/kumo";
 import { BlockRenderer } from "@emdash-cms/blocks";
 import type { Block, BlockInteraction, BlockResponse } from "@emdash-cms/blocks";
 import { useLingui } from "@lingui/react/macro";
@@ -14,6 +14,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { apiFetch, API_BASE } from "../lib/api/client.js";
 import { resolvePluginLinkTarget } from "../lib/plugin-links.js";
+
+// Fixed, so the outline keeps its shape if the page remounts while loading.
+const PAGE_LINE_WIDTHS = [90, 75, 82, 60];
 
 interface SandboxedPluginPageProps {
 	pluginId: string;
@@ -106,8 +109,16 @@ export function SandboxedPluginPage({ pluginId, page }: SandboxedPluginPageProps
 
 	if (loading) {
 		return (
-			<div className="flex items-center justify-center py-16">
-				<Loader aria-label={t`Loading...`} className="text-kumo-subtle" />
+			<div>
+				<span role="status" className="sr-only">
+					{t`Loading...`}
+				</span>
+				<div aria-hidden="true" className="space-y-3">
+					<SkeletonLine blockHeight={28} minWidth={35} maxWidth={35} />
+					{PAGE_LINE_WIDTHS.map((width, index) => (
+						<SkeletonLine key={index} blockHeight={20} minWidth={width} maxWidth={width} />
+					))}
+				</div>
 			</div>
 		);
 	}
@@ -127,7 +138,7 @@ export function SandboxedPluginPage({ pluginId, page }: SandboxedPluginPageProps
 	}
 
 	return (
-		<div className="relative">
+		<div>
 			{/* Toast notification */}
 			{toast && (
 				<div
@@ -153,14 +164,6 @@ export function SandboxedPluginPage({ pluginId, page }: SandboxedPluginPageProps
 					resolveLinkTarget={(target) => resolvePluginLinkTarget(pluginId, target)}
 				/>
 			</div>
-			{pending && (
-				<div
-					aria-hidden="true"
-					className="pointer-events-none absolute inset-0 flex items-center justify-center"
-				>
-					<Loader aria-label={t`Updating...`} className="text-kumo-subtle" />
-				</div>
-			)}
 			<span role="status" className="sr-only">
 				{pending ? t`Updating...` : ""}
 			</span>

@@ -26,7 +26,7 @@ import { ConfirmDialog } from "../ConfirmDialog.js";
 import {
 	SettingRow,
 	SettingsFrame,
-	SettingsLoadingSection,
+	SettingsPlaceholderRows,
 	SettingsSection,
 } from "./SettingsLayout.js";
 
@@ -215,14 +215,6 @@ export function ApiTokenSettings() {
 	const title = t`API Tokens`;
 	const description = t`Create personal access tokens for programmatic API access`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame title={title} description={description}>
-				<SettingsLoadingSection />
-			</SettingsFrame>
-		);
-	}
-
 	if (loadError && tokens === undefined) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -237,7 +229,7 @@ export function ApiTokenSettings() {
 	}
 
 	return (
-		<SettingsFrame title={title} description={description}>
+		<SettingsFrame title={title} description={description} loading={isLoading}>
 			<div className="grid gap-8">
 				<SettingsSection
 					title={t(msg`Create New Token`)}
@@ -248,7 +240,7 @@ export function ApiTokenSettings() {
 								{t`Cancel`}
 							</Button>
 						) : (
-							<Button icon={<Plus />} onClick={() => setShowCreateForm(true)}>
+							<Button icon={<Plus />} disabled={isLoading} onClick={() => setShowCreateForm(true)}>
 								{t(msg`Create Token`)}
 							</Button>
 						)
@@ -349,10 +341,14 @@ export function ApiTokenSettings() {
 				<SettingsSection
 					title={t`API Tokens`}
 					contentClassName={
-						tokens && tokens.length > 0 ? undefined : "border-2 border-dashed border-kumo-subtle/60"
+						isLoading || (tokens && tokens.length > 0)
+							? undefined
+							: "border-2 border-dashed border-kumo-subtle/60"
 					}
 				>
-					{tokens && tokens.length > 0 ? (
+					{isLoading ? (
+						<SettingsPlaceholderRows />
+					) : tokens && tokens.length > 0 ? (
 						tokens.map((token) => (
 							<SettingRow key={token.id}>
 								<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">

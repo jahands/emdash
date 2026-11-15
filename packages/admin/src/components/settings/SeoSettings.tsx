@@ -9,7 +9,6 @@ import {
 	Banner,
 	Button,
 	Field,
-	Input,
 	InputArea,
 	Label,
 	Switch,
@@ -31,8 +30,9 @@ import { SaveButton } from "../SaveButton.js";
 import {
 	PendingSaveAction,
 	SettingRow,
+	SettingsFieldPlaceholder,
 	SettingsFrame,
-	SettingsLoadingSection,
+	SettingsInput,
 	SettingsSection,
 } from "./SettingsLayout.js";
 
@@ -131,14 +131,6 @@ export function SeoSettings() {
 	const title = t`SEO Settings`;
 	const description = t`Search engine optimization and verification`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame title={title} description={description} actions={<PendingSaveAction />}>
-				<SettingsLoadingSection />
-			</SettingsFrame>
-		);
-	}
-
 	if (loadError && settings === undefined) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -156,19 +148,25 @@ export function SeoSettings() {
 		<SettingsFrame
 			title={title}
 			description={description}
+			loading={isLoading}
 			actions={
-				<SaveButton
-					type="submit"
-					form="seo-settings-form"
-					isDirty={isDirty}
-					isSaving={saveMutation.isPending}
-				/>
+				isLoading ? (
+					<PendingSaveAction />
+				) : (
+					<SaveButton
+						type="submit"
+						form="seo-settings-form"
+						isDirty={isDirty}
+						isSaving={saveMutation.isPending}
+					/>
+				)
 			}
 		>
 			<form id="seo-settings-form" onSubmit={handleSubmit} className="grid gap-8">
 				<SettingsSection title={t`Search Engine Optimization`}>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							label={t`Title Separator`}
 							value={formData.seo?.titleSeparator ?? ""}
 							placeholder="|"
@@ -182,7 +180,9 @@ export function SeoSettings() {
 							description={t`Used as the fallback Open Graph image when a page has none. Recommended size: 1200×630.`}
 						>
 							{/* A missing URL can represent an orphaned media reference, so mediaId remains the configured-state signal. */}
-							{formData.seo?.defaultOgImage?.mediaId ? (
+							{isLoading ? (
+								<div aria-hidden="true" className="skeleton-line h-9 w-36 rounded-lg" />
+							) : formData.seo?.defaultOgImage?.mediaId ? (
 								<div className="grid gap-3">
 									{formData.seo.defaultOgImage.url ? (
 										<img
@@ -238,7 +238,8 @@ export function SeoSettings() {
 
 				<SettingsSection title={t`Search Engine Verification`}>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`Google Verification`}
 							value={formData.seo?.googleVerification || ""}
@@ -247,7 +248,8 @@ export function SeoSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`Bing Verification`}
 							value={formData.seo?.bingVerification || ""}
@@ -259,14 +261,22 @@ export function SeoSettings() {
 
 				<SettingsSection title={t`robots.txt`}>
 					<SettingRow>
-						<InputArea
-							dir="ltr"
-							label={t`robots.txt`}
-							value={formData.seo?.robotsTxt || ""}
-							onChange={(e) => handleSeoChange("robotsTxt", e.target.value)}
-							rows={5}
-							description={t`Custom robots.txt content. Leave empty to use the default.`}
-						/>
+						{isLoading ? (
+							<SettingsFieldPlaceholder
+								label={t`robots.txt`}
+								description={t`Custom robots.txt content. Leave empty to use the default.`}
+								controlClassName="h-[7.5625rem]"
+							/>
+						) : (
+							<InputArea
+								dir="ltr"
+								label={t`robots.txt`}
+								value={formData.seo?.robotsTxt || ""}
+								onChange={(e) => handleSeoChange("robotsTxt", e.target.value)}
+								rows={5}
+								description={t`Custom robots.txt content. Leave empty to use the default.`}
+							/>
+						)}
 					</SettingRow>
 					<SettingRow className="flex items-start justify-between gap-6">
 						<div className="grid gap-1">
@@ -275,24 +285,32 @@ export function SeoSettings() {
 								{t`Adds rules to robots.txt that ask AI crawlers not to use this site for training. Search engines can still index it.`}
 							</p>
 						</div>
-						<Switch
-							id="seo-disallow-ai-training"
-							className="shrink-0"
-							checked={formData.seo?.disallowAiTraining === true}
-							onCheckedChange={(checked) => handleSeoChange("disallowAiTraining", checked)}
-							aria-label={t`Disallow AI training`}
-							aria-describedby="seo-disallow-ai-training-description"
-						/>
+						{isLoading ? (
+							<div aria-hidden="true" className="skeleton-line h-4.5 w-9 shrink-0 rounded-[5px]" />
+						) : (
+							<Switch
+								id="seo-disallow-ai-training"
+								className="shrink-0"
+								checked={formData.seo?.disallowAiTraining === true}
+								onCheckedChange={(checked) => handleSeoChange("disallowAiTraining", checked)}
+								aria-label={t`Disallow AI training`}
+								aria-describedby="seo-disallow-ai-training-description"
+							/>
+						)}
 					</SettingRow>
 				</SettingsSection>
 
 				<div className="flex justify-end">
-					<SaveButton
-						type="submit"
-						isDirty={isDirty}
-						isSaving={saveMutation.isPending}
-						announce={false}
-					/>
+					{isLoading ? (
+						<PendingSaveAction />
+					) : (
+						<SaveButton
+							type="submit"
+							isDirty={isDirty}
+							isSaving={saveMutation.isPending}
+							announce={false}
+						/>
+					)}
 				</div>
 			</form>
 

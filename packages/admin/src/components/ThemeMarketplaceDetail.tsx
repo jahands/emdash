@@ -8,7 +8,7 @@
  * - Demo + repository links
  */
 
-import { Badge, Button, LinkButton } from "@cloudflare/kumo";
+import { Badge, Button, LinkButton, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import {
 	ArrowSquareOut,
@@ -63,12 +63,35 @@ export function ThemeMarketplaceDetail({ themeId }: ThemeMarketplaceDetailProps)
 	// Loading
 	if (isLoading) {
 		return (
-			<div className="space-y-6 animate-pulse">
-				<div className="h-6 w-48 rounded bg-kumo-tint" />
-				<div className="aspect-video max-w-2xl rounded-lg bg-kumo-tint" />
-				<div className="space-y-3">
-					<div className="h-4 w-64 rounded bg-kumo-tint" />
-					<div className="h-4 w-96 rounded bg-kumo-tint" />
+			<div className="space-y-6">
+				<Link
+					to={"/themes/marketplace"}
+					className="inline-flex items-center gap-1 text-sm text-kumo-subtle hover:text-kumo-default"
+				>
+					<ArrowPrev className="h-4 w-4" />
+					{t`Back to Themes`}
+				</Link>
+				<span role="status" className="sr-only">
+					{t`Loading...`}
+				</span>
+				<div
+					aria-hidden="true"
+					className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
+				>
+					<div className="flex min-w-0 flex-1 items-start gap-4">
+						<div className="skeleton-line size-16 shrink-0 rounded-lg" />
+						<div className="min-w-0 flex-1">
+							<SkeletonLine blockHeight={30} minWidth={45} maxWidth={45} />
+							<div className="mt-1 text-sm">
+								<SkeletonLine blockHeight="1lh" minWidth={25} maxWidth={25} />
+							</div>
+							<div className="mt-2 max-w-lg text-sm">
+								<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
+								<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
+							</div>
+						</div>
+					</div>
+					<div className="skeleton-line h-9 w-28 shrink-0 rounded-lg" />
 				</div>
 			</div>
 		);

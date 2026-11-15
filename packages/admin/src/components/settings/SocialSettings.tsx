@@ -4,7 +4,7 @@
  * Social media profile links (Twitter, GitHub, Facebook, Instagram, LinkedIn, YouTube).
  */
 
-import { Banner, Input, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, useKumoToastManager } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
@@ -15,7 +15,7 @@ import {
 	PendingSaveAction,
 	SettingRow,
 	SettingsFrame,
-	SettingsLoadingSection,
+	SettingsInput,
 	SettingsSection,
 } from "./SettingsLayout.js";
 
@@ -95,14 +95,6 @@ export function SocialSettings() {
 	const title = t`Social Links`;
 	const description = t`Social media profile links`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame title={title} description={description} actions={<PendingSaveAction />}>
-				<SettingsLoadingSection />
-			</SettingsFrame>
-		);
-	}
-
 	if (loadError && settings === undefined) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -120,13 +112,18 @@ export function SocialSettings() {
 		<SettingsFrame
 			title={title}
 			description={description}
+			loading={isLoading}
 			actions={
-				<SaveButton
-					type="submit"
-					form="social-settings-form"
-					isDirty={isDirty}
-					isSaving={saveMutation.isPending}
-				/>
+				isLoading ? (
+					<PendingSaveAction />
+				) : (
+					<SaveButton
+						type="submit"
+						form="social-settings-form"
+						isDirty={isDirty}
+						isSaving={saveMutation.isPending}
+					/>
+				)
 			}
 		>
 			<form id="social-settings-form" onSubmit={handleSubmit} className="grid gap-8">
@@ -135,7 +132,8 @@ export function SocialSettings() {
 					description={t`Add your social media profiles. These are available to your site's theme and can be displayed in headers, footers, or author bios.`}
 				>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`Twitter`}
 							value={formData.social?.twitter ?? ""}
@@ -144,7 +142,8 @@ export function SocialSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`GitHub`}
 							value={formData.social?.github ?? ""}
@@ -153,7 +152,8 @@ export function SocialSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`Facebook`}
 							value={formData.social?.facebook ?? ""}
@@ -162,7 +162,8 @@ export function SocialSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`Instagram`}
 							value={formData.social?.instagram ?? ""}
@@ -171,7 +172,8 @@ export function SocialSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`LinkedIn`}
 							value={formData.social?.linkedin ?? ""}
@@ -180,7 +182,8 @@ export function SocialSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`YouTube`}
 							value={formData.social?.youtube ?? ""}
@@ -191,12 +194,16 @@ export function SocialSettings() {
 				</SettingsSection>
 
 				<div className="flex justify-end">
-					<SaveButton
-						type="submit"
-						isDirty={isDirty}
-						isSaving={saveMutation.isPending}
-						announce={false}
-					/>
+					{isLoading ? (
+						<PendingSaveAction />
+					) : (
+						<SaveButton
+							type="submit"
+							isDirty={isDirty}
+							isSaving={saveMutation.isPending}
+							announce={false}
+						/>
+					)}
 				</div>
 			</form>
 		</SettingsFrame>

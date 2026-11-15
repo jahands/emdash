@@ -42,7 +42,7 @@ import { DialogError, getMutationError } from "../DialogError.js";
 import {
 	SettingRow,
 	SettingsFrame,
-	SettingsLoadingSection,
+	SettingsPlaceholderRows,
 	SettingsSection,
 } from "./SettingsLayout.js";
 import { useAllowedDomainsRolesConfig } from "./useAllowedDomainsRolesConfig.js";
@@ -223,10 +223,11 @@ export function AllowedDomainsSettings() {
 	const title = t`Self-Signup Domains`;
 	const description = t`Allow users from specific domains to sign up`;
 
-	if (manifestLoading || isLoading) {
+	if (manifestLoading) {
+		// The auth mode decides whether this page has sections at all.
 		return (
-			<SettingsFrame title={title} description={description}>
-				<SettingsLoadingSection />
+			<SettingsFrame title={title} description={description} loading>
+				{null}
 			</SettingsFrame>
 		);
 	}
@@ -258,7 +259,7 @@ export function AllowedDomainsSettings() {
 	}
 
 	return (
-		<SettingsFrame title={title} description={description}>
+		<SettingsFrame title={title} description={description} loading={isLoading}>
 			<SettingsSection
 				title={t`Allowed Domains`}
 				description={t`Users with email addresses from these domains can sign up without an invite. They will be assigned the specified role automatically.`}
@@ -281,16 +282,21 @@ export function AllowedDomainsSettings() {
 								setIsAddingDomain(true);
 							}}
 							icon={<Plus />}
+							disabled={isLoading}
 						>
 							{t`Add Domain`}
 						</Button>
 					)
 				}
 				contentClassName={
-					domains && domains.length > 0 ? undefined : "border-2 border-dashed border-kumo-subtle/60"
+					isLoading || (domains && domains.length > 0)
+						? undefined
+						: "border-2 border-dashed border-kumo-subtle/60"
 				}
 			>
-				{domains && domains.length > 0 ? (
+				{isLoading ? (
+					<SettingsPlaceholderRows rows={1} />
+				) : domains && domains.length > 0 ? (
 					domains.map((domain) => (
 						<SettingRow
 							key={domain.domain}

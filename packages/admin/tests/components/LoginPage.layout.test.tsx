@@ -81,4 +81,29 @@ describe("Login page while the sign-in options load", () => {
 			expect(largestMovement(before)).toBeLessThanOrEqual(1);
 		},
 	);
+
+	it("shows the sign-in card in outline at its final size, not a spinner, while the options load", async () => {
+		await page.viewport(390, 844);
+		const authMode = deferred<{ authMode: string; signupEnabled: boolean }>();
+		mockFetchAuthMode.mockReturnValue(authMode.promise);
+
+		const screen = await render(
+			<QueryWrapper>
+				<LoginPage />
+			</QueryWrapper>,
+		);
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+		expect(screen.getByRole("button", { name: "Sign in with Passkey" }).query()).toBeNull();
+		const card = screen.getByText("Sign in with Passkey").element().closest(".shadow-sm")!;
+		expect(getComputedStyle(card).visibility).toBe("visible");
+		const before = snapshotPositions([card]);
+
+		authMode.resolve({ authMode: "passkey", signupEnabled: false });
+		await expect
+			.element(screen.getByRole("button", { name: "Sign in with Passkey" }))
+			.toBeVisible();
+
+		expect(largestMovement(before)).toBeLessThanOrEqual(1);
+		expect(screen.getByRole("status").query()).toBeNull();
+	});
 });

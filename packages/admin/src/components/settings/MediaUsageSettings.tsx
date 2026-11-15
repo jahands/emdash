@@ -21,7 +21,7 @@ import { ConfirmDialog } from "../ConfirmDialog.js";
 import {
 	SettingRow,
 	SettingsFrame,
-	SettingsLoadingSection,
+	SettingsPlaceholderRows,
 	SettingsSection,
 } from "./SettingsLayout.js";
 
@@ -612,9 +612,12 @@ function ConfirmationDialog({
 }
 
 function LoadingPage({ title, description }: { title: string; description: string }) {
+	const { t } = useLingui();
 	return (
-		<SettingsFrame title={title} description={description}>
-			<SettingsLoadingSection />
+		<SettingsFrame title={title} description={description} loading>
+			<SettingsSection title={t`Status`}>
+				<SettingsPlaceholderRows rows={1} />
+			</SettingsSection>
 		</SettingsFrame>
 	);
 }

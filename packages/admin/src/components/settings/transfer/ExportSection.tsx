@@ -127,6 +127,12 @@ export function ExportSection() {
 						{startMutation.isPending ? t`Starting…` : t`Export site`}
 					</Button>
 				</div>
+				{exportsQuery.isPending ? (
+					// Most sites have no export yet, so the last export's row appears only once known.
+					<span role="status" className="sr-only">
+						{t`Loading exports…`}
+					</span>
+				) : null}
 				{startMutation.error ? (
 					<Banner
 						className="mt-3"
@@ -138,14 +144,7 @@ export function ExportSection() {
 				) : null}
 			</SettingRow>
 
-			{exportsQuery.isPending ? (
-				<SettingRow>
-					<div className="flex items-center gap-2 text-sm text-kumo-subtle" role="status">
-						<Loader size="sm" />
-						{t`Loading exports…`}
-					</div>
-				</SettingRow>
-			) : exportsQuery.error ? (
+			{exportsQuery.error ? (
 				<SettingRow>
 					<Banner
 						variant="error"

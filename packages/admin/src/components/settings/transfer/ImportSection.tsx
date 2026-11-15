@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, Loader, Meter } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Loader, Meter, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { CheckCircle, FileArrowUp } from "@phosphor-icons/react";
@@ -50,7 +50,12 @@ import {
 } from "./state.js";
 import { useAdvanceLoop } from "./useAdvanceLoop.js";
 
-export function ImportSection({ capabilities }: { capabilities: TransferCapabilities }) {
+export function ImportSection({
+	capabilities,
+}: {
+	/** Undefined while the site's capabilities load. */
+	capabilities: TransferCapabilities | undefined;
+}) {
 	const { t, i18n } = useLingui();
 	const queryClient = useQueryClient();
 	const [dismissed, setDismissed] = React.useState<ReadonlySet<string>>(() => new Set());
@@ -77,7 +82,7 @@ export function ImportSection({ capabilities }: { capabilities: TransferCapabili
 			? statusQuery.data.files.declared
 			: null;
 
-	const eligible = capabilities.portableDomain.empty;
+	const eligible = capabilities?.portableDomain.empty ?? false;
 	const view = importView({ eligible, current, uploading: upload !== null, filesMissing });
 
 	const setOperation = React.useCallback(
@@ -129,6 +134,7 @@ export function ImportSection({ capabilities }: { capabilities: TransferCapabili
 		file: File,
 		expectedPackageDigest: TransferOperation["packageDigest"],
 	) => {
+		if (!capabilities) return;
 		const controller = new AbortController();
 		setUploadError(null);
 		setLoopError(null);
@@ -212,11 +218,16 @@ export function ImportSection({ capabilities }: { capabilities: TransferCapabili
 				) : undefined
 			}
 		>
-			{importsQuery.isPending || (view.view === "needs-file" && statusQuery.isPending) ? (
+			{importsQuery.isPending ||
+			!capabilities ||
+			(view.view === "needs-file" && statusQuery.isPending) ? (
 				<SettingRow>
-					<div className="flex items-center gap-2 text-sm text-kumo-subtle" role="status">
-						<Loader size="sm" />
+					<span role="status" className="sr-only">
 						{t`Loading imports…`}
+					</span>
+					<div aria-hidden="true">
+						<SkeletonLine blockHeight={20} minWidth={35} maxWidth={35} />
+						<SkeletonLine blockHeight={20} minWidth={70} maxWidth={70} />
 					</div>
 				</SettingRow>
 			) : importsQuery.error ? (

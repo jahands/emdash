@@ -5,7 +5,7 @@
  * Navigates to plugin detail on card click.
  */
 
-import { Badge, Button, Input, Select } from "@cloudflare/kumo";
+import { Badge, Button, Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg, plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -17,7 +17,7 @@ import {
 	Warning,
 	ArrowsClockwise,
 } from "@phosphor-icons/react";
-import { useInfiniteQuery } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery } from "@tanstack/react-query";
 import { Link, useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 
@@ -45,6 +45,9 @@ const SORT_LABELS: Record<SortOption, MessageDescriptor> = {
 	name: msg`Name`,
 };
 
+// Fixed, so placeholders shown again after a remount don't change shape.
+const CARD_PLACEHOLDER_WIDTHS = [45, 60, 38, 52, 66, 42];
+
 export interface MarketplaceBrowseProps {
 	/** IDs of plugins already installed on this site */
 	installedPluginIds?: Set<string>;
@@ -70,13 +73,22 @@ export function MarketplaceBrowse({ installedPluginIds = new Set() }: Marketplac
 		limit: 20,
 	};
 
-	const { data, isLoading, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
-		useInfiniteQuery({
-			queryKey: ["marketplace", "search", searchOpts],
-			queryFn: ({ pageParam }) => searchMarketplace({ ...searchOpts, cursor: pageParam }),
-			initialPageParam: undefined as string | undefined,
-			getNextPageParam: (lastPage) => lastPage.nextCursor,
-		});
+	const {
+		data,
+		isLoading,
+		isPlaceholderData,
+		error,
+		refetch,
+		fetchNextPage,
+		hasNextPage,
+		isFetchingNextPage,
+	} = useInfiniteQuery({
+		queryKey: ["marketplace", "search", searchOpts],
+		queryFn: ({ pageParam }) => searchMarketplace({ ...searchOpts, cursor: pageParam }),
+		initialPageParam: undefined as string | undefined,
+		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		placeholderData: keepPreviousData,
+	});
 
 	const plugins = data?.pages.flatMap((p) => p.items);
 
@@ -145,25 +157,32 @@ export function MarketplaceBrowse({ installedPluginIds = new Set() }: Marketplac
 				</div>
 			)}
 
-			{/* Loading state */}
 			{isLoading && (
-				<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-					{Array.from({ length: 6 }).map((_, i) => (
-						<div key={i} className="animate-pulse rounded-lg border bg-kumo-base p-4">
-							<div className="flex items-center gap-3">
-								<div className="h-10 w-10 rounded-lg bg-kumo-tint" />
-								<div className="flex-1 space-y-2">
-									<div className="h-4 w-24 rounded bg-kumo-tint" />
-									<div className="h-3 w-16 rounded bg-kumo-tint" />
+				<>
+					<span role="status" className="sr-only">
+						{t`Loading plugins...`}
+					</span>
+					<div aria-hidden="true" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+						{CARD_PLACEHOLDER_WIDTHS.map((width, index) => (
+							<div key={index} className="rounded-lg border bg-kumo-base p-4">
+								<div className="flex items-start gap-3">
+									<div className="skeleton-line size-10 shrink-0 rounded-lg" />
+									<div className="min-w-0 flex-1">
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+										<SkeletonLine blockHeight={16} minWidth={35} maxWidth={35} />
+									</div>
+								</div>
+								<div className="mt-2 text-sm">
+									<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
+									<SkeletonLine blockHeight="1lh" minWidth={65} maxWidth={65} />
+								</div>
+								<div className="mt-3">
+									<SkeletonLine blockHeight={20} minWidth={20} maxWidth={20} />
 								</div>
 							</div>
-							<div className="mt-3 space-y-2">
-								<div className="h-3 w-full rounded bg-kumo-tint" />
-								<div className="h-3 w-2/3 rounded bg-kumo-tint" />
-							</div>
-						</div>
-					))}
-				</div>
+						))}
+					</div>
+				</>
 			)}
 
 			{/* Results grid */}
@@ -181,7 +200,10 @@ export function MarketplaceBrowse({ installedPluginIds = new Set() }: Marketplac
 						</div>
 					) : (
 						<>
-							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+							<div
+								aria-busy={isPlaceholderData || undefined}
+								className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+							>
 								{plugins.map((plugin) => (
 									<PluginCard
 										key={plugin.id}

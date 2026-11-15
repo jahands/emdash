@@ -9,7 +9,7 @@
  * the aggregator's free-text `searchPackages` endpoint.
  */
 
-import { Badge, Button, Input } from "@cloudflare/kumo";
+import { Badge, Button, Input, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { MagnifyingGlass } from "@phosphor-icons/react";
 import { useInfiniteQuery } from "@tanstack/react-query";
@@ -30,6 +30,9 @@ import {
 import { cn } from "../lib/utils.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { RegistryPluginIdentity, useRegistryPluginIdentity } from "./RegistryPluginIdentity.js";
+
+// Fixed, so placeholders shown again after a remount don't change shape.
+const PACKAGE_PLACEHOLDER_WIDTHS = [55, 40, 62, 48, 35, 58];
 
 export interface RegistryBrowseProps {
 	/** Resolved manifest.registry block. Required -- caller checks. */
@@ -132,17 +135,31 @@ export function RegistryBrowse({ config, installedRegistryUris = new Set() }: Re
 				</div>
 			) : null}
 
-			{/* Loading skeleton */}
 			{isSafetyRefreshPending ? (
-				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-					{Array.from({ length: 6 }).map((_, i) => (
-						<div
-							// eslint-disable-next-line react/no-array-index-key -- skeleton placeholder
-							key={i}
-							className="h-32 animate-pulse rounded-md border border-kumo-border bg-kumo-subtle"
-						/>
-					))}
-				</div>
+				<>
+					<span role="status" className="sr-only">
+						{t`Loading plugins...`}
+					</span>
+					<div aria-hidden="true" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+						{PACKAGE_PLACEHOLDER_WIDTHS.map((width, index) => (
+							<div key={index} className="rounded-md border border-kumo-border bg-kumo-surface p-4">
+								<div className="flex items-start gap-3">
+									<div className="skeleton-line mt-1 size-9 shrink-0 rounded-md" />
+									<div className="min-w-0 flex-1">
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+										<div className="mt-0.5">
+											<SkeletonLine blockHeight={16} minWidth={70} maxWidth={70} />
+										</div>
+										<div className="mt-2 text-sm">
+											<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
+											<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
+										</div>
+									</div>
+								</div>
+							</div>
+						))}
+					</div>
+				</>
 			) : null}
 
 			{/* Empty */}

@@ -7,12 +7,21 @@
  * server never returns their values, only whether one is set.
  */
 
-import { Button, Input, InputArea, Select, Switch, useKumoToastManager } from "@cloudflare/kumo";
+import {
+	Button,
+	Input,
+	InputArea,
+	Select,
+	SkeletonLine,
+	Switch,
+	useKumoToastManager,
+} from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { FloppyDisk } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
+import { fetchManifest } from "../lib/api/client.js";
 import {
 	fetchPlugin,
 	fetchPluginSettings,
@@ -27,6 +36,9 @@ export interface PluginSettingsProps {
 	pluginId: string;
 }
 
+// Fixed, so the outline keeps its shape if the page remounts while loading.
+const FIELD_LABEL_WIDTHS = [20, 28, 16];
+
 export function PluginSettings({ pluginId }: PluginSettingsProps) {
 	const { t } = useLingui();
 	const queryClient = useQueryClient();
@@ -36,6 +48,7 @@ export function PluginSettings({ pluginId }: PluginSettingsProps) {
 		queryKey: ["plugins", pluginId],
 		queryFn: () => fetchPlugin(pluginId),
 	});
+	const { data: manifest } = useQuery({ queryKey: ["manifest"], queryFn: fetchManifest });
 
 	const {
 		data: settings,
@@ -109,7 +122,7 @@ export function PluginSettings({ pluginId }: PluginSettingsProps) {
 		setValues((prev) => ({ ...prev, [key]: value }));
 	};
 
-	const pluginName = plugin?.name ?? pluginId;
+	const pluginName = plugin?.name ?? manifest?.plugins[pluginId]?.name ?? pluginId;
 	const backLink = (
 		<RouterLinkButton
 			to="/plugins-manager"
@@ -123,12 +136,28 @@ export function PluginSettings({ pluginId }: PluginSettingsProps) {
 	if (isLoading) {
 		return (
 			<div className="space-y-6">
-				<div className="flex items-center gap-3">
-					{backLink}
-					<h1 className="text-2xl font-semibold leading-tight">{t`${pluginName} Settings`}</h1>
-				</div>
+				<EditorHeader
+					leading={backLink}
+					actions={
+						<div className="invisible" aria-hidden="true" inert>
+							<Button icon={<FloppyDisk />}>{t`Save Settings`}</Button>
+						</div>
+					}
+				>
+					<h1 className="truncate text-2xl font-semibold">{t`${pluginName} Settings`}</h1>
+				</EditorHeader>
 				<div className="rounded-lg border bg-kumo-base p-6">
-					<p className="text-kumo-subtle">{t`Loading settings...`}</p>
+					<span role="status" className="sr-only">
+						{t`Loading settings...`}
+					</span>
+					<div className="space-y-4" aria-hidden="true">
+						{FIELD_LABEL_WIDTHS.map((width) => (
+							<div key={width} className="grid gap-2 text-base">
+								<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+								<div className="skeleton-line h-9 w-full rounded-lg" />
+							</div>
+						))}
+					</div>
 				</div>
 			</div>
 		);

@@ -5,7 +5,7 @@
  * Navigates to theme detail on card click.
  */
 
-import { Button, Input, Select } from "@cloudflare/kumo";
+import { Button, Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -18,7 +18,7 @@ import {
 	Eye,
 	ShieldCheck,
 } from "@phosphor-icons/react";
-import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { keepPreviousData, useInfiniteQuery, useMutation } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import * as React from "react";
 
@@ -30,6 +30,9 @@ import {
 } from "../lib/api/theme-marketplace.js";
 
 type SortOption = "updated" | "created" | "name";
+
+// Fixed, so placeholders shown again after a remount don't change shape.
+const CARD_PLACEHOLDER_WIDTHS = [45, 60, 38, 52, 66, 42];
 
 const SORT_LABELS: Record<SortOption, MessageDescriptor> = {
 	updated: msg`Recently Updated`,
@@ -60,13 +63,22 @@ export function ThemeMarketplaceBrowse() {
 		limit: 12,
 	};
 
-	const { data, isLoading, error, refetch, fetchNextPage, hasNextPage, isFetchingNextPage } =
-		useInfiniteQuery({
-			queryKey: ["themes", "search", searchOpts],
-			queryFn: ({ pageParam }) => searchThemes({ ...searchOpts, cursor: pageParam }),
-			initialPageParam: undefined as string | undefined,
-			getNextPageParam: (lastPage) => lastPage.nextCursor,
-		});
+	const {
+		data,
+		isLoading,
+		isPlaceholderData,
+		error,
+		refetch,
+		fetchNextPage,
+		hasNextPage,
+		isFetchingNextPage,
+	} = useInfiniteQuery({
+		queryKey: ["themes", "search", searchOpts],
+		queryFn: ({ pageParam }) => searchThemes({ ...searchOpts, cursor: pageParam }),
+		initialPageParam: undefined as string | undefined,
+		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		placeholderData: keepPreviousData,
+	});
 
 	const themes = data?.pages.flatMap((p) => p.items);
 
@@ -124,20 +136,30 @@ export function ThemeMarketplaceBrowse() {
 				</div>
 			)}
 
-			{/* Loading state — skeleton cards with thumbnail aspect ratio */}
 			{isLoading && (
-				<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-					{Array.from({ length: 6 }).map((_, i) => (
-						<div key={i} className="animate-pulse rounded-lg border bg-kumo-base overflow-hidden">
-							<div className="aspect-video bg-kumo-tint" />
-							<div className="p-4 space-y-2">
-								<div className="h-4 w-32 rounded bg-kumo-tint" />
-								<div className="h-3 w-48 rounded bg-kumo-tint" />
-								<div className="h-3 w-20 rounded bg-kumo-tint" />
+				<>
+					<span role="status" className="sr-only">
+						{t`Loading themes...`}
+					</span>
+					<div aria-hidden="true" className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+						{CARD_PLACEHOLDER_WIDTHS.map((width, index) => (
+							<div key={index} className="overflow-hidden rounded-lg border bg-kumo-base">
+								<div className="skeleton-line aspect-video h-auto w-full rounded-none" />
+								<div className="p-4">
+									<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+									<div className="mt-1">
+										<SkeletonLine blockHeight={16} minWidth={30} maxWidth={30} />
+									</div>
+									<div className="mt-2 text-sm">
+										<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
+										<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
+									</div>
+									<div className="mt-3 skeleton-line h-6.5 w-32 rounded-md" />
+								</div>
 							</div>
-						</div>
-					))}
-				</div>
+						))}
+					</div>
+				</>
 			)}
 
 			{/* Results grid */}
@@ -155,7 +177,10 @@ export function ThemeMarketplaceBrowse() {
 						</div>
 					) : (
 						<>
-							<div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+							<div
+								aria-busy={isPlaceholderData || undefined}
+								className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3"
+							>
 								{themes.map((theme) => (
 									<ThemeCard key={theme.id} theme={theme} />
 								))}

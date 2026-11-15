@@ -16,12 +16,7 @@ import {
 	TRANSFER_CAPABILITIES_QUERY_KEY,
 } from "../../lib/api/transfer.js";
 import { getMutationError } from "../DialogError.js";
-import {
-	SettingRow,
-	SettingsFrame,
-	SettingsLoadingSection,
-	SettingsSection,
-} from "./SettingsLayout.js";
+import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
 import { ApprovalsSection } from "./transfer/ApprovalsSection.js";
 import { ExportSection } from "./transfer/ExportSection.js";
 import { ImportSection } from "./transfer/ImportSection.js";
@@ -64,10 +59,11 @@ export function TransferSettings({ focusImport = false }: { focusImport?: boolea
 	const title = t`Transfer`;
 	const description = t`Move this site to another EmDash installation, or import a site package into this one.`;
 
-	if (userLoading || (isAdmin && (capabilitiesQuery.isPending || sectionsPending))) {
+	if (userLoading) {
+		// Only admins get sections, so there is nothing to outline until the role is known.
 		return (
-			<SettingsFrame title={title} description={description}>
-				<SettingsLoadingSection />
+			<SettingsFrame title={title} description={description} loading>
+				{null}
 			</SettingsFrame>
 		);
 	}
@@ -85,7 +81,7 @@ export function TransferSettings({ focusImport = false }: { focusImport?: boolea
 		);
 	}
 
-	if (capabilitiesQuery.error || !capabilitiesQuery.data) {
+	if (capabilitiesQuery.error) {
 		return (
 			<SettingsFrame title={title} description={description}>
 				<SettingsSection title={t`Transfer`}>

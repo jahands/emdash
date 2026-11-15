@@ -23,7 +23,8 @@ import { getMutationError } from "../DialogError.js";
 import {
 	SettingRow,
 	SettingsFrame,
-	SettingsLoadingSection,
+	SettingsFieldPlaceholder,
+	SettingsPlaceholderRows,
 	SettingsSection,
 } from "./SettingsLayout.js";
 
@@ -186,14 +187,6 @@ export function EmailSettings() {
 	const title = t`Email Settings`;
 	const description = t`Configure the email provider, view pipeline status, and send test emails`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame title={title} description={description}>
-				<SettingsLoadingSection />
-			</SettingsFrame>
-		);
-	}
-
 	if (fetchError) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -213,7 +206,7 @@ export function EmailSettings() {
 	);
 
 	return (
-		<SettingsFrame title={title} description={description}>
+		<SettingsFrame title={title} description={description} loading={isLoading}>
 			<div className="grid gap-8">
 				<SettingsSection
 					title={t`Email Provider`}
@@ -221,15 +214,19 @@ export function EmailSettings() {
 				>
 					<SettingRow>
 						<div className="grid gap-4">
-							<Select
-								label={t`Provider`}
-								value={provider}
-								onValueChange={(value) => setProvider(value ?? "")}
-								items={[
-									{ value: "smtp", label: t`SMTP` },
-									...pluginProviders.map((p) => ({ value: p.pluginId, label: p.pluginId })),
-								]}
-							/>
+							{isLoading ? (
+								<SettingsFieldPlaceholder label={t`Provider`} />
+							) : (
+								<Select
+									label={t`Provider`}
+									value={provider}
+									onValueChange={(value) => setProvider(value ?? "")}
+									items={[
+										{ value: "smtp", label: t`SMTP` },
+										...pluginProviders.map((p) => ({ value: p.pluginId, label: p.pluginId })),
+									]}
+								/>
+							)}
 
 							{provider === "smtp" && (
 								<div className="grid gap-4">
@@ -329,7 +326,11 @@ export function EmailSettings() {
 				</SettingsSection>
 
 				<SettingsSection title={t`Email Pipeline`}>
-					<PipelineStatus settings={settings} />
+					{isLoading ? (
+						<SettingsPlaceholderRows rows={1} />
+					) : (
+						<PipelineStatus settings={settings} />
+					)}
 				</SettingsSection>
 
 				{settings?.smtp.configured && settings.selectedProviderId === SMTP_PROVIDER_ID && (

@@ -10,7 +10,7 @@
  * - Install button (with capability consent)
  */
 
-import { Badge, Button } from "@cloudflare/kumo";
+import { Badge, Button, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { DownloadSimple, GithubLogo, Globe, ShieldCheck, Warning, X } from "@phosphor-icons/react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -107,17 +107,27 @@ export function MarketplacePluginDetail({
 		return (
 			<div className="space-y-6">
 				<BackLink />
-				<div className="animate-pulse space-y-4">
-					<div className="flex items-center gap-4">
-						<div className="h-16 w-16 rounded-xl bg-kumo-tint" />
-						<div className="space-y-2">
-							<div className="h-6 w-48 rounded bg-kumo-tint" />
-							<div className="h-4 w-32 rounded bg-kumo-tint" />
+				<span role="status" className="sr-only">
+					{t`Loading...`}
+				</span>
+				<div
+					aria-hidden="true"
+					className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between"
+				>
+					<div className="flex min-w-0 flex-1 items-start gap-4">
+						<div className="skeleton-line size-16 shrink-0 rounded-xl" />
+						<div className="min-w-0 flex-1">
+							<SkeletonLine blockHeight={30} minWidth={45} maxWidth={45} />
+							<div className="mt-1 text-sm">
+								<SkeletonLine blockHeight="1lh" minWidth={25} maxWidth={25} />
+							</div>
+							<div className="mt-2 max-w-lg text-sm">
+								<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
+								<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
+							</div>
 						</div>
 					</div>
-					<div className="h-4 w-full rounded bg-kumo-tint" />
-					<div className="h-4 w-3/4 rounded bg-kumo-tint" />
-					<div className="h-64 w-full rounded bg-kumo-tint" />
+					<div className="skeleton-line h-9 w-28 shrink-0 rounded-lg" />
 				</div>
 			</div>
 		);

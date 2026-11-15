@@ -340,9 +340,9 @@ export function AdminCommandPalette({ manifest }: AdminCommandPaletteProps) {
 		queryFn: () => searchContent(debouncedQuery),
 		enabled: debouncedQuery.length >= 2,
 		staleTime: 30 * 1000,
+		placeholderData: (previous) => (debouncedQuery.length >= 2 ? previous : undefined),
 	});
 
-	// Show loading while waiting for debounce or API response
 	const isWaitingForDebounce = query.length >= 2 && query !== debouncedQuery;
 	const isPendingSearch = isWaitingForDebounce || isSearching;
 
@@ -468,32 +468,31 @@ export function AdminCommandPalette({ manifest }: AdminCommandPaletteProps) {
 				leading={<MagnifyingGlass className="h-4 w-4 text-kumo-subtle" weight="bold" />}
 			/>
 			<CommandPalette.List>
-				{isPendingSearch ? (
-					<CommandPalette.Loading />
-				) : (
-					<>
-						<CommandPalette.Results>
-							{(group: ResultGroup) => (
-								<CommandPalette.Group key={group.id} items={group.items}>
-									<CommandPalette.GroupLabel>{t(group.label)}</CommandPalette.GroupLabel>
-									<CommandPalette.Items>
-										{(item: ResultItem) => (
-											<CommandPalette.ResultItem
-												key={item.id}
-												value={item}
-												title={item.title}
-												description={item.description}
-												icon={item.icon}
-												onClick={(e: React.MouseEvent) => handleItemClick(item, e)}
-											/>
-										)}
-									</CommandPalette.Items>
-								</CommandPalette.Group>
-							)}
-						</CommandPalette.Results>
-						<CommandPalette.Empty>{t`No results found`}</CommandPalette.Empty>
-					</>
-				)}
+				<span role="status" className="sr-only">
+					{isPendingSearch ? t`Searching...` : ""}
+				</span>
+				<div aria-busy={isPendingSearch || undefined}>
+					<CommandPalette.Results>
+						{(group: ResultGroup) => (
+							<CommandPalette.Group key={group.id} items={group.items}>
+								<CommandPalette.GroupLabel>{t(group.label)}</CommandPalette.GroupLabel>
+								<CommandPalette.Items>
+									{(item: ResultItem) => (
+										<CommandPalette.ResultItem
+											key={item.id}
+											value={item}
+											title={item.title}
+											description={item.description}
+											icon={item.icon}
+											onClick={(e: React.MouseEvent) => handleItemClick(item, e)}
+										/>
+									)}
+								</CommandPalette.Items>
+							</CommandPalette.Group>
+						)}
+					</CommandPalette.Results>
+					{!isPendingSearch && <CommandPalette.Empty>{t`No results found`}</CommandPalette.Empty>}
+				</div>
 			</CommandPalette.List>
 			<CommandPalette.Footer>
 				<div className="flex items-center gap-4 text-kumo-subtle">

@@ -1,4 +1,4 @@
-import { Banner, Button, Loader } from "@cloudflare/kumo";
+import { Banner, Button, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
@@ -45,10 +45,13 @@ export function ApprovalsSection() {
 			description={t`Assistants connected through MCP need an admin’s approval to start an export or import unless their token was given a transfer scope. Requests expire after 15 minutes.`}
 		>
 			{approvalsQuery.isPending ? (
-				<SettingRow>
-					<div className="flex items-center gap-2 text-sm text-kumo-subtle" role="status">
-						<Loader size="sm" />
+				// As tall as "No pending requests", the usual answer.
+				<SettingRow className="py-6 text-sm">
+					<span role="status" className="sr-only">
 						{t`Loading approval requests…`}
+					</span>
+					<div aria-hidden="true" className="mx-auto w-40">
+						<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
 					</div>
 				</SettingRow>
 			) : approvalsQuery.error ? (

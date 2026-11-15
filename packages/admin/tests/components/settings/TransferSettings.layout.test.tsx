@@ -68,7 +68,7 @@ describe("Transfer settings while the transfer history loads", () => {
 	});
 
 	it.each(sections)(
-		"keeps every section heading in place when %s answers last with no history",
+		"keeps the headings above the import's status in place when %s answers last with no history",
 		async (lastToAnswer) => {
 			const last = deferred<TransferPage<TransferOperation>>();
 			api.fetchTransferCapabilities.mockResolvedValue(capabilities);
@@ -77,7 +77,9 @@ describe("Transfer settings while the transfer history loads", () => {
 				else api[name].mockResolvedValue({ items: [] });
 			}
 
-			const headings = watchMovement("h1, h2");
+			// The approval requests follow the import's status, whose height is unknown
+			// until the site's capabilities and import history answer.
+			const headings = watchMovement("h1, h2:not(:is(section:last-child h2))");
 			const screen = await render(<TransferSettings />);
 			await vi.waitFor(() => {
 				for (const name of sections) expect(api[name]).toHaveBeenCalled();

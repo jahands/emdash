@@ -5,12 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import "../../../dist/styles.css";
 import type { AdminManifest, SiteDomain, SiteSettings } from "../../../src/lib/api";
 import type { BackupOverview } from "../../../src/lib/api/backups.js";
-import {
-	deferred,
-	largestMovement,
-	snapshotPositions,
-	watchMovement,
-} from "../../utils/geometry.js";
+import { deferred, largestMovement, snapshotPositions } from "../../utils/geometry.js";
 import { render } from "../../utils/render.js";
 
 const mockFetchSettings = vi.fn<() => Promise<Partial<SiteSettings>>>();
@@ -80,6 +75,10 @@ const overview: BackupOverview = {
 	storageAvailable: true,
 };
 
+function settle() {
+	return new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100)));
+}
+
 const pages = [
 	{ name: "General", Page: GeneralSettings, release: "settings" },
 	{ name: "SEO", Page: SeoSettings, release: "settings" },
@@ -98,7 +97,7 @@ describe("Settings pages while their settings load", () => {
 	});
 
 	it.each(pages)(
-		"keep the $name header and content in place at phone width when the settings arrive",
+		"keep the $name header and sections in place at phone width when the settings arrive",
 		async ({ Page, release }) => {
 			const pendingSettings = deferred<Partial<SiteSettings>>();
 			const pendingOverview = deferred<BackupOverview>();
@@ -112,12 +111,15 @@ describe("Settings pages while their settings load", () => {
 					</div>
 				</Toasty>,
 			);
-			await expect.element(screen.getByRole("status").first()).toBeVisible();
+			await expect.element(screen.getByText("Loading settings...")).toBeInTheDocument();
+			await settle();
 			const heading = screen.getByRole("heading", { level: 1 }).element();
 			const header = heading.closest("[data-editor-header]")!;
 			const content = header.nextElementSibling!;
+			const sections = [...content.querySelectorAll("h2")];
+			expect(sections.length).toBeGreaterThan(0);
 			const headerBefore = snapshotPositions([heading, header]);
-			const contentBefore = snapshotPositions([content]);
+			const contentBefore = snapshotPositions([content, ...sections]);
 
 			if (release === "settings") pendingSettings.resolve(settings);
 			else pendingOverview.resolve(overview);
@@ -140,14 +142,14 @@ describe("Settings pages while their settings load", () => {
 				</div>
 			</Toasty>,
 		);
-		await expect.element(screen.getByRole("status").first()).toBeVisible();
+		await expect.element(screen.getByText("Loading settings...")).toBeInTheDocument();
 		await vi.waitFor(() => expect(mockFetchManifest).toHaveBeenCalled());
-		await new Promise((resolve) => requestAnimationFrame(resolve));
+		await settle();
 		const heading = screen.getByRole("heading", { level: 1 }).element();
 		const header = heading.closest("[data-editor-header]")!;
 		const content = header.nextElementSibling!;
 		const headerBefore = snapshotPositions([heading, header]);
-		const contentBefore = snapshotPositions([content]);
+		const contentBefore = snapshotPositions([content, ...content.querySelectorAll("h2")]);
 
 		pendingOverview.resolve({ ...overview, storageAvailable: false });
 		await expect
@@ -160,24 +162,19 @@ describe("Settings pages while their settings load", () => {
 		expect(largestMovement(contentBefore, { includeSize: false })).toBeLessThanOrEqual(1);
 	});
 
-	it("keeps the General form in place when the site address answers after the settings", async () => {
-		const siteDomain = deferred<SiteDomain>();
-		mockFetchSettings.mockResolvedValue(settings);
-		mockFetchSiteDomain.mockReturnValue(siteDomain.promise);
+	it("shows the site address's rows in the General outline once known, so the settings move nothing", async () => {
+		const pendingSettings = deferred<Partial<SiteSettings>>();
+		mockFetchSettings.mockReturnValue(pendingSettings.promise);
+		mockFetchSiteDomain.mockResolvedValue({
+			configuredUrl: "https://cms.example.com",
+			siteOrigin: "https://cms.example.com",
+		});
 
-		const headings = watchMovement("h1, h2");
 		const screen = await render(
 			<Toasty>
 				<GeneralSettings />
 			</Toasty>,
 		);
-		await vi.waitFor(() => expect(mockFetchSettings).toHaveBeenCalled());
-		await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100)));
-
-		siteDomain.resolve({
-			configuredUrl: "https://cms.example.com",
-			siteOrigin: "https://cms.example.com",
-		});
 		await expect
 			.element(
 				screen.getByText("Links in emails and plugins use https://cms.example.com", {
@@ -185,8 +182,15 @@ describe("Settings pages while their settings load", () => {
 				}),
 			)
 			.toBeVisible();
-		await new Promise((resolve) => requestAnimationFrame(() => setTimeout(resolve, 100)));
+		await expect.element(screen.getByText("Tell users where to sign in")).toBeVisible();
+		await settle();
+		const content = document.querySelector("[data-editor-header]")!.nextElementSibling!;
+		const before = snapshotPositions([...content.querySelectorAll("h2")]);
+		expect(before.length).toBeGreaterThan(1);
 
-		expect(headings.stop()).toBeLessThanOrEqual(1);
+		pendingSettings.resolve(settings);
+		await expect.element(screen.getByRole("button", { name: "Saved" }).first()).toBeVisible();
+
+		expect(largestMovement(before)).toBeLessThanOrEqual(1);
 	});
 });

@@ -11,7 +11,7 @@
  *    - Any configured auth provider (AT Protocol, GitHub, Google, etc.)
  */
 
-import { Button, Input, Loader, Meter, Radio } from "@cloudflare/kumo";
+import { Button, Input, Meter, Radio, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -583,13 +583,39 @@ export function SetupWizard() {
 		return null;
 	}
 
-	// Loading state
 	if (statusLoading) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-kumo-base">
-				<div className="text-center">
-					<Loader />
-					<p className="mt-4 text-kumo-subtle">{t`Loading setup...`}</p>
+			<div className="min-h-screen flex items-center justify-center bg-kumo-base p-4">
+				<div className="w-full max-w-lg">
+					<div className="text-center mb-6">
+						<BrandLogo logoUrl={brandLogo} siteName={brandSiteName} className="h-10 mx-auto mb-2" />
+						<h1 className="text-2xl font-semibold text-kumo-default">{t`Set up your site`}</h1>
+					</div>
+					<span role="status" className="sr-only">
+						{t`Loading setup...`}
+					</span>
+					<div aria-hidden="true">
+						<div className="mb-8 flex justify-center">
+							<div className="skeleton-line h-8 w-72 max-w-full rounded-full" />
+						</div>
+						<div className="bg-kumo-base border rounded-lg shadow-sm p-6 space-y-6">
+							<div className="space-y-4">
+								{[30, 22].map((width) => (
+									<div key={width} className="grid gap-2 text-base">
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+										<div className="skeleton-line h-9 w-full rounded-lg" />
+									</div>
+								))}
+							</div>
+							<div className="grid gap-2 text-base">
+								<SkeletonLine blockHeight="1lh" minWidth={45} maxWidth={45} />
+								{[0, 1, 2].map((index) => (
+									<div key={index} className="skeleton-line h-18 w-full rounded-lg" />
+								))}
+							</div>
+							<div className="skeleton-line h-9 w-full rounded-lg" />
+						</div>
+					</div>
 				</div>
 			</div>
 		);

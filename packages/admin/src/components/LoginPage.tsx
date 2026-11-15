@@ -13,7 +13,7 @@
  * redirects to the admin dashboard since authentication is handled externally.
  */
 
-import { Button, Input, Loader, Select } from "@cloudflare/kumo";
+import { Button, Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -161,6 +161,31 @@ function MagicLinkForm({ onBack }: MagicLinkFormProps) {
 	);
 }
 
+/** The sign-in card's buttons in outline, laid over the card while the sign-in options load. */
+function LoginCardPlaceholder({ providerCount }: { providerCount: number }) {
+	return (
+		<div aria-hidden="true" className="absolute inset-0 space-y-6 p-6">
+			<div className="space-y-4">
+				<div className="skeleton-line h-9 w-full rounded-lg" />
+				<div className="mx-auto w-4/5">
+					<SkeletonLine blockHeight={16} minWidth={100} maxWidth={100} />
+				</div>
+			</div>
+			<div className="mx-auto w-32">
+				<SkeletonLine blockHeight={16} minWidth={100} maxWidth={100} />
+			</div>
+			{providerCount > 0 && (
+				<div className={cn("grid gap-3", providerCount === 1 ? "grid-cols-1" : "grid-cols-2")}>
+					{Array.from({ length: providerCount }, (_, index) => (
+						<div key={index} className="skeleton-line h-9 w-full rounded-lg" />
+					))}
+				</div>
+			)}
+			<div className="mx-auto h-9 w-40 skeleton-line rounded-lg" />
+		</div>
+	);
+}
+
 // ============================================================================
 // Main Component
 // ============================================================================
@@ -242,27 +267,30 @@ export function LoginPage({ redirectUrl = "/_emdash/admin" }: LoginPageProps) {
 					</h1>
 				</div>
 
-				<div className="relative">
-					{authModePending && (
-						<div role="status" className="absolute inset-x-0 top-6 flex justify-center">
-							<Loader />
-							<span className="sr-only">{t`Loading...`}</span>
+				<div>
+					{/* Error from URL (provider failure) */}
+					{urlError && (
+						<div className="mb-6 rounded-lg bg-kumo-danger/10 border border-kumo-danger/20 p-4 text-sm text-kumo-danger">
+							{urlError}
 						</div>
 					)}
-					<div
-						className={cn(authModePending && "invisible")}
-						aria-hidden={authModePending || undefined}
-						inert={authModePending || undefined}
-					>
-						{/* Error from URL (provider failure) */}
-						{urlError && (
-							<div className="mb-6 rounded-lg bg-kumo-danger/10 border border-kumo-danger/20 p-4 text-sm text-kumo-danger">
-								{urlError}
-							</div>
-						)}
 
-						{/* Login Card */}
-						<div className="bg-kumo-base border rounded-lg shadow-sm p-6">
+					{/* Login Card */}
+					<div className="relative bg-kumo-base border rounded-lg shadow-sm">
+						{authModePending && (
+							<>
+								<span role="status" className="sr-only">
+									{t`Loading...`}
+								</span>
+								<LoginCardPlaceholder providerCount={buttonProviders.length} />
+							</>
+						)}
+						{/* Laid out under the outline, so the card already has its final size. */}
+						<div
+							className={cn("p-6", authModePending && "invisible")}
+							aria-hidden={authModePending || undefined}
+							inert={authModePending || undefined}
+						>
 							{method === "passkey" && !activeProvider && (
 								<div className="space-y-6">
 									{/* Passkey Login */}

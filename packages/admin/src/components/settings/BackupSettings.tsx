@@ -6,7 +6,15 @@
  * D1 Time Travel for point-in-time restore on Cloudflare.
  */
 
-import { Banner, Button, Input, LinkButton, Switch, useKumoToastManager } from "@cloudflare/kumo";
+import {
+	Banner,
+	Button,
+	Input,
+	LinkButton,
+	SkeletonLine,
+	Switch,
+	useKumoToastManager,
+} from "@cloudflare/kumo";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { DownloadSimple, Trash } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -26,13 +34,7 @@ import {
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { getMutationError } from "../DialogError.js";
 import { SaveButton } from "../SaveButton.js";
-import {
-	PendingSaveAction,
-	SettingRow,
-	SettingsFrame,
-	SettingsLoadingSection,
-	SettingsSection,
-} from "./SettingsLayout.js";
+import { PendingSaveAction, SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
 
 function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
@@ -144,18 +146,6 @@ export function BackupSettings() {
 	const title = t`Backups`;
 	const description = t`Download backups and schedule automatic backups to storage`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame
-				title={title}
-				description={description}
-				actions={manifest?.storageAvailable === false ? undefined : <PendingSaveAction />}
-			>
-				<SettingsLoadingSection />
-			</SettingsFrame>
-		);
-	}
-
 	if (fetchError) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -169,19 +159,23 @@ export function BackupSettings() {
 		);
 	}
 
-	const storageAvailable = overview?.storageAvailable ?? false;
+	const storageAvailable = isLoading
+		? manifest?.storageAvailable !== false
+		: (overview?.storageAvailable ?? false);
 	const archives = overview?.archives ?? [];
-	const saveAction = storageAvailable ? (
+	const saveAction = !storageAvailable ? undefined : isLoading ? (
+		<PendingSaveAction />
+	) : (
 		<SaveButton
 			type="submit"
 			form="automatic-backups-form"
 			isDirty={isDirty}
 			isSaving={saveMutation.isPending}
 		/>
-	) : undefined;
+	);
 
 	return (
-		<SettingsFrame title={title} description={description} actions={saveAction}>
+		<SettingsFrame title={title} description={description} actions={saveAction} loading={isLoading}>
 			<div className="grid gap-8">
 				<SettingsSection title={t`Download Backup`}>
 					<SettingRow>
@@ -222,7 +216,7 @@ export function BackupSettings() {
 									type="button"
 									variant="outline"
 									onClick={() => backupNowMutation.mutate()}
-									disabled={backupNowMutation.isPending}
+									disabled={isLoading || backupNowMutation.isPending}
 								>
 									{backupNowMutation.isPending ? t`Backing up...` : t`Back up now`}
 								</Button>
@@ -232,13 +226,25 @@ export function BackupSettings() {
 						{storageAvailable ? (
 							<>
 								<SettingRow>
-									<Switch
-										label={t`Daily automatic backups`}
-										controlFirst={false}
-										className="ms-auto"
-										checked={enabled}
-										onCheckedChange={setEnabled}
-									/>
+									{isLoading ? (
+										<div className="flex items-center gap-2">
+											<span className="flex-1 text-base font-medium">
+												{t`Daily automatic backups`}
+											</span>
+											<div
+												aria-hidden="true"
+												className="skeleton-line h-4.5 w-9 shrink-0 rounded-[5px]"
+											/>
+										</div>
+									) : (
+										<Switch
+											label={t`Daily automatic backups`}
+											controlFirst={false}
+											className="ms-auto"
+											checked={enabled}
+											onCheckedChange={setEnabled}
+										/>
+									)}
 								</SettingRow>
 								<SettingRow>
 									<div className="grid gap-4 sm:grid-cols-2 sm:items-center">
@@ -252,16 +258,23 @@ export function BackupSettings() {
 											</label>
 										</div>
 										<div className="flex justify-end">
-											<Input
-												id="backup-retention"
-												aria-labelledby="backup-retention-label"
-												className="w-full max-w-48"
-												type="number"
-												min={1}
-												max={30}
-												value={retention}
-												onChange={(event) => setRetention(event.target.value)}
-											/>
+											{isLoading ? (
+												<div
+													aria-hidden="true"
+													className="skeleton-line h-9 w-full max-w-48 rounded-lg"
+												/>
+											) : (
+												<Input
+													id="backup-retention"
+													aria-labelledby="backup-retention-label"
+													className="w-full max-w-48"
+													type="number"
+													min={1}
+													max={30}
+													value={retention}
+													onChange={(event) => setRetention(event.target.value)}
+												/>
+											)}
 										</div>
 									</div>
 								</SettingRow>
@@ -282,14 +295,23 @@ export function BackupSettings() {
 				<SettingsSection
 					title={t`Stored Backups`}
 					contentClassName={
-						storageAvailable && archives.length === 0
-							? "border-2 border-dashed border-kumo-subtle/60"
-							: undefined
+						isLoading
+							? "border-2"
+							: storageAvailable && archives.length === 0
+								? "border-2 border-dashed border-kumo-subtle/60"
+								: undefined
 					}
 				>
 					{!storageAvailable ? (
 						<SettingRow className="py-8 text-center text-sm text-kumo-subtle">
 							{t`Automatic backups need a storage backend (R2, S3, or local storage). Configure storage in your EmDash config to enable them.`}
+						</SettingRow>
+					) : isLoading ? (
+						// As tall as "No items yet", the usual answer.
+						<SettingRow className="py-8 text-sm">
+							<div aria-hidden="true" className="mx-auto w-24">
+								<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+							</div>
 						</SettingRow>
 					) : archives.length === 0 ? (
 						<SettingRow className="py-8 text-center text-sm text-kumo-subtle">
