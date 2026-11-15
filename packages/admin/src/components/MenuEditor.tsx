@@ -45,6 +45,7 @@ import {
 } from "../lib/api";
 import { fetchManifest } from "../lib/api/client.js";
 import { guardUnsavedInput, revealErrors, useSingleFlight } from "../lib/dialog-form.js";
+import { translationsLoadState } from "../lib/translations-load-state.js";
 import { isSafeHref } from "../lib/url.js";
 import { ArrowPrev } from "./ArrowIcons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -201,11 +202,12 @@ export function MenuEditor() {
 	// URL without a locale query).
 	const menuLocale = routeLocale ?? menu?.locale;
 
-	const { data: translationsData, isPending: translationsPending } = useQuery({
+	const translationsQuery = useQuery({
 		queryKey: ["menu-translations", name, menuLocale ?? null],
 		queryFn: () => fetchMenuTranslations(name, { locale: menuLocale }),
 		enabled: !!menuLocale && !!i18n && i18n.locales.length > 1,
 	});
+	const translationsData = translationsQuery.data;
 
 	const translateMutation = useMutation({
 		mutationFn: (targetLocale: string) =>
@@ -726,7 +728,7 @@ export function MenuEditor() {
 						defaultLocale={i18n.defaultLocale}
 						currentLocale={menuLocale}
 						translations={translationsData?.translations ?? []}
-						loading={translationsPending}
+						{...translationsLoadState(translationsQuery)}
 						onOpen={(tr) =>
 							navigate({
 								to: "/menus/$name",

@@ -254,7 +254,9 @@ describe("ContentSettingsPanel", () => {
 
 	it("offers no Translate action until the entry's translations load", async () => {
 		const screen = await render(
-			<ContentSettingsPanel {...makePanelProps({ translations: undefined })} />,
+			<ContentSettingsPanel
+				{...makePanelProps({ translations: undefined, translationsLoading: true })}
+			/>,
 		);
 		const section = screen
 			.getByRole("heading", { name: "Translations" })

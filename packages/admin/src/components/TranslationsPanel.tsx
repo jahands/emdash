@@ -4,7 +4,7 @@
  * taxonomy term edit so the admin shows one consistent affordance.
  */
 
-import { Button, Text } from "@cloudflare/kumo";
+import { Banner, Button, Text } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
@@ -31,6 +31,9 @@ export interface TranslationsPanelProps {
 	translations: PanelTranslation[];
 	/** The translations are still loading, so which locales exist is unknown. */
 	loading?: boolean;
+	/** The translations failed to load. Ignored while `loading`. */
+	error?: boolean;
+	onRetry?: () => unknown;
 	/** Called when the user clicks "Edit" on a sibling translation. */
 	onOpen?: (summary: PanelTranslation) => void;
 	/** Called when the user clicks "Translate" for a missing locale. */
@@ -47,11 +50,14 @@ export function TranslationsPanel({
 	currentLocale,
 	translations,
 	loading = false,
+	error = false,
+	onRetry,
 	onOpen,
 	onCreate,
 	pendingLocale,
 }: TranslationsPanelProps) {
 	const { t } = useLingui();
+	const failed = error && !loading;
 	const byLocale = React.useMemo(
 		() => new Map(translations.map((tr) => [tr.locale, tr])),
 		[translations],
@@ -67,7 +73,21 @@ export function TranslationsPanel({
 					{t`Loading translations...`}
 				</span>
 			)}
-			<div className="space-y-2" aria-busy={loading || undefined}>
+			{failed && (
+				<Banner
+					variant="error"
+					role="alert"
+					title={t`Couldn’t load translations.`}
+					action={
+						onRetry ? (
+							<Button size="sm" variant="secondary" onClick={() => onRetry()}>
+								{t`Try again`}
+							</Button>
+						) : undefined
+					}
+				/>
+			)}
+			<div className="space-y-2" aria-busy={loading || undefined} hidden={failed}>
 				{locales.map((locale) => {
 					const translation = byLocale.get(locale);
 					const isCurrent = locale === currentLocale;

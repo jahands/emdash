@@ -177,3 +177,46 @@ describe("ContentEditPage when the entry fails to load", () => {
 		expect(document.body.textContent).not.toContain("Failed to get content");
 	});
 });
+
+describe("ContentEditPage when the translations fail to load", () => {
+	let mockFetch: ReturnType<typeof createMockFetch>;
+	const TRANSLATIONS_URL = `${ITEM_URL}/translations`;
+
+	beforeEach(() => {
+		mockFetch = createMockFetch();
+		mockFetch
+			.on("GET", "/_emdash/api/manifest", {
+				data: { ...MANIFEST, i18n: { defaultLocale: "en", locales: ["en", "fr"] } },
+			})
+			.on("GET", "/_emdash/api/bylines", { data: { items: [] } })
+			.on("GET", "/_emdash/api/users", { data: { items: [] } })
+			.on("GET", "/_emdash/api/auth/me", { data: { id: "user_01", role: 40 } })
+			.on("GET", "/_emdash/api/revisions", { data: { item: null } })
+			.on("GET", ITEM_URL, { data: { item: publishedPost() } })
+			.on(
+				"GET",
+				TRANSLATIONS_URL,
+				{ error: { code: "INTERNAL_ERROR", message: "Failed to load translations" } },
+				500,
+			);
+	});
+
+	afterEach(() => {
+		mockFetch.restore();
+	});
+
+	it("shows an error with a retry instead of loading forever", async () => {
+		const screen = await openEntry();
+
+		await expect.element(screen.getByText("Couldn’t load translations.")).toBeVisible();
+		expect(document.body.textContent).not.toContain("Loading translations...");
+
+		mockFetch.on("GET", TRANSLATIONS_URL, {
+			data: { translationGroup: "tg_1", translations: [{ id: "post_1", locale: "en" }] },
+		});
+		await screen.getByRole("button", { name: "Try again" }).click();
+
+		await expect.element(screen.getByRole("button", { name: "Translate" })).toBeVisible();
+		expect(document.body.textContent).not.toContain("Couldn’t load translations.");
+	});
+});

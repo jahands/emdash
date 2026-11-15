@@ -979,8 +979,10 @@ export interface ContentSettingsPanelProps {
 	onQuickCreateByline?: (input: BylineFormValues) => Promise<BylineSummary>;
 	onQuickEditByline?: (bylineId: string, input: BylineFormValues) => Promise<BylineSummary>;
 	i18n?: { defaultLocale: string; locales: string[] };
-	/** Undefined while the translations load. */
 	translations?: TranslationSummary[];
+	translationsLoading?: boolean;
+	translationsError?: boolean;
+	onRetryTranslations?: () => unknown;
 	onTranslate?: (locale: string) => void;
 	hasSeo: boolean;
 	onSeoChange?: (seo: ContentSeoInput) => void | Promise<boolean>;
@@ -1052,6 +1054,9 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	onQuickEditByline,
 	i18n,
 	translations,
+	translationsLoading = false,
+	translationsError = false,
+	onRetryTranslations,
 	onTranslate,
 	hasSeo,
 	onSeoChange,
@@ -1383,7 +1388,9 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 								defaultLocale={i18n.defaultLocale}
 								currentLocale={item.locale ?? undefined}
 								translations={translations ?? []}
-								loading={!translations}
+								loading={translationsLoading}
+								error={translationsError}
+								onRetry={onRetryTranslations}
 								onOpen={(tr) =>
 									navigate({
 										to: "/content/$collection/$id",

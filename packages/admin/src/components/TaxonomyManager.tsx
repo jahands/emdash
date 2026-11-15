@@ -62,6 +62,7 @@ import {
 } from "../lib/dialog-form.js";
 import { inlineLabel } from "../lib/inline-label.js";
 import { resolveTaxonomyDefinitions } from "../lib/taxonomy-definitions.js";
+import { translationsLoadState } from "../lib/translations-load-state.js";
 import { slugify, slugifyIdentifier } from "../lib/utils";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { BulkTagDialog } from "./BulkTagDialog.js";
@@ -635,7 +636,7 @@ function TermFormDialog({
 	);
 
 	// Translations list (only when editing an existing term and i18n is on).
-	const { data: translationsData, isPending: translationsPending } = useQuery({
+	const translationsQuery = useQuery({
 		queryKey: ["term-translations", taxonomyName, term?.id ?? null],
 		queryFn: () => {
 			if (!term) throw new Error("No term");
@@ -643,6 +644,7 @@ function TermFormDialog({
 		},
 		enabled: !!term && !!i18n && i18n.locales.length > 1,
 	});
+	const translationsData = translationsQuery.data;
 
 	const translateMutation = useMutation({
 		mutationFn: (targetLocale: string) => {
@@ -828,7 +830,7 @@ function TermFormDialog({
 									defaultLocale={i18n.defaultLocale}
 									currentLocale={term.locale}
 									translations={translationsData?.translations ?? []}
-									loading={translationsPending}
+									{...translationsLoadState(translationsQuery)}
 									onOpen={(tr) => {
 										onClose();
 										onOpenTranslation?.({ slug: term.slug, locale: tr.locale });

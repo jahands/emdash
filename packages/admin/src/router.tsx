@@ -161,6 +161,7 @@ import {
 } from "./lib/revision-list-cache.js";
 import { lazyRouteModule, routeLoadsEditor, withRouteModules } from "./lib/route-module.js";
 import { setScreenIdle } from "./lib/route-prefetch.js";
+import { translationsLoadState } from "./lib/translations-load-state.js";
 import { sanitizeRedirectUrl } from "./lib/url";
 import { usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
@@ -1669,11 +1670,13 @@ function ContentEditPage() {
 	}, [searchParams, isLoading, navigate]);
 
 	// Fetch translations when i18n is enabled
-	const { data: translationsData } = useQuery({
+	const translationsQuery = useQuery({
 		queryKey: ["translations", collection, id],
 		queryFn: () => fetchTranslations(collection, id),
 		enabled: !!i18n && !!rawItem,
 	});
+	const translationsData = translationsQuery.data;
+	const translationsState = translationsLoadState(translationsQuery);
 
 	// When a draft revision exists, fetch its data for the editor form.
 	// The content table holds published data; the draft revision holds
@@ -2720,6 +2723,9 @@ function ContentEditPage() {
 			onAuthorChange={handleAuthorChange}
 			i18n={i18n}
 			translations={translationsData?.translations}
+			translationsLoading={translationsState.loading}
+			translationsError={translationsState.error}
+			onRetryTranslations={translationsState.onRetry}
 			onTranslate={handleTranslate}
 			pluginBlocks={pluginBlocks}
 			hasSeo={collectionConfig.hasSeo}

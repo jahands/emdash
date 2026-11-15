@@ -34,6 +34,7 @@ import {
 import { fetchManifest } from "../lib/api/client.js";
 import { useCurrentUser } from "../lib/api/current-user.js";
 import { useDebouncedValue } from "../lib/hooks.js";
+import { translationsLoadState } from "../lib/translations-load-state.js";
 
 const BYLINE_NAME_SEPARATOR = /\s+/;
 const BYLINE_INITIAL_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -198,12 +199,13 @@ export function BylinesPage() {
 	// Translations: only fetched when a multi-locale install has a byline
 	// open. The panel renders one row per configured locale, with Translate
 	// or Edit buttons depending on which siblings exist.
-	const { data: translationsData, isPending: translationsPending } = useQuery({
+	const translationsQuery = useQuery({
 		queryKey: ["byline-translations", selectedId],
 		queryFn: () =>
 			selectedId ? fetchBylineTranslations(selectedId) : Promise.resolve({ items: [] }),
 		enabled: !!selectedId && isMultiLocale,
 	});
+	const translationsData = translationsQuery.data;
 
 	const deleteMutation = useMutation({
 		mutationFn: (id: string) => deleteByline(id),
@@ -505,7 +507,7 @@ export function BylinesPage() {
 								defaultLocale={i18n.defaultLocale}
 								currentLocale={byline.locale}
 								translations={translationsData?.items ?? []}
-								loading={translationsPending}
+								{...translationsLoadState(translationsQuery)}
 								onOpen={(summary) => {
 									void navigate({
 										to: "/bylines",

@@ -785,6 +785,9 @@ export interface ContentEditorProps {
 	i18n?: { defaultLocale: string; locales: string[]; prefixDefaultLocale?: boolean };
 	/** Existing translations for this content item */
 	translations?: TranslationSummary[];
+	translationsLoading?: boolean;
+	translationsError?: boolean;
+	onRetryTranslations?: () => unknown;
 	/** Callback to create a translation for a locale */
 	onTranslate?: (locale: string) => void;
 	/** Plugin block types available for insertion in Portable Text fields */
@@ -896,6 +899,9 @@ export function ContentEditor({
 	isDeleting,
 	i18n,
 	translations,
+	translationsLoading,
+	translationsError,
+	onRetryTranslations,
 	onTranslate,
 	pluginBlocks,
 	hasSeo = false,
@@ -3111,6 +3117,9 @@ export function ContentEditor({
 										onQuickEditByline={onQuickEditByline}
 										i18n={i18n}
 										translations={translations}
+										translationsLoading={translationsLoading}
+										translationsError={translationsError}
+										onRetryTranslations={onRetryTranslations}
 										onTranslate={onTranslate}
 										hasSeo={hasSeo}
 										onSeoChange={onSeoChange ? handleSeoChange : undefined}
