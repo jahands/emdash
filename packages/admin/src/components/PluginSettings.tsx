@@ -8,6 +8,7 @@
  */
 
 import {
+	Banner,
 	Button,
 	Input,
 	InputArea,
@@ -54,6 +55,7 @@ export function PluginSettings({ pluginId }: PluginSettingsProps) {
 		data: settings,
 		isLoading,
 		error,
+		refetch,
 	} = useQuery({
 		queryKey: ["plugin-settings", pluginId],
 		queryFn: () => fetchPluginSettings(pluginId),
@@ -133,19 +135,23 @@ export function PluginSettings({ pluginId }: PluginSettingsProps) {
 		/>
 	);
 
+	const headerWithoutSave = (
+		<EditorHeader
+			leading={backLink}
+			actions={
+				<div className="invisible" aria-hidden="true" inert>
+					<Button icon={<FloppyDisk />}>{t`Save Settings`}</Button>
+				</div>
+			}
+		>
+			<h1 className="truncate text-2xl font-semibold">{t`${pluginName} Settings`}</h1>
+		</EditorHeader>
+	);
+
 	if (isLoading) {
 		return (
 			<div className="space-y-6">
-				<EditorHeader
-					leading={backLink}
-					actions={
-						<div className="invisible" aria-hidden="true" inert>
-							<Button icon={<FloppyDisk />}>{t`Save Settings`}</Button>
-						</div>
-					}
-				>
-					<h1 className="truncate text-2xl font-semibold">{t`${pluginName} Settings`}</h1>
-				</EditorHeader>
+				{headerWithoutSave}
 				<div className="rounded-lg border bg-kumo-base p-6">
 					<span role="status" className="sr-only">
 						{t`Loading settings...`}
@@ -166,15 +172,17 @@ export function PluginSettings({ pluginId }: PluginSettingsProps) {
 	if (error || !settings) {
 		return (
 			<div className="space-y-6">
-				<div className="flex items-center gap-3">
-					{backLink}
-					<h1 className="text-2xl font-semibold leading-tight">{t`${pluginName} Settings`}</h1>
-				</div>
-				<div className="rounded-lg border bg-kumo-base p-6">
-					<p className="text-kumo-danger">
-						{error instanceof Error ? error.message : t`Failed to load plugin settings`}
-					</p>
-				</div>
+				{headerWithoutSave}
+				<Banner
+					variant="error"
+					role="alert"
+					title={t`Couldn’t load plugin settings.`}
+					action={
+						<Button size="sm" variant="secondary" onClick={() => void refetch()}>
+							{t`Try again`}
+						</Button>
+					}
+				/>
 			</div>
 		);
 	}

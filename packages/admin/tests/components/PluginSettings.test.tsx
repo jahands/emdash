@@ -249,4 +249,23 @@ describe("PluginSettings", () => {
 			.element(screen.getByText("This plugin has no configurable settings."))
 			.toBeInTheDocument();
 	});
+
+	it("keeps the page header when settings fail to load, and offers a retry", async () => {
+		mockFetchPluginSettings.mockRejectedValueOnce(new Error("SQLITE_ERROR: no such table"));
+		const screen = await render(
+			<Wrapper>
+				<PluginSettings pluginId="emdash-forms" />
+			</Wrapper>,
+		);
+
+		await expect
+			.element(screen.getByRole("alert"))
+			.toHaveTextContent("Couldn’t load plugin settings.");
+		expect(screen.container.textContent).not.toContain("SQLITE_ERROR");
+		const heading = screen.getByRole("heading", { name: "Forms Settings" }).element();
+		expect(heading.closest("[data-editor-header]")).not.toBeNull();
+
+		await screen.getByRole("button", { name: "Try again" }).click();
+		await expect.element(screen.getByLabelText("Turnstile Site Key")).toHaveValue("0xAAA");
+	});
 });
