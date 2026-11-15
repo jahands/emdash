@@ -132,8 +132,12 @@ async function nextFrames() {
 	await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 }
 
-/** Records where the persistent controls and the first asset are after each response. */
-function positionLog() {
+/**
+ * Records where the persistent controls and the first asset are after each response. With
+ * `interactiveOnly`, the inert loading frame is skipped: on a first visit it can move when a usage
+ * banner arrives, before any control works or any media shows.
+ */
+function positionLog({ interactiveOnly = false } = {}) {
 	const seen = new Map<string, { step: string; x: number; y: number }[]>();
 	const targets: Record<string, () => Element | null> = {
 		upload: () => document.querySelector("[data-media-library] button[aria-label='Upload Files']"),
@@ -146,7 +150,7 @@ function positionLog() {
 			await nextFrames();
 			for (const [name, find] of Object.entries(targets)) {
 				const element = find();
-				if (!element) continue;
+				if (!element || (interactiveOnly && element.closest("[inert]"))) continue;
 				const box = element.getBoundingClientRect();
 				const entries = seen.get(name) ?? [];
 				entries.push({ step, x: box.left, y: box.top });
@@ -193,10 +197,10 @@ describe("Media Library loading stability", () => {
 		{ viewport: "desktop", width: 1280, height: 800, dir: "ltr" },
 		{ viewport: "phone", width: 390, height: 844, dir: "rtl" },
 	] as const)(
-		"keeps the controls and assets still while an indexing site with no folders loads ($viewport, $dir)",
+		"keeps the working controls and assets still while an indexing site with no folders loads ($viewport, $dir)",
 		async ({ width, height, dir }) => {
 			await page.viewport(width, height);
-			const log = positionLog();
+			const log = positionLog({ interactiveOnly: true });
 			const screen = await render(library(loadingRoute, dir));
 			await log.record("first render");
 
@@ -226,8 +230,51 @@ describe("Media Library loading stability", () => {
 		},
 	);
 
-	it("keeps the controls and assets still while folders arrive after the media list", async () => {
-		const log = positionLog();
+	it("draws the inert toolbar and tiles on a first visit before the usage status is known", async () => {
+		const box = (element: Element | null | undefined) => {
+			expect(element).toBeTruthy();
+			const { left, top, width, height } = element!.getBoundingClientRect();
+			return { left, top, width, height };
+		};
+		const placeholderTiles = () =>
+			document.querySelectorAll("[data-media-library] [data-media-placeholder]");
+		const screen = await render(library(loadingRoute, "ltr"));
+		await nextFrames();
+
+		expect(usage.fetchStatus).toHaveBeenCalledOnce();
+		const announced = screen
+			.getByRole("status")
+			.all()
+			.map((status) => status.element().textContent)
+			.filter(Boolean);
+		expect(announced).toEqual(["Loading media"]);
+		expect(placeholderTiles()).toHaveLength(35);
+		const searchInput = screen.getByRole("searchbox", { name: "Search media" }).element();
+		expect(searchInput.closest("[inert]")).not.toBeNull();
+		const searchBefore = box(searchInput.parentElement);
+		const tileBefore = box(placeholderTiles()[0]);
+
+		activation.resolve(activeStatus);
+		progress.resolve(ready);
+		await screen.rerender(
+			library({ ...loadingRoute, items, isLoading: false, foldersLoading: false }, "ltr"),
+		);
+		await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
+		await nextFrames();
+
+		expect(placeholderTiles()).toHaveLength(0);
+		const search = box(
+			screen.getByRole("searchbox", { name: "Search media" }).element().parentElement,
+		);
+		const tile = box(document.querySelector("[data-media-grid] > *"));
+		for (const key of ["left", "top", "width", "height"] as const) {
+			expect(Math.abs(search[key] - searchBefore[key]), `search ${key}`).toBeLessThanOrEqual(1);
+			expect(Math.abs(tile[key] - tileBefore[key]), `first tile ${key}`).toBeLessThanOrEqual(1);
+		}
+	});
+
+	it("keeps the working controls and assets still while folders arrive after the media list", async () => {
+		const log = positionLog({ interactiveOnly: true });
 		const screen = await render(library(loadingRoute, "ltr"));
 		await log.record("first render");
 
@@ -276,8 +323,8 @@ describe("Media Library loading stability", () => {
 		log.expectStable();
 	});
 
-	it("keeps the controls and assets still when folders and indexing progress fail", async () => {
-		const log = positionLog();
+	it("keeps the working controls and assets still when folders and indexing progress fail", async () => {
+		const log = positionLog({ interactiveOnly: true });
 		const screen = await render(library(loadingRoute, "ltr"));
 		await log.record("first render");
 

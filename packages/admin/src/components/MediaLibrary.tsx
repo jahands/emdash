@@ -677,18 +677,15 @@ export function MediaLibrary({
 		!bannerAndTabsKnown ||
 		(folderPlaceholderCount > 0 && hintedFolderCount === undefined);
 	// The tiles stay placeholders until whatever goes above them is known, so they land where
-	// their placeholders were.
+	// their placeholders were. With no earlier visit to go by, the inert frame assumes no usage
+	// banner or provider tabs; if one appears, only the frame moves, before any media is shown.
 	const [contentRevealed, setContentRevealed] = React.useState(!initialContentPending);
 	if (!contentRevealed && !initialContentPending) setContentRevealed(true);
-	// With no earlier visit to go by, a usage banner or provider tabs could still appear above
-	// the toolbar, so nothing is drawn below the header until that is known.
-	const holdBelowHeader = !contentRevealed && !bannerAndTabsKnown;
 	const showItemsPlaceholder = !contentRevealed || itemsPending;
 	const placeholderCount = pagination?.perPage ?? DEFAULT_PLACEHOLDER_COUNT;
 	const showPaginationFooter =
 		activeProvider === "local" &&
 		!!pagination &&
-		!holdBelowHeader &&
 		(pagination.totalCount > 0 || showItemsPlaceholder);
 	// Before the first reveal the folder section shows only when its size is known, from the
 	// folders themselves or the last visit's count.
@@ -1101,7 +1098,7 @@ export function MediaLibrary({
 
 			{/* Toolbar: search + type filter (start) · view toggle (end).
 			    Local library search/filter is handled server-side. */}
-			{!holdBelowHeader && (!contentRevealed || showToolbar) && (
+			{(!contentRevealed || showToolbar) && (
 				<div inert={!contentRevealed || undefined}>
 					<TableToolbar
 						className="flex-row flex-nowrap gap-2"
@@ -1184,7 +1181,7 @@ export function MediaLibrary({
 				</span>
 			)}
 
-			{!holdBelowHeader && showFolderSection && viewMode === "grid" && (
+			{showFolderSection && viewMode === "grid" && (
 				<section
 					aria-labelledby="media-folders-heading"
 					aria-busy={Boolean(foldersLoading || isLoadingMoreFolders) || undefined}
@@ -1258,11 +1255,7 @@ export function MediaLibrary({
 			)}
 
 			{/* Content */}
-			{holdBelowHeader ? (
-				<span role="status" className="sr-only">
-					{t`Loading media`}
-				</span>
-			) : showItemsPlaceholder && viewMode === "grid" ? (
+			{showItemsPlaceholder && viewMode === "grid" ? (
 				<>
 					<span role="status" className="sr-only">
 						{t`Loading media`}
