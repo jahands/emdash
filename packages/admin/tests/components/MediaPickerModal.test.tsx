@@ -237,6 +237,28 @@ describe("MediaPickerModal", () => {
 			expect(image?.style.objectPosition).toBe("20% 80%");
 		});
 
+		it("shows a page of placeholder tiles, not a spinner, until media arrives", async () => {
+			const api = await import("../../src/lib/api");
+			let resolveList!: (value: Awaited<ReturnType<typeof api.fetchMediaList>>) => void;
+			const originalList = await vi.mocked(api.fetchMediaList).getMockImplementation()?.({});
+			vi.mocked(api.fetchMediaList).mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveList = resolve;
+				}),
+			);
+			const screen = await renderModal();
+
+			await expect
+				.element(screen.getByRole("region", { name: "Media results" }).getByRole("status"))
+				.toHaveTextContent("Loading media");
+			expect(document.querySelectorAll("[data-media-placeholder]")).toHaveLength(12);
+			expect(document.querySelector("[role='dialog'] svg[role='status']")).toBeNull();
+
+			resolveList(originalList!);
+			await expect.element(screen.getByRole("button", { name: "photo.jpg" })).toBeInTheDocument();
+			expect(document.querySelectorAll("[data-media-placeholder]")).toHaveLength(0);
+		});
+
 		it("shows the modal title", async () => {
 			const screen = await renderModal({ title: "Pick an Image" });
 			await expect.element(screen.getByText("Pick an Image")).toBeInTheDocument();

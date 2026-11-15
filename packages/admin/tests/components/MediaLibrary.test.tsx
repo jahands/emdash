@@ -694,7 +694,7 @@ describe("MediaLibrary", () => {
 			expect(screen.getByRole("heading", { name: "Folders" }).query()).toBeNull();
 		});
 
-		it("renders a later folder loader and error inside the list table", async () => {
+		it("renders later folder placeholders and error inside the list table", async () => {
 			const onRetryFolders = vi.fn();
 			const screen = await renderLibrary({
 				items: [makeMediaItem({ filename: "photo.jpg" })],
@@ -713,10 +713,14 @@ describe("MediaLibrary", () => {
 					/>
 				</QueryWrapper>,
 			);
-			let rows = screen.getByRole("row").all();
-			expect(rows[1]?.element()).toHaveTextContent("Loading folders");
-			expect(rows[1]?.element().querySelector("td")).toHaveAttribute("colspan", "5");
-			expect(rows[2]?.element()).toHaveTextContent("photo.jpg");
+			const placeholderRows = screen
+				.getByRole("table")
+				.element()
+				.querySelectorAll("tbody tr[aria-hidden='true']");
+			expect(placeholderRows).toHaveLength(2);
+			expect(placeholderRows[1]?.nextElementSibling).toHaveTextContent("photo.jpg");
+			expect(screen.getByRole("table").element().querySelector("svg[role='status']")).toBeNull();
+			await expect.element(screen.getByText("Loading folders")).toBeInTheDocument();
 
 			await screen.rerender(
 				<QueryWrapper>
@@ -728,7 +732,7 @@ describe("MediaLibrary", () => {
 					/>
 				</QueryWrapper>,
 			);
-			rows = screen.getByRole("row").all();
+			const rows = screen.getByRole("row").all();
 			expect(rows[1]?.element()).toHaveTextContent("Folders could not be loaded.");
 			expect(rows[1]?.element().querySelector("td")).toHaveAttribute("colspan", "5");
 			await screen.getByRole("button", { name: "Retry" }).click();
@@ -1415,9 +1419,11 @@ describe("MediaLibrary", () => {
 	});
 
 	describe("loading state", () => {
-		it("displays loading state", async () => {
+		it("shows placeholder tiles, not a spinner or the empty state, while loading", async () => {
 			const screen = await renderLibrary({ isLoading: true });
-			// When loading, neither empty state nor items are shown
+			await expect.element(screen.getByRole("status")).toHaveTextContent("Loading media");
+			expect(document.querySelectorAll("[data-media-placeholder]")).toHaveLength(12);
+			expect(document.querySelector("svg[role='status']")).toBeNull();
 			expect(screen.getByText("Your media library is empty").query()).toBeNull();
 		});
 	});

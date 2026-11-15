@@ -11,7 +11,7 @@
  * the byline update body.
  */
 
-import { Label, Loader } from "@cloudflare/kumo";
+import { Label } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 
 import { useMediaItem } from "../lib/use-media-rendition.js";
@@ -42,9 +42,10 @@ export function BylineAvatarField({ value, onChange }: BylineAvatarFieldProps) {
 				<Label>
 					<OptionalLabel>{t`Avatar`}</OptionalLabel>
 				</Label>
-				<div className="flex size-16 items-center justify-center rounded-full bg-kumo-tint ring ring-kumo-line">
-					<Loader />
-				</div>
+				<div
+					className="skeleton-line size-16 rounded-full ring ring-kumo-line"
+					aria-hidden="true"
+				/>
 			</div>
 		);
 	}

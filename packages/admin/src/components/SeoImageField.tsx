@@ -6,7 +6,7 @@
  * social sites apply to link-preview images.
  */
 
-import { Banner, Button, Loader } from "@cloudflare/kumo";
+import { Banner, Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { ImageBroken, ImageSquare, Trash } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
@@ -167,9 +167,7 @@ export function SeoImageField({ seo, onChange }: SeoImageFieldProps) {
 							<span className="text-xs leading-4">{t`Image not found`}</span>
 						</div>
 					) : !imageUrl ? (
-						<div className="flex h-full items-center justify-center">
-							<Loader />
-						</div>
+						<div className="skeleton-line size-full rounded-none" aria-hidden="true" />
 					) : (
 						<img
 							ref={previewRef}

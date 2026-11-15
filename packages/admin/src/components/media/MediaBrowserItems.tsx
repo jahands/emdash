@@ -1,4 +1,4 @@
-import { Badge, Button, LayerCard, Loader } from "@cloudflare/kumo";
+import { Badge, Button, LayerCard, Loader, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowDown, ArrowUp, Check, FolderSimple, WarningCircle, X } from "@phosphor-icons/react";
 import * as React from "react";
@@ -178,6 +178,52 @@ export function MediaBrowserItem({
 					<Check className="size-4" weight="bold" aria-hidden="true" />
 				</span>
 			)}
+		</LayerCard>
+	);
+}
+
+// Fixed per item, so placeholders shown again after a remount don't change shape.
+const PLACEHOLDER_NAME_WIDTHS = [64, 48, 72, 56, 40, 68];
+
+/**
+ * A card or row in the shape of `MediaBrowserItem`, shown while items load. It announces
+ * nothing; the list it stands in shows one loading status.
+ */
+export function MediaBrowserItemPlaceholder({
+	layout,
+	index,
+}: {
+	layout: "grid" | "list";
+	index: number;
+}) {
+	const nameWidth = PLACEHOLDER_NAME_WIDTHS[index % PLACEHOLDER_NAME_WIDTHS.length] ?? 60;
+	if (layout === "list") {
+		return (
+			<LayerCard
+				aria-hidden="true"
+				data-media-placeholder
+				className="grid w-full min-w-0 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2"
+			>
+				<div className="skeleton-line h-10 w-14 rounded-md" />
+				<div className="min-w-0">
+					<SkeletonLine blockHeight={20} minWidth={nameWidth} maxWidth={nameWidth} />
+					<SkeletonLine blockHeight={20} minWidth={40} maxWidth={40} />
+				</div>
+				<div className="skeleton-line hidden h-5 w-11 rounded-md sm:block" />
+			</LayerCard>
+		);
+	}
+	return (
+		<LayerCard aria-hidden="true" data-media-placeholder className="w-full min-w-0">
+			<LayerCard.Primary className="aspect-video p-0">
+				<div className="skeleton-line size-full rounded-none" />
+			</LayerCard.Primary>
+			<LayerCard.Secondary className="my-0 min-w-0 justify-between gap-2 px-3 py-2.5">
+				<div className="min-w-0 flex-1">
+					<SkeletonLine blockHeight={20} minWidth={nameWidth} maxWidth={nameWidth} />
+				</div>
+				<div className="skeleton-line h-5 w-11 rounded-md" />
+			</LayerCard.Secondary>
 		</LayerCard>
 	);
 }

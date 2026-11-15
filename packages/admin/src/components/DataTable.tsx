@@ -339,9 +339,17 @@ export function DataTableMessage({
  * A column of `DataTablePlaceholderRows`: "title" for the row's name, which also holds the
  * line of details shown under it while tertiary columns are hidden; "text" for a column
  * always shown, and "secondary" or "tertiary" for one that hides like `secondaryColumn`
- * or `tertiaryColumn`; "actions" for a row's "…" button; "empty" for anything else.
+ * or `tertiaryColumn`; "thumbnail" for a 40px preview; "actions" for a row's "…" button;
+ * "empty" for anything else.
  */
-export type PlaceholderCell = "title" | "text" | "secondary" | "tertiary" | "actions" | "empty";
+export type PlaceholderCell =
+	| "title"
+	| "text"
+	| "secondary"
+	| "tertiary"
+	| "thumbnail"
+	| "actions"
+	| "empty";
 
 // Fixed per row, so placeholders shown again after a remount don't change shape.
 const TITLE_WIDTHS = [62, 48, 74, 55, 68];
@@ -357,7 +365,7 @@ function PlaceholderLine({ width }: { width: number }) {
 }
 
 /**
- * Rows as tall as a line of text, shown while the first rows load, so the rows take their
+ * Rows as tall as a line of text or a thumbnail, shown while the first rows load, so the rows take their
  * place without moving the table. Pass one cell per column, and as many `rows` as are
  * expected when that is known.
  */
@@ -396,6 +404,8 @@ export function DataTablePlaceholderRows({
 						<div aria-hidden="true">
 							<PlaceholderLine width={placeholderWidth(TEXT_WIDTHS, row)} />
 						</div>
+					) : cell === "thumbnail" ? (
+						<div aria-hidden="true" className="skeleton-line size-10 rounded" />
 					) : cell === "actions" ? (
 						<div aria-hidden="true" className="size-6.5" />
 					) : null}

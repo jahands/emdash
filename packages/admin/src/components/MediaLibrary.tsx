@@ -4,8 +4,8 @@ import {
 	Button,
 	Grid,
 	LayerCard,
-	Loader,
 	Select,
+	SkeletonLine,
 	Tabs,
 	Toasty,
 	createKumoToastManager,
@@ -77,7 +77,7 @@ import {
 import { cn } from "../lib/utils";
 import {
 	DataTable,
-	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowMeta,
 	RowTitleButton,
 	cellCodeClassName,
@@ -87,6 +87,7 @@ import { ListPaginationFooter, type ListPagination } from "./ListPaginationFoote
 import {
 	MEDIA_BROWSER_PAGE_SIZES,
 	MediaBrowserItem,
+	MediaBrowserItemPlaceholder,
 	mimeForMediaTypeFilter,
 } from "./media/MediaBrowserItems.js";
 import { MediaDetailPanel } from "./MediaDetailPanel";
@@ -145,6 +146,10 @@ interface MediaFolderTargetData {
 	kind: "media-folder-target";
 	folder: MediaFolder;
 }
+
+const DEFAULT_PLACEHOLDER_COUNT = 12;
+// Fixed, so placeholders shown again after a remount don't change shape.
+const FOLDER_PLACEHOLDER_WIDTHS = [58, 72, 46, 64];
 
 const mediaDragId = (id: string) => `media:${id}`;
 const folderDropId = (id: string) => `folder:${id}`;
@@ -592,6 +597,8 @@ export function MediaLibrary({
 	// never push the toolbar or the grid.
 	const [contentRevealed, setContentRevealed] = React.useState(!initialContentPending);
 	if (!contentRevealed && !initialContentPending) setContentRevealed(true);
+	const showItemsPlaceholder = !contentRevealed || itemsPending;
+	const placeholderCount = pagination?.perPage ?? DEFAULT_PLACEHOLDER_COUNT;
 	const folderActionsAvailable =
 		Boolean(canManageFolders) &&
 		Boolean(onCreateFolder) &&
@@ -966,6 +973,7 @@ export function MediaLibrary({
 
 			{/* Toolbar: search + type filter (start) · view toggle (end).
 			    Local library search/filter is handled server-side. */}
+			{!contentRevealed && <MediaToolbarPlaceholder />}
 			{contentRevealed && showToolbar && (
 				<TableToolbar
 					className="flex-row flex-nowrap gap-2"
@@ -1036,7 +1044,7 @@ export function MediaLibrary({
 
 			{activeProvider === "local" && (
 				<span aria-live="polite" aria-atomic="true" className="sr-only">
-					{!hasFolderSurface || foldersError
+					{!contentRevealed || !hasFolderSurface || foldersError
 						? ""
 						: foldersLoading || isLoadingMoreFolders
 							? t`Loading folders`
@@ -1069,9 +1077,16 @@ export function MediaLibrary({
 						</div>
 					)}
 					{foldersLoading && visibleFolders.length === 0 ? (
-						<div className="flex justify-center py-6">
-							<Loader />
-						</div>
+						<Grid variant="4up" gap="sm" className="2xl:grid-cols-6" aria-hidden="true">
+							{FOLDER_PLACEHOLDER_WIDTHS.map((width) => (
+								<LayerCard key={width} className="flex min-w-0 items-center gap-3 p-3">
+									<div className="skeleton-line size-10 shrink-0 rounded-md" />
+									<div className="min-w-0 flex-1">
+										<SkeletonLine blockHeight={24} minWidth={width} maxWidth={width} />
+									</div>
+								</LayerCard>
+							))}
+						</Grid>
 					) : (
 						<Grid variant="4up" gap="sm" className="2xl:grid-cols-6">
 							{visibleFolders.map((folder) => (
@@ -1106,11 +1121,21 @@ export function MediaLibrary({
 			)}
 
 			{/* Content */}
-			{!contentRevealed || itemsPending ? (
-				<div className="flex items-center justify-center py-12">
-					<Loader />
-				</div>
-			) : activeProvider === "local" && currentItems.length === 0 && !folderResultsMayFillView ? (
+			{showItemsPlaceholder && viewMode === "grid" ? (
+				<>
+					<span role="status" className="sr-only">
+						{t`Loading media`}
+					</span>
+					<Grid variant="4up" gap="sm" className="2xl:grid-cols-6" aria-hidden="true">
+						{Array.from({ length: placeholderCount }, (_, index) => (
+							<MediaBrowserItemPlaceholder key={index} layout="grid" index={index} />
+						))}
+					</Grid>
+				</>
+			) : !showItemsPlaceholder &&
+			  activeProvider === "local" &&
+			  currentItems.length === 0 &&
+			  !folderResultsMayFillView ? (
 				hasActiveQuery ? (
 					<MediaEmptyState
 						hero={MagnifyingGlass}
@@ -1154,7 +1179,9 @@ export function MediaLibrary({
 						}
 					/>
 				)
-			) : activeProvider !== "local" && currentProviderItems.length === 0 ? (
+			) : !showItemsPlaceholder &&
+			  activeProvider !== "local" &&
+			  currentProviderItems.length === 0 ? (
 				canSearch && searchQuery.trim() ? (
 					<MediaEmptyState
 						hero={MagnifyingGlass}
@@ -1260,14 +1287,28 @@ export function MediaLibrary({
 						</tr>
 					</thead>
 					<tbody>
-						{showFolderResults && foldersLoading && visibleFolders.length === 0 && (
-							<DataTableMessage colSpan={5}>
-								<span className="inline-flex items-center gap-2">
-									<Loader size="sm" />
-									{t`Loading folders`}
-								</span>
-							</DataTableMessage>
+						{showItemsPlaceholder && (
+							<DataTablePlaceholderRows
+								cells={["thumbnail", "title", "tertiary", "tertiary", "tertiary"]}
+								rows={placeholderCount}
+							/>
 						)}
+						{showFolderResults &&
+							foldersLoading &&
+							visibleFolders.length === 0 &&
+							FOLDER_PLACEHOLDER_WIDTHS.slice(0, 2).map((width) => (
+								<tr key={width} aria-hidden="true">
+									<td>
+										<div className="skeleton-line size-10 rounded" />
+									</td>
+									<td>
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+									</td>
+									<td {...tertiaryColumn} />
+									<td {...tertiaryColumn} />
+									<td {...tertiaryColumn} />
+								</tr>
+							))}
 						{showFolderResults && foldersError && visibleFolders.length === 0 && (
 							<MediaFolderErrorRow onRetry={onRetryFolders} />
 						)}
@@ -1580,6 +1621,21 @@ function MediaFolderErrorRow({ onRetry }: { onRetry?: () => void }) {
 				</div>
 			</td>
 		</tr>
+	);
+}
+
+/** The search, type filter and view toggle in outline, shown until the library first loads. */
+function MediaToolbarPlaceholder() {
+	return (
+		<div aria-hidden="true">
+			<TableToolbar
+				className="flex-row flex-nowrap gap-2"
+				trailing={<div className="skeleton-line h-9 w-19 rounded-lg" />}
+			>
+				<div className="skeleton-line h-9 w-auto min-w-0 flex-1 rounded-lg sm:w-72 sm:flex-none" />
+				<div className="skeleton-line h-9 w-25 rounded-lg" />
+			</TableToolbar>
+		</div>
 	);
 }
 

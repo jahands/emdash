@@ -405,3 +405,80 @@ describe("Media Library upload stability", () => {
 		await vi.waitFor(() => expect(gridNames()[0]).toBe("uploaded.txt"));
 	});
 });
+
+describe("Media Library while it first loads", () => {
+	const box = (element: Element | null) => {
+		expect(element).not.toBeNull();
+		const { left, top, width, height } = element!.getBoundingClientRect();
+		return { left, top, width, height };
+	};
+	const placeholderTiles = () =>
+		document.querySelectorAll("[data-media-library] [data-media-placeholder]");
+
+	beforeEach(() => {
+		activation.resolve(activeStatus);
+		progress.resolve(ready);
+	});
+
+	it.each([
+		{ viewport: "desktop", width: 1280, height: 800, dir: "ltr" },
+		{ viewport: "phone", width: 390, height: 844, dir: "rtl" },
+	] as const)(
+		"draws the toolbar and a page of tiles where the loaded ones go ($viewport, $dir)",
+		async ({ width, height, dir }) => {
+			await page.viewport(width, height);
+			const screen = await render(library(loadingRoute, dir));
+			await nextFrames();
+
+			expect(document.querySelector("svg[role='status']")).toBeNull();
+			const announced = screen
+				.getByRole("status")
+				.all()
+				.map((status) => status.element().textContent)
+				.filter(Boolean);
+			expect(announced).toEqual(["Loading media"]);
+			expect(placeholderTiles()).toHaveLength(35);
+			const toolbar = document.querySelector("[data-media-library] [aria-hidden] .skeleton-line");
+			const searchBefore = box(toolbar);
+			const tileBefore = box(placeholderTiles()[0]!);
+
+			await screen.rerender(
+				library({ ...loadingRoute, items, isLoading: false, foldersLoading: false }, dir),
+			);
+			await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
+			await nextFrames();
+
+			expect(placeholderTiles()).toHaveLength(0);
+			const search = box(
+				document.querySelector("[data-media-library] input[aria-label='Search media']")!
+					.parentElement,
+			);
+			const tile = box(document.querySelector("[data-media-grid] > *"));
+			// The search box's width follows the type filter's label, which varies by locale.
+			for (const key of ["top", "height"] as const) {
+				expect(Math.abs(search[key] - searchBefore[key]), `search ${key}`).toBeLessThanOrEqual(1);
+			}
+			for (const key of ["left", "top", "width", "height"] as const) {
+				expect(Math.abs(tile[key] - tileBefore[key]), `first tile ${key}`).toBeLessThanOrEqual(1);
+			}
+		},
+	);
+
+	it("shows an empty library where the placeholders started", async () => {
+		const screen = await render(library(loadingRoute, "ltr"));
+		await nextFrames();
+		const regionTop = box(
+			document.querySelector("[data-media-library] [aria-hidden] .skeleton-line"),
+		).top;
+
+		await screen.rerender(
+			library({ ...loadingRoute, isLoading: false, foldersLoading: false }, "ltr"),
+		);
+		const empty = screen.getByRole("heading", { name: "Your media library is empty" });
+		await expect.element(empty).toBeVisible();
+
+		expect(placeholderTiles()).toHaveLength(0);
+		const emptyPanel = empty.element().closest(".rounded-lg");
+		expect(Math.abs(box(emptyPanel).top - regionTop)).toBeLessThanOrEqual(1);
+	});
+});

@@ -14,6 +14,7 @@ import {
 	Input,
 	InputArea,
 	Select,
+	SkeletonLine,
 	Tabs,
 	inputVariants,
 } from "@cloudflare/kumo";
@@ -145,6 +146,8 @@ function cropAspectRatio(mode: CropAspectMode, source: CropViewportSize | null):
 interface MediaLocationOption {
 	id: string | null;
 	name: string;
+	/** The folder's name is still loading. */
+	pending?: boolean;
 }
 
 export interface MediaDetailPanelProps {
@@ -600,13 +603,10 @@ export function MediaDetailPanel({
 	const selectedLocation = React.useMemo<MediaLocationOption>(() => {
 		if (folderId === null) return mainLocation;
 		return (
-			locationOptions.find((option) => option.id === folderId) ?? {
-				id: folderId,
-				name:
-					currentFolderQuery.isLoading || currentFolderMissing
-						? t`Loading...`
-						: t`Location unavailable`,
-			}
+			locationOptions.find((option) => option.id === folderId) ??
+			(currentFolderQuery.isLoading || currentFolderMissing
+				? { id: folderId, name: "", pending: true }
+				: { id: folderId, name: t`Location unavailable` })
 		);
 	}, [
 		currentFolderMissing,
@@ -616,13 +616,13 @@ export function MediaDetailPanel({
 		mainLocation,
 		t,
 	]);
+	const currentLocationPending =
+		localItem?.folderId !== null &&
+		(currentFolderMissing || (!currentFolderQuery.data && currentFolderQuery.isLoading));
 	const currentLocationName =
 		localItem?.folderId === null
 			? mainLocation.name
-			: currentFolderMissing
-				? t`Loading...`
-				: (currentFolderQuery.data?.name ??
-					(currentFolderQuery.isLoading ? t`Loading...` : t`Location unavailable`));
+			: (currentFolderQuery.data?.name ?? t`Location unavailable`);
 	const recoveryPendingRef = React.useRef(false);
 	const recoveredFolderRef = React.useRef<string | null>(null);
 	const recoverMediaMutation = useMutation({
@@ -1489,8 +1489,10 @@ export function MediaDetailPanel({
 												className={`${inputVariants()} relative flex w-full items-center pe-8 text-start`}
 											>
 												<Combobox.Value>
-													{(option) =>
-														option ? (
+													{(option: MediaLocationOption | null) =>
+														option?.pending ? (
+															<LocationNamePlaceholder />
+														) : option ? (
 															<span className="flex min-w-0 items-center gap-2">
 																<MediaLocationIcon folderId={option.id} />
 																<span className="truncate" dir="auto">
@@ -1577,12 +1579,18 @@ export function MediaDetailPanel({
 									) : (
 										<div className="w-full space-y-2">
 											<span className="text-[14px] font-medium text-kumo-default">{t`Location`}</span>
-											<Input
-												aria-label={t`Location`}
-												value={currentLocationName}
-												disabled
-												className="w-full bg-kumo-tint text-kumo-subtle"
-											/>
+											{currentLocationPending ? (
+												<div className={`${inputVariants()} flex w-full items-center bg-kumo-tint`}>
+													<LocationNamePlaceholder />
+												</div>
+											) : (
+												<Input
+													aria-label={t`Location`}
+													value={currentLocationName}
+													disabled
+													className="w-full bg-kumo-tint text-kumo-subtle"
+												/>
+											)}
 										</div>
 									))}
 
@@ -1726,9 +1734,13 @@ export function MediaDetailPanel({
 														aria-label={t`Crop output dimensions`}
 														className="shrink-0 font-medium tabular-nums text-kumo-default"
 													>
-														{cropPixels
-															? `${cropPixels.width} × ${cropPixels.height}`
-															: t`Loading...`}
+														{cropPixels ? (
+															`${cropPixels.width} × ${cropPixels.height}`
+														) : (
+															<span className="block w-20" aria-hidden="true">
+																<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+															</span>
+														)}
 													</output>
 												</div>
 												{canReplaceOriginal && cropAspectMode !== "original" ? (
@@ -2021,3 +2033,16 @@ function MediaLocationIcon({ folderId }: { folderId: string | null }) {
 }
 
 export default MediaDetailPanel;
+
+/** Stands in for a folder's name in the Location field while it loads. */
+function LocationNamePlaceholder() {
+	const { t } = useLingui();
+	return (
+		<span className="block w-32">
+			<span className="sr-only">{t`Loading...`}</span>
+			<span aria-hidden="true">
+				<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+			</span>
+		</span>
+	);
+}
