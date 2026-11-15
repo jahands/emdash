@@ -387,7 +387,7 @@ describe("ContentEditor mobile action bar", () => {
 		const notices = () =>
 			[
 				...document.querySelectorAll(
-					'[role="region"][aria-label="Notifications"] [role="dialog"]:not([data-ending-style])',
+					'[role="region"][aria-label="Notifications"] [role="alertdialog"]:not([data-ending-style])',
 				),
 			].filter((toast) => toast.textContent?.includes("The server rejected this save.")).length;
 		await page.viewport(390, 800);
@@ -407,7 +407,7 @@ describe("ContentEditor mobile action bar", () => {
 		press("Fail save");
 		await expect.poll(notices).toBe(1);
 		expect(actionRects(toolbar).map(({ rect }) => [rect.x, rect.y])).toEqual(before);
-		expect(document.querySelector('[role="alert"]')).toBeNull();
+		expect(document.querySelector('form [role="alert"]')).toBeNull();
 		press("Fail save");
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		await expect.poll(notices).toBe(1);

@@ -227,12 +227,25 @@ function moved(before: Map<string, DOMRect>, after: Map<string, DOMRect>) {
  * What a screen reader is told that says `text`: each live region, and each
  * toast inside the notifications region, counted at its innermost element.
  */
+/** Text a screen reader can read in `element`, leaving out what is aria-hidden. */
+function exposedText(element: Element): string {
+	if (element.closest('[aria-hidden="true"]')) return "";
+	const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, (node) =>
+		node.parentElement?.closest('[aria-hidden="true"]')
+			? NodeFilter.FILTER_REJECT
+			: NodeFilter.FILTER_ACCEPT,
+	);
+	let text = "";
+	while (walker.nextNode()) text += walker.currentNode.textContent ?? "";
+	return text;
+}
+
 function announcementsOf(text: string) {
 	const live = [
 		...document.querySelectorAll<HTMLElement>(
 			'[role="alert"], [role="status"], [aria-live]:not([aria-live="off"]), [aria-live] [role="dialog"]:not([data-ending-style])',
 		),
-	].filter((element) => element.textContent?.includes(text));
+	].filter((element) => exposedText(element).includes(text));
 	return live.filter(
 		(element) => !live.some((other) => other !== element && element.contains(other)),
 	);

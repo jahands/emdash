@@ -336,6 +336,10 @@ function PersistentErrorToast({ notice }: { notice: PersistentErrorNotice }) {
 			title: noticeRef.current.title,
 			description: noticeRef.current.description,
 			variant: "error",
+			// Announced urgently, as an inline alert would be. A high-priority toast
+			// stays hidden from assistive technology until focused, so a notice
+			// with an action keeps the default and its button stays reachable.
+			priority: noticeRef.current.action ? "low" : "high",
 			timeout: 0,
 			actions: actions(),
 		});

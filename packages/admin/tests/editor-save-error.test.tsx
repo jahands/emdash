@@ -179,10 +179,11 @@ async function renderEditPage() {
 }
 
 /** Notifications that show the server's save error. */
+/** Error notices announced urgently, as the inline alert they replace was. */
 function errorNotices() {
 	return [
 		...document.querySelectorAll(
-			'[role="region"][aria-label="Notifications"] [role="dialog"]:not([data-ending-style])',
+			'[role="region"][aria-label="Notifications"] [role="alertdialog"]:not([data-ending-style])',
 		),
 	].filter((toast) => toast.textContent?.includes("Title is rejected by the server.")).length;
 }
@@ -279,7 +280,9 @@ describe("ContentEditPage save error wiring", () => {
 		await title.fill("Rejected once");
 		await save.click();
 		await vi.waitFor(() => expect(errorNotices()).toBe(1));
-		expect(screen.getByRole("alert").query()).toBeNull();
+		// The notice floats over the editor rather than adding a banner to it.
+		expect(document.querySelector('form [role="alert"]')).toBeNull();
+		expect(screen.getByRole("alert")).toHaveTextContent("Title is rejected by the server.");
 
 		await title.fill("Rejected twice");
 		await save.click();
@@ -330,8 +333,8 @@ describe("ContentEditPage save error wiring", () => {
 			for (const record of records) {
 				for (const node of record.addedNodes) {
 					if (!(node instanceof Element)) continue;
-					if (node.matches('[role="dialog"]')) toasts.add(node);
-					for (const toast of node.querySelectorAll('[role="dialog"]')) toasts.add(toast);
+					if (node.matches('[role="alertdialog"]')) toasts.add(node);
+					for (const toast of node.querySelectorAll('[role="alertdialog"]')) toasts.add(toast);
 				}
 				const text = status.textContent ?? "";
 				if (status.contains(record.target) && announced.at(-1) !== text) announced.push(text);
