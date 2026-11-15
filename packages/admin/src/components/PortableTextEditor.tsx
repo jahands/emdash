@@ -3680,9 +3680,23 @@ function samePropsExceptValue(previous: PortableTextEditorProps, next: PortableT
 }
 
 /**
+ * useEditor destroys an editor whose render has not committed within a
+ * millisecond. A transition, such as opening the editor's route, renders in
+ * slices that yield to the browser, so on a slow device the editor could be
+ * destroyed before its effects run against it. A state update from a layout
+ * effect renders, commits and runs effects in one task, which no timer can
+ * interrupt, and still paints with the first frame.
+ */
+function SynchronouslyMountedEditor(props: PortableTextEditorProps) {
+	const [mounted, setMounted] = React.useState(false);
+	React.useLayoutEffect(() => setMounted(true), []);
+	return mounted ? <PortableTextEditorComponent {...props} /> : null;
+}
+
+/**
  * Portable Text Editor Component
  */
-export const PortableTextEditor = React.memo(PortableTextEditorComponent, samePropsExceptValue);
+export const PortableTextEditor = React.memo(SynchronouslyMountedEditor, samePropsExceptValue);
 
 /** The editor's floating toolbars, which are only in the page while they show. */
 const BUBBLE_MENU_SELECTOR = [
