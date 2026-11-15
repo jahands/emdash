@@ -150,7 +150,9 @@ test.describe("Search", () => {
 			await input.fill("sett");
 
 			// Settings should still be visible, but Dashboard should be filtered out
-			await expect(page.getByText("Settings")).toBeVisible({ timeout: 5000 });
+			const dialog = page.getByRole("dialog");
+			await expect(dialog.getByText("Settings", { exact: true })).toBeVisible({ timeout: 5000 });
+			await expect(dialog.getByText("Dashboard", { exact: true })).toHaveCount(0);
 		});
 
 		test("shows empty state for no matches", async ({ admin, page }) => {
