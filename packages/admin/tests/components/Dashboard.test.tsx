@@ -169,7 +169,14 @@ describe("Dashboard", () => {
 
 		const screen = await render(<Dashboard manifest={manifest} />);
 
-		await expect.element(screen.getByText("Scheduled")).toBeInTheDocument();
+		await expect
+			.element(
+				screen
+					.getByTestId("dashboard-metric")
+					.filter({ hasText: "Scheduled" })
+					.getByTestId("dashboard-metric-value"),
+			)
+			.toHaveTextContent("2");
 		await expect
 			.element(screen.getByRole("link", { name: "Scheduled" }))
 			.toHaveAttribute("href", "/calendar");
@@ -189,7 +196,7 @@ describe("Dashboard", () => {
 		await expect.element(screen.getByRole("link", { name: "Scheduled" })).not.toBeInTheDocument();
 	});
 
-	it("omits scheduled summary when only residual non-scheduled statuses exist", async () => {
+	it("counts zero scheduled when only residual non-scheduled statuses exist", async () => {
 		mockFetchDashboardStats.mockResolvedValue(
 			makeStats([
 				{ slug: "pages", label: "Pages", total: 6, published: 2, draft: 3, scheduled: 0 },
@@ -198,8 +205,14 @@ describe("Dashboard", () => {
 
 		const screen = await render(<Dashboard manifest={manifest} />);
 
-		await expect.element(screen.getByText("Media files")).toBeInTheDocument();
-		await expect.element(screen.getByText("Scheduled")).not.toBeInTheDocument();
+		await expect
+			.element(
+				screen
+					.getByTestId("dashboard-metric")
+					.filter({ hasText: "Scheduled" })
+					.getByTestId("dashboard-metric-value"),
+			)
+			.toHaveTextContent("0");
 	});
 
 	it("omits the users summary when the server leaves out the user count", async () => {
@@ -430,7 +443,7 @@ describe("Dashboard", () => {
 		const screen = await render(<Dashboard manifest={manifest} />);
 
 		await expect
-			.element(screen.getByRole("link", { name: "Page" }))
+			.element(screen.getByRole("link", { name: "Page", exact: true }))
 			.toHaveAttribute("href", "/content/pages/new");
 	});
 
@@ -447,7 +460,9 @@ describe("Dashboard", () => {
 
 		const screen = await render(<Dashboard manifest={withOptOuts} />);
 
-		await expect.element(screen.getByRole("link", { name: "Page" })).toBeInTheDocument();
+		await expect
+			.element(screen.getByRole("link", { name: "Page", exact: true }))
+			.toBeInTheDocument();
 		await expect.element(screen.getByRole("link", { name: "Sync run" })).not.toBeInTheDocument();
 		await expect.element(screen.getByRole("link", { name: "Setting" })).not.toBeInTheDocument();
 	});

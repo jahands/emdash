@@ -5,6 +5,36 @@ import { userEvent } from "vitest/browser";
 import { SandboxedPluginWidget } from "../../src/components/SandboxedPluginWidget.js";
 import { render } from "../utils/render.js";
 
+describe("SandboxedPluginWidget while it first loads", () => {
+	afterEach(() => {
+		vi.unstubAllGlobals();
+	});
+
+	it("announces loading once and draws the same placeholder on every mount", async () => {
+		vi.stubGlobal(
+			"fetch",
+			vi.fn<() => Promise<Response>>(() => new Promise(() => {})),
+		);
+		const lineWidths = (container: HTMLElement) =>
+			Array.from(container.querySelectorAll(".skeleton-line"), (line) =>
+				Math.round(line.getBoundingClientRect().width),
+			);
+
+		const first = await render(<SandboxedPluginWidget pluginId="analytics" widgetId="traffic" />);
+		await expect.element(first.getByRole("status")).toHaveTextContent("Loading...");
+		expect(first.container.querySelectorAll('[role="status"]')).toHaveLength(1);
+		const widths = lineWidths(first.container);
+		expect(widths).toHaveLength(3);
+		await first.unmount();
+
+		for (let mount = 0; mount < 3; mount++) {
+			const again = await render(<SandboxedPluginWidget pluginId="analytics" widgetId="traffic" />);
+			expect(lineWidths(again.container)).toEqual(widths);
+			await again.unmount();
+		}
+	});
+});
+
 describe("SandboxedPluginWidget while an action is answered", () => {
 	afterEach(() => {
 		vi.unstubAllGlobals();
@@ -36,6 +66,7 @@ describe("SandboxedPluginWidget while an action is answered", () => {
 		await expect.element(screen.getByRole("heading", { name: "Traffic" })).toBeVisible();
 		expect(screen.container.querySelector('[aria-busy="true"]')).not.toBeNull();
 		expect(screen.container.querySelector('[aria-busy="true"] [role="status"]')).toBeNull();
+		expect(screen.container.querySelectorAll('[role="status"]')).toHaveLength(1);
 
 		answer.resolve(Response.json({ data: { blocks: [{ type: "header", text: "Updated" }] } }));
 		await expect.element(screen.getByRole("heading", { name: "Updated" })).toBeVisible();

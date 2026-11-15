@@ -56,11 +56,7 @@ export interface DashboardProps {
 export function Dashboard({ manifest }: DashboardProps) {
 	const { t } = useLingui();
 	const { data: user } = useCurrentUser();
-	const {
-		data: stats,
-		isLoading,
-		isError,
-	} = useQuery({
+	const { data: stats, isError } = useQuery({
 		queryKey: ["dashboard-stats"],
 		queryFn: fetchDashboardStats,
 		refetchOnWindowFocus: true,
@@ -68,48 +64,48 @@ export function Dashboard({ manifest }: DashboardProps) {
 	// Requested with the stats, though its notice waits for them to show.
 	useCoreUpdateStatus();
 	const hasDashboardData = stats !== undefined;
-	const showDashboardData = !isError || hasDashboardData;
 	const dashboardDataSettled = hasDashboardData || isError;
 	const role = user?.role ?? 0;
 
 	return (
 		<div className="space-y-6">
-			{manifest.marketplace && (user?.role ?? 0) >= ROLE_ADMIN && <MarketplaceMigrationBanner />}
+			{manifest.marketplace && role >= ROLE_ADMIN && <MarketplaceMigrationBanner />}
 			<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 				<h1 className="text-2xl font-semibold leading-tight">{t`Dashboard`}</h1>
 				<QuickActions manifest={manifest} />
 			</div>
 
-			{isError && <DashboardDataError />}
-
-			{showDashboardData && (
+			{isError && !hasDashboardData ? (
+				<DashboardDataError />
+			) : (
 				<>
+					{!hasDashboardData && (
+						<span role="status" className="sr-only">
+							{t`Loading...`}
+						</span>
+					)}
 					<SummaryMetrics
 						stats={stats}
-						loading={isLoading}
-						expectedCount={(user?.role ?? 0) >= ROLE_ADMIN ? 3 : 2}
+						showUsers={role >= ROLE_ADMIN}
 						linkCalendar={
-							(user?.role ?? 0) >= ROLE_CONTRIBUTOR &&
-							!manifest.admin?.hiddenNavItems?.includes("calendar")
+							role >= ROLE_CONTRIBUTOR && !manifest.admin?.hiddenNavItems?.includes("calendar")
 						}
 					/>
 
 					{/* Collections + Recent activity */}
 					<div className="grid gap-6 lg:grid-cols-2">
-						<CollectionList
-							collections={stats?.collections ?? []}
-							manifest={manifest}
-							loading={isLoading}
-						/>
-						<RecentActivity items={stats?.recentItems ?? []} loading={isLoading} />
+						<CollectionList collections={stats?.collections} manifest={manifest} />
+						<RecentActivity items={stats?.recentItems} />
 					</div>
 				</>
 			)}
 
-			{/* Recent Activity's height changes as its rows load, so widgets below it wait for them. */}
-			{dashboardDataSettled && <PluginWidgets manifest={manifest} />}
+			<PluginWidgets manifest={manifest} />
 
 			{dashboardDataSettled && <DashboardNotices stats={stats} role={role} />}
+
+			{/* Last, so a failed background refresh doesn't push the stale data it leaves on screen. */}
+			{isError && hasDashboardData && <DashboardDataError />}
 		</div>
 	);
 }
@@ -394,10 +390,7 @@ function QuickActions({ manifest }: { manifest: AdminManifest }) {
 
 // --- Summary metrics ---
 
-/**
- * Two to four metrics take two rows below `lg` and one row from `lg` up, so the
- * Scheduled metric, which only the loaded stats can reveal, never adds a row.
- */
+/** Below `lg`, metrics take two columns, and an odd last one spans both. */
 function metricGridClassName(count: number) {
 	return cn(
 		"grid gap-4",
@@ -408,78 +401,64 @@ function metricGridClassName(count: number) {
 
 function SummaryMetrics({
 	stats,
-	loading,
-	expectedCount,
+	showUsers,
 	linkCalendar,
 }: {
 	stats?: DashboardStats;
-	loading: boolean;
-	/** How many metrics to hold space for while the stats load. */
-	expectedCount: number;
+	/** Whether to hold a place for the user count while the stats load. */
+	showUsers: boolean;
 	/** Link the Scheduled count to the calendar, for roles that can open it. */
 	linkCalendar: boolean;
 }) {
-	if (loading) {
-		return (
-			<div className={metricGridClassName(expectedCount)}>
-				{Array.from({ length: expectedCount }, (_, i) => (
-					<LayerCard key={i}>
-						<DashboardCardHeading>
-							<SkeletonLine blockHeight="1lh" minWidth={45} maxWidth={70} />
-						</DashboardCardHeading>
-						<LayerCard.Primary className="text-3xl font-semibold leading-none">
-							<DashboardCardInset>
-								<SkeletonLine blockHeight="1lh" minWidth={20} maxWidth={35} />
-							</DashboardCardInset>
-						</LayerCard.Primary>
-					</LayerCard>
-				))}
-			</div>
-		);
-	}
+	const { t } = useLingui();
+	const totalDrafts = stats?.collections.reduce((sum, c) => sum + c.draft, 0);
+	const totalScheduled = stats?.collections.reduce((sum, c) => sum + c.scheduled, 0);
 
-	if (!stats) return null;
-
-	const totalDrafts = stats.collections.reduce((sum, c) => sum + c.draft, 0);
-	const totalScheduled = stats.collections.reduce((sum, c) => sum + c.scheduled, 0);
-	const hasScheduledContent = totalScheduled > 0;
-
-	const metrics: Array<{ label: string; value: number; calendar?: boolean }> = [
+	const metrics: Array<{ key: string; label: string; value?: number; calendar?: boolean }> = [
 		{
-			label: plural(totalDrafts, { one: "Draft", other: "Drafts" }),
+			key: "drafts",
+			label:
+				totalDrafts === undefined
+					? t`Drafts`
+					: plural(totalDrafts, { one: "Draft", other: "Drafts" }),
 			value: totalDrafts,
 		},
-		...(hasScheduledContent
-			? [
-					{
-						label: plural(totalScheduled, { one: "Scheduled", other: "Scheduled" }),
-						value: totalScheduled,
-						calendar: linkCalendar,
-					},
-				]
-			: []),
-		...(stats.mediaCount === undefined
-			? []
-			: [
-					{
-						label: plural(stats.mediaCount, { one: "Media file", other: "Media files" }),
-						value: stats.mediaCount,
-					},
-				]),
-		...(stats.userCount === undefined
-			? []
-			: [
-					{
-						label: plural(stats.userCount, { one: "User", other: "Users" }),
-						value: stats.userCount,
-					},
-				]),
+		{
+			key: "scheduled",
+			label:
+				totalScheduled === undefined
+					? t`Scheduled`
+					: plural(totalScheduled, { one: "Scheduled", other: "Scheduled" }),
+			value: totalScheduled,
+			calendar: linkCalendar,
+		},
 	];
+	// Every role that can open the dashboard can read media, so its count is expected while loading.
+	if (!stats || stats.mediaCount !== undefined) {
+		metrics.push({
+			key: "media",
+			label:
+				stats?.mediaCount === undefined
+					? t`Media files`
+					: plural(stats.mediaCount, { one: "Media file", other: "Media files" }),
+			value: stats?.mediaCount,
+		});
+	}
+	if (stats ? stats.userCount !== undefined : showUsers) {
+		metrics.push({
+			key: "users",
+			label:
+				stats?.userCount === undefined
+					? t`Users`
+					: plural(stats.userCount, { one: "User", other: "Users" }),
+			value: stats?.userCount,
+		});
+	}
 
 	return (
 		<div className={metricGridClassName(metrics.length)}>
 			{metrics.map((metric) => (
-				<LayerCard key={metric.label} data-testid="dashboard-metric">
+				<LayerCard key={metric.key} data-testid="dashboard-metric">
 					<DashboardCardHeading>
 						{metric.calendar ? (
 							<Link
@@ -497,9 +476,15 @@ function SummaryMetrics({
 						)}
 					</DashboardCardHeading>
 					<LayerCard.Primary className="text-3xl font-semibold leading-none tabular-nums">
-						<DashboardCardInset data-testid="dashboard-metric-value">
-							{metric.value}
-						</DashboardCardInset>
+						{metric.value === undefined ? (
+							<DashboardCardInset aria-hidden="true">
+								<SkeletonLine blockHeight="1lh" minWidth={28} maxWidth={28} />
+							</DashboardCardInset>
+						) : (
+							<DashboardCardInset data-testid="dashboard-metric-value">
+								{metric.value}
+							</DashboardCardInset>
+						)}
 					</LayerCard.Primary>
 				</LayerCard>
 			))}
@@ -507,96 +492,75 @@ function SummaryMetrics({
 	);
 }
 
-function SkeletonRows({ count }: { count: number }) {
-	return (
-		<DashboardCardInset className="space-y-3">
-			{Array.from({ length: count }, (_, i) => (
-				<SkeletonLine key={i} blockHeight={40} minWidth={65} maxWidth={95} />
-			))}
-		</DashboardCardInset>
-	);
-}
-
 // --- Collection list with counts ---
-
-/** Matches the height of the loaded collection rows, or of the empty message when there are none. */
-function CollectionSkeletonRows({ count }: { count: number }) {
-	if (count === 0) {
-		return (
-			<DashboardCardInset className="text-sm leading-6">
-				<SkeletonLine blockHeight="1lh" minWidth={40} maxWidth={60} />
-			</DashboardCardInset>
-		);
-	}
-	return (
-		<div className="space-y-1">
-			{Array.from({ length: count }, (_, i) => (
-				<div key={i} className="px-3 py-2 text-base leading-5">
-					<SkeletonLine blockHeight="1lh" minWidth={50} maxWidth={90} />
-				</div>
-			))}
-		</div>
-	);
-}
 
 function CollectionList({
 	collections,
 	manifest,
-	loading,
 }: {
-	collections: CollectionStats[];
+	/** Undefined while the stats load. */
+	collections: CollectionStats[] | undefined;
 	manifest: AdminManifest;
-	loading: boolean;
 }) {
 	const { t } = useLingui();
-	const visibleCollections = collections.filter((col) => !manifest.collections[col.slug]?.hidden);
+	const statsBySlug = new Map(collections?.map((col) => [col.slug, col]));
+	// Manifest order, known before the stats load, so rows don't reorder when the counts arrive.
+	const rows: Array<{ slug: string; label: string; stats?: CollectionStats }> = [
+		...visibleCollectionEntries(manifest.collections).map(([slug, config]) => ({
+			slug,
+			label: config.label,
+			stats: statsBySlug.get(slug),
+		})),
+		...(collections ?? [])
+			.filter((col) => !Object.hasOwn(manifest.collections, col.slug))
+			.map((col) => ({ slug: col.slug, label: col.label, stats: col })),
+	];
 
 	return (
 		<LayerCard className="h-full">
 			<DashboardCardHeading>{t`Content`}</DashboardCardHeading>
 			<LayerCard.Primary className="flex-1">
-				{loading ? (
-					<CollectionSkeletonRows count={visibleCollectionEntries(manifest.collections).length} />
-				) : visibleCollections.length === 0 ? (
+				{rows.length === 0 ? (
 					<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
 						{t`No collections configured`}
 					</p>
 				) : (
 					<div className="space-y-1">
-						{visibleCollections.map((col) => {
-							const config = manifest.collections[col.slug];
-							return (
-								<Link
-									key={col.slug}
-									to="/content/$collection"
-									params={{ collection: col.slug }}
-									search={{ locale: undefined }}
-									className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
-								>
-									<span className="text-base font-medium leading-5">
-										{config?.label ?? col.label}
-									</span>
-									<span className="flex shrink-0 items-center gap-2">
-										<CountBadge
-											icon={CONTENT_STATUS_ICONS.published}
-											count={col.published}
-											variant="success"
-											label={t`Published`}
-										/>
-										<CountBadge
-											icon={CONTENT_STATUS_ICONS.draft}
-											count={col.draft}
-											variant="warning"
-											label={t`Drafts`}
-										/>
-										<ArrowNext
-											className="h-3.5 w-3.5 text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100"
-											aria-hidden="true"
-										/>
-									</span>
-								</Link>
-							);
-						})}
+						{rows.map((row) => (
+							<Link
+								key={row.slug}
+								to="/content/$collection"
+								params={{ collection: row.slug }}
+								search={{ locale: undefined }}
+								className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
+							>
+								<span className="text-base font-medium leading-5">{row.label}</span>
+								<span className="flex shrink-0 items-center gap-2">
+									{collections === undefined ? (
+										<span aria-hidden="true" className="skeleton-line h-5 w-9 rounded-full" />
+									) : row.stats ? (
+										<>
+											<CountBadge
+												icon={CONTENT_STATUS_ICONS.published}
+												count={row.stats.published}
+												variant="success"
+												label={t`Published`}
+											/>
+											<CountBadge
+												icon={CONTENT_STATUS_ICONS.draft}
+												count={row.stats.draft}
+												variant="warning"
+												label={t`Drafts`}
+											/>
+										</>
+									) : null}
+									<ArrowNext
+										className="h-3.5 w-3.5 text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100"
+										aria-hidden="true"
+									/>
+								</span>
+							</Link>
+						))}
 					</div>
 				)}
 			</LayerCard.Primary>
@@ -627,47 +591,62 @@ function CountBadge({
 
 // --- Recent activity ---
 
-function RecentActivity({ items, loading }: { items: RecentItem[]; loading: boolean }) {
+const ACTIVITY_PLACEHOLDER_WIDTHS = [62, 48, 70, 55, 66, 44, 58, 72, 50, 64];
+
+function RecentActivity({ items }: { items: RecentItem[] | undefined }) {
 	const { t, i18n } = useLingui();
 
 	return (
 		<LayerCard className="h-full">
 			<DashboardCardHeading>{t`Recent Activity`}</DashboardCardHeading>
 			<LayerCard.Primary className="flex-1">
-				{loading ? (
-					<SkeletonRows count={5} />
-				) : items.length === 0 ? (
-					<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
-						{t`No recent activity`}
-					</p>
-				) : (
-					<div className="space-y-1">
-						{items.map((item) => (
-							<Link
-								key={`${item.collection}-${item.id}`}
-								to="/content/$collection/$id"
-								params={{ collection: item.collection, id: item.id }}
-								className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
-							>
-								<div className="flex min-w-0 items-center gap-2">
-									<StatusDot status={item.status} />
-									<span className="truncate text-base font-medium leading-5">
-										{item.title || item.slug || t`Untitled`}
-									</span>
-									<span className="hidden shrink-0 text-xs font-normal leading-5 text-kumo-subtle sm:inline">
-										{item.collectionLabel}
-									</span>
+				{/* Tall enough for the most rows the server returns (10), so the cards below hold their place. */}
+				<div className="min-h-[24.75rem]">
+					{items === undefined ? (
+						<div aria-hidden="true" className="space-y-1">
+							{ACTIVITY_PLACEHOLDER_WIDTHS.map((width, i) => (
+								<div key={i} className="flex items-center gap-2 px-3 py-2 text-base leading-5">
+									<span className="skeleton-line size-3.5 shrink-0 rounded-full" />
+									<div className="min-w-0 flex-1">
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+									</div>
+									<span className="skeleton-line h-2 w-10 shrink-0" />
 								</div>
-								<span
-									data-testid="activity-time"
-									className="shrink-0 text-xs font-normal leading-5 text-kumo-subtle tabular-nums"
+							))}
+						</div>
+					) : items.length === 0 ? (
+						<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
+							{t`No recent activity`}
+						</p>
+					) : (
+						<div className="space-y-1">
+							{items.map((item) => (
+								<Link
+									key={`${item.collection}-${item.id}`}
+									to="/content/$collection/$id"
+									params={{ collection: item.collection, id: item.id }}
+									className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
 								>
-									<bdi>{formatRelativeTime(item.updatedAt, i18n.locale)}</bdi>
-								</span>
-							</Link>
-						))}
-					</div>
-				)}
+									<div className="flex min-w-0 items-center gap-2">
+										<StatusDot status={item.status} />
+										<span className="truncate text-base font-medium leading-5">
+											{item.title || item.slug || t`Untitled`}
+										</span>
+										<span className="hidden shrink-0 text-xs font-normal leading-5 text-kumo-subtle sm:inline">
+											{item.collectionLabel}
+										</span>
+									</div>
+									<span
+										data-testid="activity-time"
+										className="shrink-0 text-xs font-normal leading-5 text-kumo-subtle tabular-nums"
+									>
+										<bdi>{formatRelativeTime(item.updatedAt, i18n.locale)}</bdi>
+									</span>
+								</Link>
+							))}
+						</div>
+					)}
+				</div>
 			</LayerCard.Primary>
 		</LayerCard>
 	);

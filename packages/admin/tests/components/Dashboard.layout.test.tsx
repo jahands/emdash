@@ -1,3 +1,4 @@
+import { focusManager } from "@tanstack/react-query";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page } from "vitest/browser";
@@ -126,7 +127,9 @@ describe("Dashboard while its stats load", () => {
 			const content = screen.getByRole("heading", { name: "Content", exact: true });
 			const activity = screen.getByRole("heading", { name: "Recent Activity" });
 			await expect.element(content).toBeVisible();
-			const before = snapshotPositions([content.element(), activity.element()]);
+			const metrics = screen.getByTestId("dashboard-metric").elements();
+			expect(metrics).toHaveLength(admin ? 4 : 3);
+			const before = snapshotPositions([content.element(), activity.element(), ...metrics]);
 
 			pending.resolve(stats({ admin, scheduled }));
 			await expect.element(screen.getByRole("link", { name: "Post 3" })).toBeVisible();
@@ -134,6 +137,52 @@ describe("Dashboard while its stats load", () => {
 			expect(largestMovement(before)).toBeLessThanOrEqual(1);
 		},
 	);
+
+	it("names the metrics and collections before the stats arrive, and announces one status", async () => {
+		mockUseCurrentUser.mockReturnValue({ data: { role: 50 } });
+		const pending = deferred<DashboardStats>();
+		mockFetchDashboardStats.mockReturnValue(pending.promise);
+
+		const screen = await render(<Dashboard manifest={manifest} />);
+
+		for (const label of ["Drafts", "Scheduled", "Media files", "Users"]) {
+			await expect
+				.element(screen.getByTestId("dashboard-metric").filter({ hasText: label }))
+				.toBeVisible();
+		}
+		const collectionLinks = screen.container.querySelectorAll('a[href="/content/$collection"]');
+		expect(Array.from(collectionLinks, (link) => link.textContent)).toEqual(["Posts", "Pages"]);
+		expect(screen.getByRole("status").elements()).toHaveLength(1);
+
+		pending.resolve(stats({ admin: true, scheduled: 2 }));
+		await expect.element(screen.getByRole("link", { name: "Post 3" })).toBeVisible();
+		expect(screen.getByRole("status").elements()).toHaveLength(0);
+	});
+
+	it("keeps the dashboard in place when a background refresh fails", async () => {
+		await page.viewport(1440, 900);
+		mockUseCurrentUser.mockReturnValue({ data: { role: 50 } });
+		mockFetchDashboardStats.mockResolvedValue(stats({ admin: true, scheduled: 0 }));
+
+		const screen = await render(<Dashboard manifest={manifest} />);
+		await expect.element(screen.getByRole("link", { name: "Post 3" })).toBeVisible();
+		const before = snapshotPositions([
+			screen.getByRole("heading", { name: "Content", exact: true }).element(),
+			...screen.getByTestId("dashboard-metric").elements(),
+		]);
+
+		mockFetchDashboardStats.mockRejectedValue(new Error("offline"));
+		try {
+			focusManager.setFocused(false);
+			focusManager.setFocused(true);
+			await expect.element(screen.getByText("Could not load dashboard data")).toBeVisible();
+		} finally {
+			focusManager.setFocused(undefined);
+		}
+
+		await expect.element(screen.getByRole("link", { name: "Post 3" })).toBeVisible();
+		expect(largestMovement(before)).toBeLessThanOrEqual(1);
+	});
 
 	it("asks for the update status while the stats load", async () => {
 		mockUseCurrentUser.mockReturnValue({ data: { role: 50 } });
@@ -179,32 +228,43 @@ describe("Dashboard while its stats load", () => {
 		},
 	);
 
-	it("draws a plugin widget where Recent Activity's loaded rows leave it", async () => {
-		await page.viewport(390, 900);
-		mockUseCurrentUser.mockReturnValue({ data: { role: 50 } });
-		const pending = deferred<DashboardStats>();
-		mockFetchDashboardStats.mockReturnValue(pending.promise);
-		const withWidget: AdminManifest = {
-			...manifest,
-			plugins: { forms: { enabled: true, dashboardWidgets: [{ id: "overview", title: "Forms" }] } },
-		};
-		const widget = watchMovement("[data-widget-body]");
+	it.each([{ recent: 0 }, { recent: 3 }, { recent: 10 }])(
+		"draws a plugin widget at once and keeps it in place when $recent recent items load",
+		async ({ recent }) => {
+			await page.viewport(390, 900);
+			mockUseCurrentUser.mockReturnValue({ data: { role: 50 } });
+			const pending = deferred<DashboardStats>();
+			mockFetchDashboardStats.mockReturnValue(pending.promise);
+			const withWidget: AdminManifest = {
+				...manifest,
+				plugins: {
+					forms: { enabled: true, dashboardWidgets: [{ id: "overview", title: "Forms" }] },
+				},
+			};
 
-		const screen = await render(
-			<PluginAdminProvider
-				pluginAdmins={{ forms: { widgets: { overview: () => <div data-widget-body>Forms</div> } } }}
-			>
-				<Dashboard manifest={withWidget} />
-			</PluginAdminProvider>,
-		);
-		await expect.element(screen.getByRole("heading", { name: "Recent Activity" })).toBeVisible();
-		await new Promise((resolve) => requestAnimationFrame(resolve));
+			const screen = await render(
+				<PluginAdminProvider
+					pluginAdmins={{
+						forms: { widgets: { overview: () => <div data-widget-body>Forms</div> } },
+					}}
+				>
+					<Dashboard manifest={withWidget} />
+				</PluginAdminProvider>,
+			);
+			await expect.element(screen.getByRole("heading", { name: "Forms" })).toBeVisible();
+			const widget = watchMovement("[data-widget-body]");
 
-		pending.resolve(stats({ admin: true, scheduled: 0, recent: 10 }));
-		await expect.element(screen.getByRole("link", { name: "Post 9" })).toBeInTheDocument();
-		await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+			pending.resolve(stats({ admin: true, scheduled: 0, recent }));
+			await expect
+				.element(
+					recent === 0
+						? screen.getByText("No recent activity")
+						: screen.getByRole("link", { name: `Post ${recent - 1}` }),
+				)
+				.toBeInTheDocument();
+			await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
 
-		expect(document.querySelector("[data-widget-body]")).not.toBeNull();
-		expect(widget.stop()).toBeLessThanOrEqual(1);
-	});
+			expect(widget.stop()).toBeLessThanOrEqual(1);
+		},
+	);
 });
