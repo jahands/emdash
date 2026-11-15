@@ -497,6 +497,66 @@ const ROOM_ENGINE_DEPS = [
  * What the admin's co-editing chunk imports beyond the editor. It loads on the first room join,
  * and discovering these then would re-optimize and reload the admin.
  */
+/**
+ * Third-party modules that only lazily loaded admin screens import, such as
+ * the content editor. Run from source, the admin loads the first screen's
+ * dependencies only, so opening another screen would discover these, rebuild
+ * the optimized dependencies and reload the page under the user.
+ */
+const ADMIN_SCREEN_CLIENT_DEPS = [
+	"@atcute/lexicons",
+	"@atcute/lexicons/syntax",
+	"@cloudflare/kumo/components/badge",
+	"@cloudflare/kumo/components/checkbox",
+	"@cloudflare/kumo/components/input-group",
+	"@cloudflare/kumo/components/layer-card",
+	"@cloudflare/kumo/components/text",
+	"@cloudflare/kumo/components/toast",
+	"@cloudflare/kumo/primitives/menu",
+	"@cloudflare/kumo/primitives/popover",
+	"@cloudflare/kumo/primitives/scroll-area",
+	"@dnd-kit/core",
+	"@dnd-kit/sortable",
+	"@dnd-kit/utilities",
+	"@floating-ui/react",
+	"@tiptap/core",
+	"@tiptap/extension-code",
+	"@tiptap/extension-code-block",
+	"@tiptap/extension-code-block-lowlight",
+	"@tiptap/extension-drag-handle-react",
+	"@tiptap/extension-focus",
+	"@tiptap/extension-link",
+	"@tiptap/extension-list",
+	"@tiptap/extension-subscript",
+	"@tiptap/extension-superscript",
+	"@tiptap/extension-table",
+	"@tiptap/extension-table-cell",
+	"@tiptap/extension-table-header",
+	"@tiptap/extension-table-row",
+	"@tiptap/extension-text-align",
+	"@tiptap/extension-typography",
+	"@tiptap/pm/commands",
+	"@tiptap/pm/gapcursor",
+	"@tiptap/pm/history",
+	"@tiptap/pm/model",
+	"@tiptap/pm/schema-list",
+	"@tiptap/pm/state",
+	"@tiptap/pm/tables",
+	"@tiptap/pm/transform",
+	"@tiptap/pm/view",
+	"@tiptap/react",
+	"@tiptap/react/menus",
+	"@tiptap/starter-kit",
+	"@tiptap/suggestion",
+	"@tiptap/y-tiptap",
+	"date-fns",
+	"dompurify",
+	"highlight.js/lib/languages/dockerfile",
+	"marked",
+	"modern-tar",
+	"react-image-crop",
+].map((dep) => `emdash > @emdash-cms/admin > ${dep}`);
+
 const ROOM_CLIENT_DEPS = [
 	"emdash > @emdash-cms/admin > @tiptap/extension-collaboration",
 	"emdash > @emdash-cms/admin > yjs",
@@ -823,6 +883,7 @@ export function createViteConfig(
 						"emdash > @emdash-cms/admin > @lezer/highlight",
 						// Each admin language loads its date locale on first use.
 						"emdash > @emdash-cms/admin > react-day-picker/locale/*",
+						...ADMIN_SCREEN_CLIENT_DEPS,
 						...(options.resolvedConfig.coEditing ? ROOM_CLIENT_DEPS : []),
 					]
 				: [
