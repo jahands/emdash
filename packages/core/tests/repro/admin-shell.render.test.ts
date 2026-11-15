@@ -55,7 +55,12 @@ describe("admin shell", () => {
 			expect(loader).toContain('class="emdash-frame"');
 			expect(loader).toContain('class="emdash-frame-sidebar"');
 			expect(loader.match(/role="status"/g)).toHaveLength(1);
-			expect(loader.replace(/<[^>]*>/g, "").trim()).toBe(label);
+			expect(
+				loader
+					.split(/<[^>]*>/)
+					.join("")
+					.trim(),
+			).toBe(label);
 		},
 	);
 
@@ -71,7 +76,12 @@ describe("admin shell", () => {
 			expect(loader).not.toContain("emdash-frame");
 			expect(loader).toContain('class="emdash-standalone-card"');
 			expect(loader.match(/role="status"/g)).toHaveLength(1);
-			expect(loader.replace(/<[^>]*>/g, "").trim()).toBe("Loading");
+			expect(
+				loader
+					.split(/<[^>]*>/)
+					.join("")
+					.trim(),
+			).toBe("Loading");
 		},
 	);
 

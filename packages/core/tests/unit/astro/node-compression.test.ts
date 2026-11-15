@@ -183,17 +183,22 @@ describe("withCompression", () => {
 	});
 
 	it("does not compress small responses, event streams or no-transform responses", async () => {
-		const routes: Record<string, Listener> = {
-			"/small": (_req, res) => {
-				res.setHeader("Content-Type", "text/plain");
-				res.end("ok");
-			},
-			"/events": astroLike("text/event-stream", "data: x\n\n".repeat(500)),
-			"/no-transform": astroLike("text/html", HTML, { "Cache-Control": "private, no-transform" }),
-		};
-		const origin = await listen(withCompression((req, res) => routes[req.url ?? ""]!(req, res)));
+		const routes = new Map<string, Listener>([
+			[
+				"/small",
+				(_req, res) => {
+					res.setHeader("Content-Type", "text/plain");
+					res.end("ok");
+				},
+			],
+			["/events", astroLike("text/event-stream", "data: x\n\n".repeat(500))],
+			["/no-transform", astroLike("text/html", HTML, { "Cache-Control": "private, no-transform" })],
+		]);
+		const origin = await listen(
+			withCompression((req, res) => routes.get(req.url ?? "")!(req, res)),
+		);
 
-		for (const path of Object.keys(routes)) {
+		for (const path of routes.keys()) {
 			const reply = await request(origin, path, { "accept-encoding": "br, gzip" });
 			expect(reply.headers["content-encoding"], path).toBeUndefined();
 		}
