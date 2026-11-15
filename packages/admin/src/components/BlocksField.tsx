@@ -700,11 +700,15 @@ export function BlocksField({
 			else requestAnimationFrame(focusField);
 			return;
 		}
-		const control =
-			request.target === "first-control"
-				? focusableIn(row.querySelector("[data-block-body]"))
-				: null;
-		focusTo(control ?? toggle, request.scroll);
+		if (request.target === "first-control") {
+			// A rich text field mounts its editor in a render that follows this one in the same
+			// task (see PortableTextEditor), so its text can only be found once that has run.
+			queueMicrotask(() => {
+				focusTo(focusableIn(row.querySelector("[data-block-body]")) ?? toggle, request.scroll);
+			});
+			return;
+		}
+		focusTo(toggle, request.scroll);
 	});
 
 	const listMaxItems = (block: StoredBlockValue, field: string) => {
