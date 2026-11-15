@@ -222,6 +222,7 @@ function TaxonomyTermPicker({
 	canCreate,
 	allowDelimitedValues,
 	singularLabel,
+	loading,
 }: {
 	terms: TaxonomyTerm[];
 	selectedIds: Set<string>;
@@ -234,6 +235,8 @@ function TaxonomyTermPicker({
 	canCreate: boolean;
 	allowDelimitedValues: boolean;
 	singularLabel: string;
+	/** The entry's terms are still loading, so which are selected is unknown. */
+	loading: boolean;
 }) {
 	const { t } = useLingui();
 	const [input, setInput] = React.useState("");
@@ -430,7 +433,7 @@ function TaxonomyTermPicker({
 						aria-label={t`Choose ${label}`}
 						aria-expanded={isOpen}
 						aria-controls={listId}
-						disabled={isCreating}
+						disabled={isCreating || loading}
 						loading={isCreating}
 						onClick={() => {
 							if (isOpen) closePicker();
@@ -439,7 +442,10 @@ function TaxonomyTermPicker({
 						icon={<Plus size={14} aria-hidden="true" />}
 					/>
 				</div>
-				<LayerCard className="relative flex min-h-9 items-start bg-kumo-control p-1.5 shadow-none">
+				<LayerCard
+					className="relative flex min-h-9 items-start bg-kumo-control p-1.5 shadow-none"
+					aria-busy={loading || undefined}
+				>
 					<Button
 						ref={fieldTriggerRef}
 						id={triggerId}
@@ -449,7 +455,7 @@ function TaxonomyTermPicker({
 						aria-label={t`Edit ${label}`}
 						aria-expanded={isOpen}
 						aria-controls={listId}
-						disabled={isCreating}
+						disabled={isCreating || loading}
 						onClick={() => {
 							if (isOpen) closePicker();
 							else openPicker(fieldTriggerRef.current);
@@ -457,7 +463,15 @@ function TaxonomyTermPicker({
 					>
 						<span className="sr-only">{t`Edit ${label}`}</span>
 					</Button>
-					{selectedOptions.length > 0 ? (
+					{loading ? (
+						<div className="flex w-full gap-1.5 p-px">
+							<span role="status" className="sr-only">
+								{t`Loading ${label}`}
+							</span>
+							<span aria-hidden="true" className="skeleton-line h-6 w-20 rounded-sm" />
+							<span aria-hidden="true" className="skeleton-line h-6 w-20 rounded-sm" />
+						</div>
+					) : selectedOptions.length > 0 ? (
 						<div
 							role="list"
 							aria-label={t`Selected ${label}`}
@@ -691,12 +705,12 @@ function TaxonomySection({
 
 	// The count mode belongs in the key: the Taxonomies settings page reads the
 	// same endpoint with counts and must not be served this count-free list.
-	const { data: terms = EMPTY_TERMS } = useQuery({
+	const { data: terms = EMPTY_TERMS, isPending: termsPending } = useQuery({
 		queryKey: ["taxonomy-terms", taxonomy.name, entryLocale, { includeCounts: false }],
 		queryFn: () => fetchTerms(taxonomy.name, entryLocale),
 	});
 
-	const { data: entryTermsData } = useQuery({
+	const { data: entryTermsData, isPending: entryTermsPending } = useQuery({
 		queryKey: ["entry-terms", collection, entryId, taxonomy.name, entryLocale],
 		queryFn: () => {
 			if (!entryId) return null;
@@ -704,6 +718,8 @@ function TaxonomySection({
 		},
 		enabled: !!entryId,
 	});
+	// Selected chips need both lists; a new entry has no selection to wait for.
+	const selectionLoading = !!entryId && (entryTermsPending || termsPending);
 	const entryTerms = entryTermsData?.terms ?? EMPTY_TERMS;
 	const unresolved = entryTermsData?.unresolved ?? EMPTY_UNRESOLVED_ASSIGNMENTS;
 	const resolvedEntryLocale = entryTermsData?.entryLocale ?? entryLocale;
@@ -933,6 +949,7 @@ function TaxonomySection({
 				canCreate={canManageTaxonomies}
 				allowDelimitedValues={!taxonomy.hierarchical}
 				singularLabel={taxonomy.labelSingular || taxonomy.label}
+				loading={selectionLoading}
 			/>
 			{activeUnresolved.map((assignment) => {
 				const source = assignment.translations[0];

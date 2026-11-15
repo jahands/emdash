@@ -256,6 +256,30 @@ describe("TaxonomySidebar", () => {
 		mockApiFetch();
 	});
 
+	it("holds the picker, inert, while the entry's terms load", async () => {
+		mockApiFetch({ entryTerms: [alphaTerm] });
+		const loaded = vi.mocked(apiFetch).getMockImplementation()!;
+		const entryTerms = Promise.withResolvers<void>();
+		vi.mocked(apiFetch).mockImplementation(async (url, init) => {
+			if (requestUrl(url).includes("/entry_1/terms/")) await entryTerms.promise;
+			return loaded(url, init);
+		});
+		const screen = await render(
+			<TaxonomySidebar collection="products" entryId="entry_1" canManageTaxonomies />,
+			{ wrapper: Wrapper },
+		);
+
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading Tags");
+		await expect.element(screen.getByRole("button", { name: "Choose Tags" })).toBeDisabled();
+		await expect.element(screen.getByRole("button", { name: "Edit Tags" })).toBeDisabled();
+
+		entryTerms.resolve();
+		const selected = screen.getByRole("list", { name: "Selected Tags" });
+		await expect.element(selected.getByText("Alpha")).toBeVisible();
+		await expect.element(screen.getByRole("button", { name: "Choose Tags" })).toBeEnabled();
+		expect(screen.getByRole("status").elements()).toHaveLength(0);
+	});
+
 	describe.each([tagsTaxonomy, categoriesTaxonomy])("$label IME input", (taxonomy) => {
 		describe.each([
 			{ name: "active composition", eventInit: { isComposing: true } },

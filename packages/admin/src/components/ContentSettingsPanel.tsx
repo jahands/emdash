@@ -979,6 +979,7 @@ export interface ContentSettingsPanelProps {
 	onQuickCreateByline?: (input: BylineFormValues) => Promise<BylineSummary>;
 	onQuickEditByline?: (bylineId: string, input: BylineFormValues) => Promise<BylineSummary>;
 	i18n?: { defaultLocale: string; locales: string[] };
+	/** Undefined while the translations load. */
 	translations?: TranslationSummary[];
 	onTranslate?: (locale: string) => void;
 	hasSeo: boolean;
@@ -1382,6 +1383,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 								defaultLocale={i18n.defaultLocale}
 								currentLocale={item.locale ?? undefined}
 								translations={translations ?? []}
+								loading={!translations}
 								onOpen={(tr) =>
 									navigate({
 										to: "/content/$collection/$id",

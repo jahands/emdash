@@ -7,9 +7,9 @@ import {
 	Input,
 	InputArea,
 	Label,
-	Loader,
 	Select,
 	Sidebar,
+	SkeletonLine,
 	Switch,
 	useKumoToastManager,
 	useSidebar,
@@ -2976,8 +2976,11 @@ export function ContentEditor({
 											) : revisionView.diffFailed ? (
 												<RevisionViewError />
 											) : (
-												<div className="flex justify-center py-16">
-													<Loader />
+												<div>
+													<span role="status" className="sr-only">
+														{t`Loading revision...`}
+													</span>
+													<EditorFieldsPlaceholder />
 												</div>
 											)}
 										</RevisionViewErrorBoundary>
@@ -4534,10 +4537,10 @@ function ReferenceFieldRenderer({
 	return (
 		<Field label={<span className={labelClass}>{label}</span>} required={required}>
 			<div className="space-y-2">
-				{rows.length === 0 ? (
+				{rows.length === 0 && (fullyLoaded || loadError) ? (
 					<p className="text-sm text-kumo-subtle">{t`No references selected.`}</p>
 				) : (
-					<ul className="space-y-2">
+					<ul className="space-y-2" aria-busy={!fullyLoaded || undefined}>
 						{rows.map((row, index) => {
 							return (
 								<li
@@ -4612,22 +4615,31 @@ function ReferenceFieldRenderer({
 								</li>
 							);
 						})}
+						{!fullyLoaded && !loadError && (
+							<li className="flex items-center gap-2 rounded-md border bg-kumo-base px-3 py-2">
+								<span role="status" className="sr-only">
+									{t`Loading references...`}
+								</span>
+								<div aria-hidden="true" className="min-w-0 flex-1">
+									<div className="text-sm">
+										<SkeletonLine blockHeight="1lh" minWidth={45} maxWidth={45} />
+									</div>
+									<div className="text-xs">
+										<SkeletonLine blockHeight="1lh" minWidth={25} maxWidth={25} />
+									</div>
+								</div>
+							</li>
+						)}
 					</ul>
 				)}
 
-				{loadError ? (
+				{loadError && (
 					<div className="flex flex-wrap items-center gap-2 text-sm">
 						<span className="text-kumo-danger">{t`Couldn't load all references.`}</span>
 						<Button type="button" variant="outline" size="sm" onClick={onRetry}>
 							{t`Retry`}
 						</Button>
 					</div>
-				) : (
-					!fullyLoaded && (
-						<div className="flex items-center gap-2 text-sm text-kumo-subtle">
-							<Loader size="sm" /> {t`Loading references...`}
-						</div>
-					)
 				)}
 
 				<Button

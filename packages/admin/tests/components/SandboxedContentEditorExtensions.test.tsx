@@ -134,6 +134,39 @@ describe("SandboxedContentEditorPanel", () => {
 		},
 	);
 
+	it("keeps the title's width while an interaction runs", async () => {
+		const pending = Promise.withResolvers<Response>();
+		const fetchMock = vi
+			.fn<typeof fetch>()
+			.mockResolvedValueOnce(Response.json({ data: { blocks: editableBlocks } }))
+			.mockReturnValueOnce(pending.promise);
+		vi.stubGlobal("fetch", fetchMock);
+		const title = "Findings from the content guard review of this entry";
+		const screen = await render(
+			<div style={{ width: 240 }}>
+				<SandboxedContentEditorPanel
+					pluginId="content-guard"
+					panelId="findings"
+					title={title}
+					collection="posts"
+					entryId="post-1"
+				/>
+			</div>,
+			{ wrapper: Wrapper },
+		);
+		await userEvent.click(screen.getByRole("button", { name: title }));
+		await expect.element(screen.getByRole("heading", { name: "Saved findings" })).toBeVisible();
+		const titleText = screen.getByTitle(title).element();
+		const idleWidth = titleText.getBoundingClientRect().width;
+
+		await userEvent.click(screen.getByRole("button", { name: "Analyze" }));
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading plugin panel");
+		expect(titleText.getBoundingClientRect().width).toBe(idleWidth);
+
+		pending.resolve(Response.json({ data: { blocks: editableBlocks } }));
+		await expect.element(screen.getByRole("status")).toHaveTextContent("");
+	});
+
 	it("clears interaction loading on failure and shows feedback during a manual retry", async () => {
 		const interaction = Promise.withResolvers<Response>();
 		const retry = Promise.withResolvers<Response>();

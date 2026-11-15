@@ -3643,6 +3643,31 @@ describe("ContentEditor", () => {
 			return screen;
 		}
 
+		it("doesn't say nothing is selected while the references load", async () => {
+			const nextPage = Promise.withResolvers<{ children: never[] }>();
+			vi.mocked(fetchReferenceChildren).mockReturnValue(nextPage.promise);
+			const screen = await renderEditor({
+				isNew: false,
+				item: makeItem({
+					data: { title: "Hello" },
+					references: { related: { children: [], nextCursor: "cursor-1" } },
+				}),
+				fields: referenceFields,
+			});
+
+			await expect.element(screen.getByText("Loading references...")).toBeInTheDocument();
+			expect(screen.getByText("No references selected.").query()).toBeNull();
+
+			nextPage.resolve({
+				children: [
+					{ id: "c-1", slug: "one", title: "One", locale: "en", translationGroup: "g-1" } as never,
+				],
+			});
+			await expect.element(screen.getByText("One", { exact: true })).toBeInTheDocument();
+			expect(screen.getByText("Loading references...").query()).toBeNull();
+			expect(screen.getByText("No references selected.").query()).toBeNull();
+		});
+
 		it("offers a retry instead of spinning forever when a page fails", async () => {
 			const screen = await renderWithFailedPage();
 
@@ -4509,6 +4534,21 @@ describe("ContentEditor revision view", () => {
 		await expect.element(screen.getByLabelText("Title")).toHaveValue("Unsaved title");
 		expect(versionCanvas()).toBeNull();
 		expect(portableTextMountCount).toBe(1);
+	});
+
+	it("shows the entry's outline, not a spinner, while a version loads", async () => {
+		const list = Promise.withResolvers<RevisionListResponse>();
+		vi.mocked(fetchRevisions).mockReturnValue(list.promise);
+		const screen = await renderRevisionEditor();
+
+		await screen.getByRole("button", { name: "View rev-old" }).click();
+		const status = screen.getByRole("status").filter({ hasText: "Loading revision..." });
+		await expect.element(status).toBeInTheDocument();
+		expect(screen.getByRole("status", { name: "Loading" }).query()).toBeNull();
+
+		list.resolve(makeRevisionList());
+		await expect.element(screen.getByRole("article", { name: /^Version from/ })).toBeVisible();
+		expect(status.query()).toBeNull();
 	});
 
 	it("switches versions without drawing the canvas again, so its images don't reload", async () => {

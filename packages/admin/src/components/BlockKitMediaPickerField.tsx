@@ -64,8 +64,8 @@ export function BlockKitMediaPickerField({
 			</span>
 			{canPreview ? (
 				imageBroken ? (
-					<div className="relative group min-h-20">
-						<div className="flex min-h-20 w-full items-center justify-center gap-2 rounded-md border border-kumo-line bg-kumo-tint text-kumo-subtle">
+					<div className="relative group">
+						<div className="flex h-40 w-full items-center justify-center gap-2 rounded-md border border-kumo-line bg-kumo-tint text-kumo-subtle">
 							<ImageBroken className="h-5 w-5" />
 							<span className="text-xs leading-4">{t`Image not found`}</span>
 						</div>
@@ -95,7 +95,7 @@ export function BlockKitMediaPickerField({
 						<img
 							src={url}
 							alt=""
-							className="emdash-media-transparency-grid max-h-40 min-h-20 w-full rounded-md border border-kumo-line object-contain"
+							className="emdash-media-transparency-grid h-40 w-full rounded-md border border-kumo-line object-contain"
 							referrerPolicy="no-referrer"
 							loading="lazy"
 							onError={() => setImageBroken(true)}

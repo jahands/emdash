@@ -1927,7 +1927,12 @@ function DynamicSelect({
 				{field.label}
 			</span>
 			{loading ? (
-				<div className="flex h-10 items-center px-3 text-sm text-kumo-subtle">{t`Loading...`}</div>
+				<>
+					<span role="status" className="sr-only">
+						{t`Loading...`}
+					</span>
+					<div aria-hidden="true" className="skeleton-line h-9 w-full rounded-lg" />
+				</>
 			) : (
 				<Select
 					aria-labelledby={labelId}
@@ -3434,14 +3439,6 @@ function PortableTextEditorComponent({
 						Remove them through the API before editing or saving this content.
 					</Trans>
 				</p>
-			</div>
-		);
-	}
-
-	if (!editor) {
-		return (
-			<div className={cn("border rounded-lg", className)}>
-				<div className="p-4 text-kumo-subtle">{t`Loading editor...`}</div>
 			</div>
 		);
 	}

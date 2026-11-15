@@ -90,4 +90,30 @@ describe("RevisionList layout", () => {
 		expect(restoreNote.getBoundingClientRect().left).toBeCloseTo(edge, 0);
 		expect(textStart(change.element())).toBeCloseTo(edge, 0);
 	});
+
+	it("shapes the loading rows like the versions that replace them", async () => {
+		const answer = Promise.withResolvers<void>();
+		const versions = [revision("rev-2", "Second draft", 1), revision("rev-1", "First draft", 2)];
+		(fetchRevisions as Mock).mockImplementation(async () => {
+			await answer.promise;
+			return { items: versions, total: 2 };
+		});
+		const screen = await render(
+			<div style={{ width: 320 }}>
+				<RevisionHistory collection="posts" entryId="entry-1" />
+			</div>,
+		);
+		await screen.getByRole("button", { name: /^Revisions/ }).click();
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading versions...");
+		const placeholders = document.querySelector('[aria-hidden="true"]:has(> ul)')!;
+		const placeholderHeading = placeholders.firstElementChild!.getBoundingClientRect().height;
+		const placeholderRow = placeholders.querySelector("li")!.getBoundingClientRect().height;
+
+		answer.resolve();
+		const heading = screen.getByRole("heading", { level: 4 }).first();
+		await expect.element(heading).toBeVisible();
+		const row = screen.getByRole("listitem").first();
+		expect(placeholderHeading).toBeCloseTo(heading.element().getBoundingClientRect().height, 0);
+		expect(placeholderRow).toBeCloseTo(row.element().getBoundingClientRect().height, 0);
+	});
 });

@@ -1,11 +1,4 @@
-import {
-	Button,
-	Collapsible,
-	Loader,
-	SkeletonLine,
-	Text,
-	useKumoToastManager,
-} from "@cloudflare/kumo";
+import { Button, Collapsible, SkeletonLine, Text, useKumoToastManager } from "@cloudflare/kumo";
 import { BlockRenderer } from "@emdash-cms/blocks";
 import type {
 	Block,
@@ -16,7 +9,7 @@ import type {
 	EditorDraftPatchEffect,
 } from "@emdash-cms/blocks";
 import { useLingui } from "@lingui/react/macro";
-import { CaretDown } from "@phosphor-icons/react";
+import { CaretDown, CircleNotch } from "@phosphor-icons/react";
 import * as React from "react";
 
 import { apiFetch } from "../lib/api/client.js";
@@ -354,11 +347,11 @@ export function SandboxedContentEditorPanel({
 					{title}
 				</Text>
 				<span className="flex shrink-0 items-center gap-2">
-					{pendingInteractions > 0 && (
-						<span aria-hidden="true">
-							<Loader size="sm" className="text-kumo-subtle" />
-						</span>
-					)}
+					<span aria-hidden="true" className="flex size-4 items-center justify-center">
+						{pendingInteractions > 0 && (
+							<CircleNotch className="size-4 animate-spin text-kumo-subtle motion-reduce:animate-none" />
+						)}
+					</span>
 					<CaretDown
 						className={cn(
 							"h-4 w-4 shrink-0 text-kumo-subtle transition-transform duration-150 ease-out motion-reduce:transition-none",
@@ -385,8 +378,8 @@ export function SandboxedContentEditorPanel({
 				>
 					{loading && !loaded ? (
 						<div className="space-y-2 py-2" aria-hidden="true">
-							<SkeletonLine blockHeight={20} minWidth={60} maxWidth={95} />
-							<SkeletonLine blockHeight={20} minWidth={35} maxWidth={80} />
+							<SkeletonLine blockHeight={20} minWidth={78} maxWidth={78} />
+							<SkeletonLine blockHeight={20} minWidth={58} maxWidth={58} />
 						</div>
 					) : error ? (
 						<div role="alert" className="py-2 text-xs leading-4 text-kumo-subtle">

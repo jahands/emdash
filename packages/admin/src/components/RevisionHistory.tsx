@@ -1,4 +1,4 @@
-import { Button, Collapsible, Loader, Text } from "@cloudflare/kumo";
+import { Button, Collapsible, SkeletonLine, Text } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { CaretDown } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
@@ -13,6 +13,10 @@ interface RevisionHistoryProps {
 	collection: string;
 	entryId: string;
 }
+
+// Fixed, so placeholders shown again after a remount don't change shape.
+const PLACEHOLDER_TIME_WIDTHS = [24, 28, 22, 26, 24];
+const PLACEHOLDER_AUTHOR_WIDTHS = [45, 38, 52, 40, 48];
 
 /** The Revisions section of the content settings sidebar: the entry's saved versions by day. */
 export function RevisionHistory({ collection, entryId }: RevisionHistoryProps) {
@@ -87,8 +91,32 @@ export function RevisionHistory({ collection, entryId }: RevisionHistoryProps) {
 						</Button>
 					</div>
 				) : (
-					<div className="flex items-center justify-center py-6">
-						<Loader />
+					<div className="pt-2">
+						<span role="status" className="sr-only">
+							{t`Loading versions...`}
+						</span>
+						<div aria-hidden="true">
+							<div className="px-3 pb-1">
+								<SkeletonLine blockHeight={16} minWidth={30} maxWidth={30} />
+							</div>
+							<ul className="grid grid-cols-1 gap-0.5 text-base">
+								{PLACEHOLDER_TIME_WIDTHS.map((width, index) => (
+									<li key={index} className="grid grid-cols-[1rem_minmax(0,1fr)] gap-x-2 p-2">
+										<span className="flex h-5 items-center justify-center">
+											<span className="skeleton-line size-2 rounded-full" />
+										</span>
+										<span>
+											<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+											<SkeletonLine
+												blockHeight="1lh"
+												minWidth={PLACEHOLDER_AUTHOR_WIDTHS[index]}
+												maxWidth={PLACEHOLDER_AUTHOR_WIDTHS[index]}
+											/>
+										</span>
+									</li>
+								))}
+							</ul>
+						</div>
 					</div>
 				)}
 			</Collapsible.Panel>
