@@ -5,7 +5,9 @@ import { routeLoadsEditor, type RouteModulePreload } from "../src/lib/route-modu
 import { ROUTE_MODULE_LOADERS } from "../src/route-module-loaders.js";
 import {
 	ADMIN_ROUTE_MODULES,
+	ADMIN_STANDALONE_ROUTES,
 	adminRouteModules,
+	isAdminStandaloneRoute,
 	type AdminRouteModule,
 } from "../src/route-modules.js";
 import { createAdminRouter } from "../src/router.js";
@@ -79,5 +81,20 @@ describe("admin route modules", () => {
 			"/sections/$slug",
 			"/widgets",
 		]);
+	});
+
+	it("lists as standalone exactly the routes shown outside the admin's frame", () => {
+		const standalone = routes
+			.filter((route) => !route.id.startsWith("/_admin"))
+			.map((route) => route.fullPath)
+			.toSorted();
+		expect([...ADMIN_STANDALONE_ROUTES].toSorted()).toEqual(standalone);
+	});
+
+	it("matches standalone routes with or without a trailing slash", () => {
+		expect(isAdminStandaloneRoute("/login/magic-link/")).toBe(true);
+		expect(isAdminStandaloneRoute("/device")).toBe(true);
+		expect(isAdminStandaloneRoute("/")).toBe(false);
+		expect(isAdminStandaloneRoute("/login/other")).toBe(false);
 	});
 });

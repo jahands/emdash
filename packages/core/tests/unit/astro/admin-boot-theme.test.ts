@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
 const adminRouteUrl = new URL("../../../src/astro/routes/admin.astro", import.meta.url);
+const adminStylesUrl = new URL("../../../../admin/src/styles.css", import.meta.url);
 
 async function readAdminRoute() {
 	return readFile(adminRouteUrl, "utf8");
@@ -57,14 +58,15 @@ describe("admin boot loader theme", () => {
 		},
 	);
 
-	it("uses Kumo semantic tokens instead of raw colors", async () => {
-		const source = await readAdminRoute();
-		const loaderStyles = source.match(/#emdash-boot-loader \{[\s\S]*?<\/style>/)?.[0];
+	it("styles the loading frame with Kumo semantic tokens instead of raw colors", async () => {
+		const css = await readFile(adminStylesUrl, "utf8");
+		const frameStyles = css.slice(
+			css.indexOf(".emdash-frame {"),
+			css.indexOf("/* Keep editor menu choices visibly distinct"),
+		);
 
-		expect(loaderStyles).toBeDefined();
-		expect(loaderStyles).toContain("var(--color-kumo-elevated)");
-		expect(loaderStyles).toContain("var(--text-color-kumo-subtle)");
-		expect(loaderStyles).not.toContain("hsl(");
-		expect(loaderStyles).not.toContain("light-dark(");
+		expect(frameStyles).toContain("var(--color-kumo-elevated)");
+		expect(frameStyles).toContain("var(--color-kumo-line)");
+		expect(frameStyles).not.toMatch(/#[\da-f]{3,8}\b|hsl\(|rgb\(|light-dark\(/i);
 	});
 });

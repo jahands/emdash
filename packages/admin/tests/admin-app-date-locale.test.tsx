@@ -64,7 +64,7 @@ describe("AdminApp boot for a locale with its own date locale", () => {
 				),
 			)
 			.toBe(true);
-		await expect.element(screen.getByRole("status")).toBeInTheDocument();
+		await expect.poll(() => screen.container.querySelector(".emdash-frame")).not.toBeNull();
 		expect(screen.getByTestId("shell").query()).toBeNull();
 
 		dateLocale.release();

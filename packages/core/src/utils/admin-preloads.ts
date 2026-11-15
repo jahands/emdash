@@ -49,11 +49,15 @@ export function adminPrefetchFiles(json: string, pathname: string): Record<strin
 	return files;
 }
 
-function preloadedHrefs(preloads: AdminPreloads, pathname: string): Set<string> {
+/** The admin route path of the admin page at `pathname`, below the admin base path. */
+export function adminRoutePath(pathname: string): string {
 	const index = pathname.indexOf(ADMIN_BASE);
-	const routePath = index === -1 ? "/" : pathname.slice(index + ADMIN_BASE.length) || "/";
+	return index === -1 ? "/" : pathname.slice(index + ADMIN_BASE.length) || "/";
+}
+
+function preloadedHrefs(preloads: AdminPreloads, pathname: string): Set<string> {
 	const hrefs = new Set(preloads.boot);
-	for (const module of adminRouteModules(routePath)) {
+	for (const module of adminRouteModules(adminRoutePath(pathname))) {
 		for (const href of preloads.routes[module] ?? []) hrefs.add(href);
 	}
 	return hrefs;

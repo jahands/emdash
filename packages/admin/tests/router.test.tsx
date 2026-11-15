@@ -26,7 +26,7 @@ import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import type { AdminManifest, ContentItem } from "../src/lib/api";
-import { ConfigurationLoadingScreen, createAdminRouter } from "../src/router";
+import { createAdminRouter } from "../src/router";
 import { render } from "./utils/render.tsx";
 import { createTestQueryClient, createMockFetch, waitFor } from "./utils/test-helpers";
 
@@ -374,15 +374,6 @@ function buildRouter() {
 	}
 	return { router, queryClient, TestApp };
 }
-
-describe("ConfigurationLoadingScreen", () => {
-	it("shows only a spinner named Loading, as the page's boot loader does", async () => {
-		const screen = await render(<ConfigurationLoadingScreen />);
-
-		await expect.element(screen.getByRole("status", { name: "Loading" })).toBeInTheDocument();
-		expect(screen.container.textContent).toBe("");
-	});
-});
 
 describe("MediaPage – upload completion", () => {
 	let mockFetch: ReturnType<typeof createMockFetch>;

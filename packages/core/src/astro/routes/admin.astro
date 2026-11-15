@@ -24,9 +24,12 @@ export const prerender = false;
 
 import { resolveLocale, getLocaleDir, DEFAULT_LOCALE } from "@emdash-cms/admin/locales/config";
 import { loadAdminBootLabels } from "@emdash-cms/admin/locales/server";
+import { isAdminStandaloneRoute } from "@emdash-cms/admin/route-modules";
 import { adminBootDataScript, loadAdminBootData } from "#api/admin-boot.js";
 import { getSiteSettingsWithDb } from "#settings/index.js";
-import { adminPrefetchFiles, adminPreloadHrefs } from "#utils/admin-preloads.js";
+import { adminPrefetchFiles, adminPreloadHrefs, adminRoutePath } from "#utils/admin-preloads.js";
+
+const FRAME_NAV_ITEMS = Array.from({ length: 8 });
 
 // Started before the shell is sent and awaited after it, so the browser loads
 // the admin's code while the database work runs.
@@ -37,6 +40,11 @@ const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls
 const modulePreloads = adminPreloadHrefs(adminPreloadsJson, Astro.url.pathname);
 const routePrefetchFiles = adminPrefetchFiles(adminPreloadsJson, Astro.url.pathname);
 const bootLabels = await loadAdminBootLabels(resolvedLocale);
+// Signed-out visitors are headed for a standalone screen or a redirect to one,
+// and neither shows the sidebar and header.
+const showFrame =
+	Boolean(Astro.locals.user) &&
+	!isAdminStandaloneRoute(adminRoutePath(Astro.url.pathname));
 
 const adminConfig = Astro.locals.emdash?.config?.admin;
 const pageTitle = adminConfig?.siteName ? `${adminConfig.siteName} Admin` : "EmDash Admin";
@@ -129,52 +137,33 @@ const faviconLink: Promise<{ href?: string; type?: string }> = (async () => {
 				data-error-title={bootLabels.error.title}
 				data-error-retry={bootLabels.error.retry}
 			>
-				<style>
-					#emdash-boot-loader {
-						display: flex;
-						align-items: center;
-						justify-content: center;
-						min-height: 100vh;
-						background: var(--color-kumo-elevated);
-					}
-					#emdash-boot-loader .spinner {
-						width: 24px;
-						height: 24px;
-						border: 2.5px solid var(--color-kumo-line);
-						border-top-color: var(--text-color-kumo-subtle);
-						border-radius: 50%;
-						animation: emdash-spin 0.8s linear infinite;
-					}
-					@keyframes emdash-spin {
-						to {
-							transform: rotate(360deg);
-						}
-					}
-					:global(.emdash-boot-error) {
-						display: flex;
-						flex-direction: column;
-						align-items: center;
-						gap: 1rem;
-						padding: 1rem;
-						text-align: center;
-						color: var(--text-color-kumo-default);
-					}
-					:global(.emdash-boot-error h1) {
-						margin: 0;
-						font-size: 1.5rem;
-						font-weight: 600;
-					}
-					:global(.emdash-boot-error button) {
-						padding: 0.5rem 1rem;
-						border: 1px solid var(--color-kumo-line);
-						border-radius: 0.5rem;
-						background: var(--color-kumo-base);
-						color: inherit;
-						font: inherit;
-						cursor: pointer;
-					}
-				</style>
-				<div class="spinner" role="status" aria-label={bootLabels.loading}></div>
+				{
+					showFrame && (
+						<div class="emdash-frame">
+							<span class="sr-only" role="status">
+								{bootLabels.loading}
+							</span>
+							<div class="emdash-frame-sidebar" aria-hidden="true">
+								<div class="emdash-frame-sidebar-header">
+									<div class="skeleton-line emdash-frame-icon" />
+									<div class="skeleton-line emdash-frame-label" />
+								</div>
+								<div class="emdash-frame-sidebar-nav">
+									{FRAME_NAV_ITEMS.map(() => (
+										<div class="emdash-frame-sidebar-item">
+											<div class="skeleton-line emdash-frame-icon" />
+											<div class="skeleton-line emdash-frame-label" />
+										</div>
+									))}
+								</div>
+								<div class="emdash-frame-sidebar-footer" />
+							</div>
+							<div class="emdash-frame-main" aria-hidden="true">
+								<div class="emdash-frame-header" />
+							</div>
+						</div>
+					)
+				}
 			</div>
 			<script is:inline>
 				document.addEventListener(

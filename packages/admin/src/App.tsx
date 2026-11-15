@@ -157,9 +157,15 @@ export function AdminApp({
 	routePrefetchFiles = NO_PREFETCH_FILES,
 	initialData,
 }: AdminAppProps) {
-	React.useEffect(() => {
-		document.getElementById("emdash-boot-loader")?.remove();
-	}, []);
+	// The admin's screens remove the boot loader as they first show. A screen
+	// that fails to render shows the router's error screen instead, which doesn't.
+	React.useEffect(
+		() =>
+			router.subscribe("onResolved", () => {
+				document.getElementById("emdash-boot-loader")?.remove();
+			}),
+		[],
+	);
 
 	React.useEffect(() => {
 		setRoutePrefetchFiles(routePrefetchFiles);

@@ -129,7 +129,7 @@ export function translateVisualEditingToolbarLabels(
 }
 
 export interface AdminBootLabels {
-	/** The accessible name of the spinner the admin page shows until the admin loads. */
+	/** Announced while the admin page shows its frame, before the admin loads. */
 	loading: string;
 	/** Shown in place of the admin when its code or translations fail to load. */
 	error: AdminBootErrorLabels;

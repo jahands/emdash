@@ -32,6 +32,7 @@ import {
 import * as React from "react";
 
 import type { OutsideValue } from "./co-editing/types.js";
+import { AdminFrameSkeleton, useRemoveBootLoader } from "./components/AdminFrameSkeleton.js";
 import { EMPTY_BYLINE_FILTER, type BylineFilterState } from "./components/BylineFilter";
 import type { BylineFormValues } from "./components/BylineFormDialog.js";
 import type { SyncProblem } from "./components/co-editing/SyncStatus.js";
@@ -490,6 +491,7 @@ function BaseRootComponent() {
 	React.useEffect(() => {
 		if (title) document.title = `${title} · ${siteLabel}`;
 	}, [title, siteLabel]);
+	useRemoveBootLoader();
 	return <Outlet />;
 }
 
@@ -604,7 +606,7 @@ function RootComponent() {
 	}, [screenIdle]);
 
 	if (!ready) {
-		return <ConfigurationLoadingScreen />;
+		return <AdminFrameSkeleton />;
 	}
 
 	if (error || !manifest) {
@@ -4124,15 +4126,6 @@ declare module "@tanstack/react-router" {
 }
 
 // Shared components
-
-export function ConfigurationLoadingScreen() {
-	const { t } = useLingui();
-	return (
-		<div className="emdash-configuration-loader">
-			<div className="spinner emdash-configuration-spinner" role="status" aria-label={t`Loading`} />
-		</div>
-	);
-}
 
 /** Fills the page area while a screen or its data loads, inside the admin's frame. */
 function RouteLoading() {

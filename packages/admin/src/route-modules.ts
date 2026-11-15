@@ -88,8 +88,26 @@ export const ADMIN_PREFETCH_MODULES = [
 	"components/ContentEditor",
 ] as const satisfies readonly AdminRouteModule[];
 
+/** Routes the admin shows without its sidebar and header. */
+export const ADMIN_STANDALONE_ROUTES: ReadonlySet<AdminRoutePath> = new Set<AdminRoutePath>([
+	"/setup",
+	"/login",
+	"/login/magic-link",
+	"/signup",
+	"/invite/accept",
+	"/device",
+]);
+
 function segments(path: string): string[] {
 	return path.split("/").filter(Boolean);
+}
+
+/**
+ * Whether the route at `pathname`, relative to the admin base path, shows
+ * without the admin's sidebar and header.
+ */
+export function isAdminStandaloneRoute(pathname: string): boolean {
+	return (ADMIN_STANDALONE_ROUTES as ReadonlySet<string>).has(`/${segments(pathname).join("/")}`);
 }
 
 /** Ranks a route segment: a static segment beats a parameter, which beats a splat. */

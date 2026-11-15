@@ -1,7 +1,7 @@
 import { Button } from "@cloudflare/kumo";
-import * as React from "react";
 
 import type { AdminBootErrorLabels } from "../locales/server.js";
+import { useRemoveBootLoader } from "./AdminFrameSkeleton.js";
 
 export interface AdminBootErrorProps {
 	/** Resolved on the server: the admin's own catalog may be what failed to load. */
@@ -12,9 +12,7 @@ export interface AdminBootErrorProps {
 
 /** Shown in place of the admin when its code or translations fail to load. */
 export function AdminBootError({ labels, retrying, onRetry }: AdminBootErrorProps) {
-	React.useEffect(() => {
-		document.getElementById("emdash-boot-loader")?.remove();
-	}, []);
+	useRemoveBootLoader();
 
 	return (
 		<div className="flex items-center justify-center min-h-screen p-4">

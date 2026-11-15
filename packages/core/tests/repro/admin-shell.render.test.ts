@@ -9,12 +9,14 @@ const fakeReactRenderer = {
 	renderToStaticMarkup: () => ({ html: "" }),
 };
 
-async function renderAdmin(acceptLanguage: string, path = "/_emdash/admin") {
+const signedIn = { user: { id: "user_01", email: "ada@example.com", role: 50 } };
+
+async function renderAdmin(acceptLanguage: string, path = "/_emdash/admin", locals: object = {}) {
 	const container = await AstroContainer.create();
 	container.addServerRenderer({ name: "@astrojs/react", renderer: fakeReactRenderer });
 	container.addClientRenderer({ name: "@astrojs/react", entrypoint: "@astrojs/react/client.js" });
 	return container.renderToString(AdminPage, {
-		locals: {},
+		locals,
 		request: new Request(`http://localhost${path}`, {
 			headers: { "accept-language": acceptLanguage },
 		}),
@@ -34,23 +36,39 @@ describe("admin shell", () => {
 		expect(new TextEncoder().encode(html).length).toBeLessThan(30 * 1024);
 	});
 
+	function bootLoader(html: string) {
+		const loader = html.match(/<div id="emdash-boot-loader"[^>]*>([\s\S]*?)<\/div>\s*<script/)?.[1];
+		expect(loader).toBeDefined();
+		return loader!;
+	}
+
 	it.each([
 		["en", "Loading"],
 		["ar", "جارٍ التحميل"],
 	])(
-		"shows the %s boot loader as a spinner named in that language, with no text to reflow",
+		"shows a signed-in %s user the admin's frame, announced once in that language",
 		async (locale, label) => {
-			const html = await renderAdmin(locale);
-			const loader = html.match(
-				/<div id="emdash-boot-loader"[^>]*>([\s\S]*?)<\/div>\s*(?:<style|<script|<astro-island)/,
-			)?.[1];
+			const loader = bootLoader(
+				await renderAdmin(locale, "/_emdash/admin/content/posts", signedIn),
+			);
 
-			expect(loader).toBeDefined();
-			expect(loader).toContain(`role="status" aria-label="${label}"`);
-			const visibleText = loader!.replace(/<[^>]*>/g, "").trim();
-			expect(visibleText).toBe("");
+			expect(loader).toContain('class="emdash-frame"');
+			expect(loader).toContain('class="emdash-frame-sidebar"');
+			expect(loader.match(/role="status"/g)).toHaveLength(1);
+			expect(loader.replace(/<[^>]*>/g, "").trim()).toBe(label);
 		},
 	);
+
+	it.each([
+		["a signed-out visitor", "/_emdash/admin", {}],
+		["a signed-in user on the sign-in screen", "/_emdash/admin/login", signedIn],
+		["a signed-in user authorizing a device", "/_emdash/admin/device/", signedIn],
+	])("shows %s no frame or loading indicator", async (_who, path, locals) => {
+		const loader = bootLoader(await renderAdmin("en", path, locals));
+
+		expect(loader).not.toContain("emdash-frame");
+		expect(loader).not.toContain('role="status"');
+	});
 
 	it.each([
 		["en", "Failed to load admin", "Try again"],
