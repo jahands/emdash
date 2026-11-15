@@ -162,6 +162,43 @@ describe("Settings pages while their settings load", () => {
 		expect(largestMovement(contentBefore, { includeSize: false })).toBeLessThanOrEqual(1);
 	});
 
+	it("moves nothing in General at desktop width when the settings arrive before the site domain", async () => {
+		const siteDomain = { configuredUrl: "https://example.com", siteOrigin: "https://example.com" };
+		mockFetchManifest.mockResolvedValue({ ...manifest, siteDomain });
+		const pendingSettings = deferred<Partial<SiteSettings>>();
+		const pendingDomain = deferred<SiteDomain>();
+		mockFetchSettings.mockReturnValue(pendingSettings.promise);
+		mockFetchSiteDomain.mockReturnValue(pendingDomain.promise);
+
+		const screen = await render(
+			<Toasty>
+				<div style={{ width: 960 }}>
+					<GeneralSettings />
+				</div>
+			</Toasty>,
+		);
+		await expect.element(screen.getByText("Loading settings...")).toBeInTheDocument();
+		await settle();
+		const changeDomain = screen.getByRole("button", { name: "Change domain" }).element();
+		const logoRow = screen.getByText("Logo", { exact: true }).element().parentElement!;
+		const faviconRow = screen.getByText("Favicon", { exact: true }).element().parentElement!;
+		const before = snapshotPositions([
+			changeDomain.parentElement!,
+			logoRow,
+			logoRow.lastElementChild!.firstElementChild!,
+			faviconRow,
+			faviconRow.lastElementChild!.firstElementChild!,
+		]);
+
+		pendingSettings.resolve({ ...settings, url: undefined });
+		await expect.element(screen.getByRole("button", { name: "Select Logo" })).toBeVisible();
+		pendingDomain.resolve(siteDomain);
+		await vi.waitFor(() => expect(mockFetchSiteDomain).toHaveBeenCalled());
+		await settle();
+
+		expect(largestMovement(before)).toBeLessThanOrEqual(0.5);
+	});
+
 	it("shows the site address's rows in the General outline once known, so the settings move nothing", async () => {
 		const pendingSettings = deferred<Partial<SiteSettings>>();
 		mockFetchSettings.mockReturnValue(pendingSettings.promise);

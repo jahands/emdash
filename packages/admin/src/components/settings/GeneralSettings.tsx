@@ -153,13 +153,16 @@ export function GeneralSettings() {
 		queryFn: fetchSettings,
 		staleTime: Infinity,
 	});
-	const { data: siteDomain } = useQuery({
-		queryKey: ["site-domain"],
-		queryFn: fetchSiteDomain,
-	});
 	const { data: manifest } = useQuery({
 		queryKey: ["manifest"],
 		queryFn: fetchManifest,
+	});
+	const { data: siteDomain } = useQuery({
+		queryKey: ["site-domain"],
+		queryFn: fetchSiteDomain,
+		// The manifest is loaded before the page draws, so rows that depend on the domain are
+		// there from the start rather than arriving later and pushing the settings below down.
+		placeholderData: manifest?.siteDomain,
 	});
 	const { data: emailSettings } = useQuery({
 		queryKey: ["email-settings"],
@@ -288,6 +291,7 @@ export function GeneralSettings() {
 		// Refetching now would reset unsaved edits in this form.
 		void queryClient.invalidateQueries({ queryKey: ["settings"], refetchType: "none" });
 		void queryClient.invalidateQueries({ queryKey: ["site-domain"] });
+		void queryClient.invalidateQueries({ queryKey: ["manifest"] });
 		toastManager.add({
 			title: checked ? t`Domain changed to ${url}` : t`Site URL set to ${url}`,
 			description: t`Passkeys only work at the address where they were created.`,
@@ -440,7 +444,9 @@ export function GeneralSettings() {
 							<div className="text-base font-medium">{t`Logo`}</div>
 							<div className="min-w-0">
 								{isLoading ? (
-									<div aria-hidden="true" className="skeleton-line ms-auto h-9 w-32 rounded-lg" />
+									<div aria-hidden="true" className="flex justify-end">
+										<div className="skeleton-line h-9 w-32 rounded-lg" />
+									</div>
 								) : formData.logo?.mediaId ? (
 									<div className="grid gap-3">
 										{formData.logo.url ? (
@@ -502,7 +508,9 @@ export function GeneralSettings() {
 							<div className="text-base font-medium">{t`Favicon`}</div>
 							<div className="min-w-0">
 								{isLoading ? (
-									<div aria-hidden="true" className="skeleton-line ms-auto h-9 w-36 rounded-lg" />
+									<div aria-hidden="true" className="flex justify-end">
+										<div className="skeleton-line h-9 w-36 rounded-lg" />
+									</div>
 								) : formData.favicon?.mediaId ? (
 									<div className="grid gap-3">
 										{formData.favicon.url ? (

@@ -10,10 +10,12 @@
  * Regression test for issue #835.
  */
 
+import { Role } from "@emdash-cms/auth";
 import type { APIContext } from "astro";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { GET as getManifest } from "../../../src/astro/routes/api/manifest.js";
+import { GET as getSiteDomain } from "../../../src/astro/routes/api/settings/domain.js";
 import { MediaRepository } from "../../../src/database/repositories/media.js";
 import { OptionsRepository } from "../../../src/database/repositories/options.js";
 import {
@@ -43,6 +45,7 @@ interface ManifestEnvelope {
 		version?: string;
 		timezone?: string;
 		staging?: boolean;
+		siteDomain?: { configuredUrl: string | null; siteOrigin: string | null };
 		coEditing?: boolean;
 	};
 }
@@ -195,6 +198,46 @@ describe("manifest route admin branding", () => {
 			await teardownTestDatabase(db);
 		}
 	});
+});
+
+describe("manifest route site domain", () => {
+	it.each([
+		{ config: {}, siteUrl: undefined },
+		{ config: {}, siteUrl: "https://news.example.com/blog" },
+		{ config: {}, siteUrl: "http://news.example.com" },
+		{ config: {}, siteUrl: "http://localhost:4321/" },
+		{ config: { siteUrl: "https://cms.example.com" }, siteUrl: "https://news.example.com" },
+	])(
+		"reports what the domain endpoint does with config $config and Site URL $siteUrl",
+		async ({ config, siteUrl }) => {
+			const db = await setupTestDatabase();
+			try {
+				if (siteUrl) await new OptionsRepository(db).set("site:url", siteUrl);
+				const locals = {
+					emdash: {
+						db,
+						config,
+						getManifest: async () => ({
+							version: "test",
+							hash: "test",
+							collections: {},
+							plugins: {},
+							taxonomies: [],
+						}),
+					},
+					user: { id: "admin", role: Role.ADMIN },
+				};
+				const context = { locals, request: manifestRequest() } as unknown as APIContext;
+
+				const manifest = (await (await getManifest(context)).json()) as ManifestEnvelope;
+				const domain = (await (await getSiteDomain(context)).json()) as { data: unknown };
+
+				expect(manifest.data.siteDomain).toEqual(domain.data);
+			} finally {
+				await teardownTestDatabase(db);
+			}
+		},
+	);
 });
 
 describe("manifest route provider-managed names", () => {

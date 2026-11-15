@@ -1,6 +1,8 @@
 import { sql } from "kysely";
 
+import { getConfiguredOrigin } from "#api/public-url.js";
 import { resolveSiteTitle } from "#api/site-title.js";
+import { chosenSiteOrigin } from "#api/site-url.js";
 import { getAuthMode } from "#auth/mode.js";
 import { MediaRepository } from "#db/repositories/media.js";
 import { OptionsRepository } from "#db/repositories/options.js";
@@ -33,6 +35,7 @@ export async function buildAdminManifest(
 					"site:timezone",
 					"site:staging",
 					"site:logo",
+					"site:url",
 				])
 				.catch(() => null)
 		: Promise.resolve(null);
@@ -117,12 +120,22 @@ export async function buildAdminManifest(
 		}
 	}
 
+	const configuredUrl = getConfiguredOrigin(emdash?.config) ?? null;
+	const siteDomain =
+		configuredUrl || titles
+			? {
+					configuredUrl,
+					siteOrigin: chosenSiteOrigin(emdash?.config, titles?.get("site:url")) ?? null,
+				}
+			: undefined;
+
 	return emdashManifest
 		? {
 				...emdashManifest,
 				siteTitle,
 				timezone: siteTimezone,
 				staging,
+				siteDomain,
 				coEditing: Boolean(emdash?.rooms),
 				authMode: authMode.type === "external" ? authMode.providerType : "passkey",
 				providerManagedName,
@@ -139,6 +152,7 @@ export async function buildAdminManifest(
 				siteTitle,
 				timezone: siteTimezone,
 				staging,
+				siteDomain,
 				taxonomies: [],
 				authMode: "passkey",
 				providerManagedName,
