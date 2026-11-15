@@ -7,6 +7,7 @@
 
 import { sql, type Kysely, type RawBuilder } from "kysely";
 
+import { compoundSelectLimit } from "../../database/dialect-helpers.js";
 import {
 	InvalidCursorError,
 	decodeCursor,
@@ -222,8 +223,10 @@ async function queryEvents(
 	cursor: CalendarCursor | undefined,
 ): Promise<CalendarEntry[]> {
 	const indexed = streams.map((stream, index) => ({ stream, index }));
+	// D1 also caps a compound SELECT at a few terms, and each stream is one.
+	const perQuery = Math.min(STREAMS_PER_QUERY, compoundSelectLimit(db) ?? STREAMS_PER_QUERY);
 	const results = await Promise.all(
-		chunks(indexed, STREAMS_PER_QUERY).map(async (group) => {
+		chunks(indexed, perQuery).map(async (group) => {
 			const result = await sql<StreamRow>`
 				${sql.join(
 					group.map(({ stream, index }) => streamQuery(stream, index, range, limit, cursor)),

@@ -1,5 +1,5 @@
 import { sql } from "kysely";
-import { afterEach, beforeEach, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
 	CALENDAR_RANGE_LIMIT,
@@ -13,7 +13,9 @@ import { SchemaRegistry } from "../../../src/schema/registry.js";
 import {
 	describeEachDialect,
 	setupForDialectWithCollections,
+	setupTestDatabaseWithCompoundSelectLimit,
 	teardownForDialect,
+	teardownTestDatabase,
 	type DialectTestContext,
 } from "../../utils/test-db.js";
 
@@ -339,6 +341,43 @@ describeEachDialect("calendar handler", (dialect) => {
 			// oxlint-disable-next-line no-await-in-loop -- one assertion per cursor
 			const result = await handleCalendarEntries(ctx.db, { ...MARCH, limit: 10, cursor });
 			expect(result).toMatchObject({ success: false, error: { code: "INVALID_CURSOR" } });
+		}
+	});
+});
+
+describe("calendar handler on a backend that caps compound SELECTs, as D1 does", () => {
+	it("loads a month across more collections than one query may join", async () => {
+		const { db } = await setupTestDatabaseWithCompoundSelectLimit();
+		try {
+			const registry = new SchemaRegistry(db);
+			const repo = new ContentRepository(db);
+			const slugs = ["one", "two", "three", "four"];
+			for (const slug of slugs) {
+				// oxlint-disable-next-line no-await-in-loop -- schema changes run one at a time
+				await registry.createCollection({ slug, label: slug, labelSingular: slug });
+				// oxlint-disable-next-line no-await-in-loop -- schema changes run one at a time
+				await registry.createField(slug, { slug: "title", label: "Title", type: "string" });
+			}
+			for (const [index, slug] of slugs.entries()) {
+				// oxlint-disable-next-line no-await-in-loop -- entries are created in order
+				await repo.create({
+					type: slug,
+					slug: `entry-${slug}`,
+					data: { title: `Entry ${slug}` },
+					status: "published",
+					publishedAt: `2030-03-0${index + 1}T10:00:00.000Z`,
+				});
+			}
+
+			const result = await handleCalendarRange(db, MARCH);
+
+			expect(result.success).toBe(true);
+			if (!result.success) return;
+			expect(result.data.items.map((entry) => entry.title)).toEqual(
+				slugs.map((slug) => `Entry ${slug}`),
+			);
+		} finally {
+			await teardownTestDatabase(db);
 		}
 	});
 });
