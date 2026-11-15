@@ -71,6 +71,7 @@ function month({
 	shown = days,
 	unfilteredDays,
 	loadedThrough,
+	loading,
 	onMonthChange = () => {},
 	onSelect,
 	onClearFilters,
@@ -83,6 +84,7 @@ function month({
 	shown?: typeof days;
 	unfilteredDays?: typeof days;
 	loadedThrough?: string;
+	loading?: boolean;
 	onMonthChange?: (month: string) => void;
 	onSelect?: (item: { key: string }, element: HTMLElement) => void;
 	onClearFilters?: () => void;
@@ -99,6 +101,7 @@ function month({
 				display={display}
 				compact={compact}
 				loadedThrough={loadedThrough}
+				loading={loading}
 				onMonthChange={onMonthChange}
 				onSelect={onSelect}
 				onClearFilters={onClearFilters}
@@ -245,6 +248,25 @@ describe("CalendarMonth", () => {
 
 		const list = screen.getByRole("list", { name: "Tuesday, October 20, 2026" });
 		await expect.poll(() => list.getByRole("link").elements()).toHaveLength(6);
+	});
+
+	it("draws the picked day's loading rows where its entries go on a phone", async () => {
+		const box = (element: Element | null) => {
+			expect(element).not.toBeNull();
+			const { top, height } = element!.getBoundingClientRect();
+			return { top, height };
+		};
+		const screen = await renderMonth({ compact: true, today: "2026-11-01", loading: true });
+		const placeholder = box(document.querySelector("[data-calendar-placeholder]"));
+
+		await screen.rerender(month({ compact: true, today: "2026-11-01" }));
+		const link = screen.getByRole("link", { name: /Entry late/ });
+		await expect.element(link).toBeVisible();
+
+		expect(document.querySelector("[data-calendar-placeholder]")).toBeNull();
+		const row = box(link.element());
+		expect(Math.abs(row.top - placeholder.top)).toBeLessThanOrEqual(1);
+		expect(Math.abs(row.height - placeholder.height)).toBeLessThanOrEqual(1);
 	});
 
 	it("marks the grid's empty days from the cut-off onward as not loaded", async () => {

@@ -1,4 +1,4 @@
-import { Badge, Tooltip } from "@cloudflare/kumo";
+import { Badge, SkeletonLine, Tooltip } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -186,6 +186,13 @@ interface CalendarEntryRowProps {
 	onSelect?: CalendarSelectHandler;
 }
 
+// Shared with the placeholder rows, so loaded rows land in their boxes.
+const ENTRY_ROW_LAYOUT =
+	"grid grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 px-2 py-1.5 text-sm @lg:grid-cols-[5rem_minmax(0,1fr)_auto]";
+const ENTRY_ROW_TIME = "row-span-2 self-start leading-5 @lg:row-span-1 @lg:self-center";
+const ENTRY_ROW_TAGS =
+	"col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @lg:col-start-auto @lg:justify-end";
+
 /** An agenda row: time, state, title, collection, and locale, linking to the editor. */
 export function CalendarEntryRow({
 	item,
@@ -210,9 +217,12 @@ export function CalendarEntryRow({
 				event.preventDefault();
 				onSelect(item, event.currentTarget);
 			}}
-			className="grid scroll-mt-12 grid-cols-[4.5rem_minmax(0,1fr)] items-center gap-x-3 gap-y-0.5 rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-brand aria-[current=true]:bg-kumo-tint motion-reduce:transition-none @lg:grid-cols-[5rem_minmax(0,1fr)_auto]"
+			className={cn(
+				ENTRY_ROW_LAYOUT,
+				"scroll-mt-12 rounded-md transition-colors hover:bg-kumo-tint focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-kumo-brand aria-[current=true]:bg-kumo-tint motion-reduce:transition-none",
+			)}
 		>
-			<span className="row-span-2 self-start leading-5 text-kumo-subtle tabular-nums @lg:row-span-1 @lg:self-center">
+			<span className={cn(ENTRY_ROW_TIME, "text-kumo-subtle tabular-nums")}>
 				{display.formatTime(item.time)}
 			</span>
 			<span className="flex min-w-0 items-center gap-2">
@@ -241,7 +251,7 @@ export function CalendarEntryRow({
 					</span>
 				)}
 			</span>
-			<span className="col-start-2 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 @lg:col-start-auto @lg:justify-end">
+			<span className={ENTRY_ROW_TAGS}>
 				<CalendarCollectionTag slug={item.collection} display={display} />
 				{display.showLocale && <CalendarLocaleChip locale={item.locale} />}
 			</span>
@@ -404,5 +414,40 @@ export function CalendarDayList({
 			))}
 			{nowAt !== undefined && nowAt >= items.length && nowLine}
 		</ul>
+	);
+}
+
+const PLACEHOLDER_TITLE_WIDTHS = [62, 45, 74, 54];
+
+/** Rows shaped like `CalendarDayList`'s, shown while a range's entries load. */
+export function CalendarDayListPlaceholder({
+	rows,
+	className,
+}: {
+	rows: number;
+	className?: string;
+}) {
+	return (
+		<div aria-hidden="true" className={cn("@container grid gap-px", className)}>
+			{Array.from({ length: rows }, (_, row) => {
+				const titleWidth = PLACEHOLDER_TITLE_WIDTHS[row % PLACEHOLDER_TITLE_WIDTHS.length] ?? 60;
+				return (
+					<div key={row} data-calendar-placeholder="" className={ENTRY_ROW_LAYOUT}>
+						<div className={ENTRY_ROW_TIME}>
+							<SkeletonLine blockHeight="1lh" minWidth={70} maxWidth={70} />
+						</div>
+						<div className="flex min-w-0 items-center gap-2">
+							<div className="skeleton-line size-4 shrink-0 rounded-full" />
+							<div className="min-w-0 flex-1">
+								<SkeletonLine blockHeight="1lh" minWidth={titleWidth} maxWidth={titleWidth} />
+							</div>
+						</div>
+						<div className={ENTRY_ROW_TAGS}>
+							<div className="skeleton-line h-5 w-20 rounded-sm" />
+						</div>
+					</div>
+				);
+			})}
+		</div>
 	);
 }
