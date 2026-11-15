@@ -486,6 +486,7 @@ export function MediaPickerModal({
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastFolderPage) => lastFolderPage.nextCursor,
 		enabled: open && showFolderResults,
+		placeholderData: keepPreviousData,
 	});
 	const folders = React.useMemo(
 		() => foldersQuery.data?.pages.flatMap((folderPage) => folderPage.items) ?? [],
@@ -517,6 +518,9 @@ export function MediaPickerModal({
 				query: searchQuery.trim() || undefined,
 			}),
 		enabled: open && !localOnly && activeSource !== "local" && activeSource !== URL_SOURCE,
+		// A new search keeps the source's last results on screen; another source starts empty.
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === activeSource ? previous : undefined,
 	});
 
 	const updateSelection = React.useCallback(
@@ -1363,7 +1367,11 @@ export function MediaPickerModal({
 
 										{showFolderResults &&
 											(foldersQuery.isPending || folders.length > 0 || foldersQuery.error) && (
-												<section aria-labelledby="media-picker-folders" className="grid gap-2">
+												<section
+													aria-labelledby="media-picker-folders"
+													aria-busy={foldersQuery.isFetching || undefined}
+													className="grid gap-2"
+												>
 													<div className="flex items-center justify-between gap-2">
 														<h2 id="media-picker-folders" className="text-sm font-semibold">
 															{t`Folders`}

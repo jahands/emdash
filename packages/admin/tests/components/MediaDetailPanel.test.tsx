@@ -1625,6 +1625,38 @@ describe("MediaDetailPanel", () => {
 		await expect.element(screen.getByText("1 folder loaded")).toBeInTheDocument();
 	});
 
+	it("adds loaded folders below the Location options already shown", async () => {
+		let resolveFolders!: (page: { items: Array<{ id: string; name: string }> }) => void;
+		vi.mocked(fetchMediaFolders).mockImplementationOnce(
+			() => new Promise((resolve) => (resolveFolders = resolve)),
+		);
+		const screen = await renderPanel({
+			item: makeLocalItem({ folderId: null }),
+			canMoveLocation: true,
+		});
+
+		screen.getByRole("combobox", { name: "Location" }).element().click();
+		const mainLibrary = screen.getByRole("option", { name: "Main library" });
+		await expect.element(mainLibrary).toBeVisible();
+		await vi.waitFor(() => expect(fetchMediaFolders).toHaveBeenCalled());
+		await expect.element(screen.getByText("Loading folders")).toBeInTheDocument();
+		expect(screen.getByText("Loading folders").element()).toHaveClass("sr-only");
+		await vi.waitFor(() => expect(document.querySelector("[data-starting-style]")).toBeNull());
+		await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+		const placeholders = document.querySelector("[data-location-option-placeholder]");
+		expect(placeholders).toHaveAttribute("aria-hidden", "true");
+		const placeholderTop = placeholders!.getBoundingClientRect().top;
+		const mainTop = mainLibrary.element().getBoundingClientRect().top;
+
+		resolveFolders({ items: [{ id: "folder-2", name: "Press" }] });
+		const press = screen.getByRole("option", { name: "Press" });
+		await expect.element(press).toBeVisible();
+
+		expect(document.querySelector("[data-location-option-placeholder]")).toBeNull();
+		expect(mainLibrary.element().getBoundingClientRect().top).toBeCloseTo(mainTop, 0);
+		expect(press.element().getBoundingClientRect().top).toBeCloseTo(placeholderTop, 0);
+	});
+
 	it("saves image metadata and Location in one update", async () => {
 		const screen = await renderPanel({ item: makeLocalItem(), canMoveLocation: true });
 

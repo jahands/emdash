@@ -1044,5 +1044,25 @@ describe("MediaPickerModal", () => {
 				);
 			});
 		});
+
+		it("keeps the folders shown while a search's folders load", async () => {
+			const api = await import("../../src/lib/api");
+			const screen = await renderModal();
+			const folder = screen.getByRole("button", { name: "Open folder Photography" });
+			await expect.element(folder).toBeVisible();
+			vi.mocked(api.fetchMediaFolders).mockImplementationOnce(() => new Promise(() => {}));
+
+			await screen.getByRole("searchbox", { name: "Search media" }).fill("report");
+			await vi.waitFor(() =>
+				expect(api.fetchMediaFolders).toHaveBeenLastCalledWith(
+					expect.objectContaining({ search: "report" }),
+				),
+			);
+
+			await expect.element(folder).toBeVisible();
+			const section = screen.getByRole("heading", { name: "Folders" }).element().closest("section");
+			expect(section).toHaveAttribute("aria-busy", "true");
+			expect(screen.getByText("Loading folders").query()).toBeNull();
+		});
 	});
 });

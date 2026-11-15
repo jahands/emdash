@@ -48,6 +48,7 @@ import {
 	type MediaItem,
 	type MediaFolder,
 	type MediaUploadOptions,
+	type MediaProviderInfo,
 	type MediaProviderItem,
 	MEDIA_SEARCH_MAX_LENGTH,
 	ApiResponseError,
@@ -150,6 +151,65 @@ interface MediaFolderTargetData {
 const DEFAULT_PLACEHOLDER_COUNT = 12;
 // Fixed, so placeholders shown again after a remount don't change shape.
 const FOLDER_PLACEHOLDER_WIDTHS = [58, 72, 46, 64];
+const folderPlaceholderWidth = (index: number) =>
+	FOLDER_PLACEHOLDER_WIDTHS[index % FOLDER_PLACEHOLDER_WIDTHS.length] ?? 60;
+
+type UsageNotice = "setup" | "attention" | "indexing" | "setting-up";
+
+/**
+ * What sat above the media grid when the library last finished loading in this browser. On
+ * the next visit it stands in for answers still on their way, so the toolbar and the tiles'
+ * placeholders start where the loaded page puts them.
+ */
+interface MediaLayoutHint {
+	notice?: UsageNotice | null;
+	providers?: MediaProviderInfo[];
+	folders?: number;
+	moreFolders?: boolean;
+}
+
+const MEDIA_LAYOUT_HINT_KEY = "emdash-media-library-layout";
+const USAGE_NOTICES: ReadonlySet<unknown> = new Set([
+	"setup",
+	"attention",
+	"indexing",
+	"setting-up",
+]);
+
+function readLayoutHint(): MediaLayoutHint {
+	try {
+		const stored: unknown = JSON.parse(localStorage.getItem(MEDIA_LAYOUT_HINT_KEY) ?? "{}");
+		if (!stored || typeof stored !== "object") return {};
+		const { notice, providers, folders, moreFolders } = stored as Record<string, unknown>;
+		return {
+			notice:
+				notice === null || USAGE_NOTICES.has(notice) ? (notice as UsageNotice | null) : undefined,
+			providers:
+				Array.isArray(providers) &&
+				providers.every(
+					(provider: Partial<MediaProviderInfo> | null) =>
+						typeof provider?.id === "string" &&
+						typeof provider.name === "string" &&
+						typeof provider.capabilities === "object",
+				)
+					? (providers as MediaProviderInfo[])
+					: undefined,
+			folders:
+				Number.isSafeInteger(folders) && (folders as number) >= 0 ? (folders as number) : undefined,
+			moreFolders: typeof moreFolders === "boolean" ? moreFolders : undefined,
+		};
+	} catch {
+		return {};
+	}
+}
+
+function writeLayoutHint(patch: MediaLayoutHint) {
+	try {
+		localStorage.setItem(MEDIA_LAYOUT_HINT_KEY, JSON.stringify({ ...readLayoutHint(), ...patch }));
+	} catch {
+		// Without storage the next visit falls back to waiting for every answer.
+	}
+}
 
 const mediaDragId = (id: string) => `media:${id}`;
 const folderDropId = (id: string) => `folder:${id}`;
@@ -262,6 +322,17 @@ export function MediaLibrary({
 		(setupStatus.state !== "active" ||
 			progressQuery.isError ||
 			(progressQuery.isSuccess && setupProgress?.status !== "ready"));
+	const liveUsageNotice: UsageNotice | null = !setupIncomplete
+		? null
+		: setupStatus.state === "expanded"
+			? "setup"
+			: progressQuery.isError || setupProgress?.status === "needs_attention"
+				? "attention"
+				: setupStatus.state === "active"
+					? "indexing"
+					: "setting-up";
+	const [layoutHint] = React.useState(readLayoutHint);
+	const usageNotice = usageStatusPending ? layoutHint.notice : liveUsageNotice;
 	const [toastManager] = React.useState(createKumoToastManager);
 	const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
 	const [detailItem, setDetailItem] = React.useState<MediaItem | null>(null);
@@ -304,16 +375,17 @@ export function MediaLibrary({
 	>({});
 
 	// Fetch available providers
-	const { data: providers, isPlaceholderData: providersPending } = useQuery({
+	const { data: fetchedProviders, isPlaceholderData: providersPending } = useQuery({
 		queryKey: ["media-providers"],
 		queryFn: fetchMediaProviders,
 		placeholderData: [],
 	});
+	const providers = providersPending ? layoutHint.providers : fetchedProviders;
 
 	// Fetch provider media when a non-local provider is selected
 	const {
 		data: providerData,
-		isLoading: providerLoading,
+		isFetching: providerFetching,
 		refetch: refetchProviderMedia,
 	} = useQuery({
 		queryKey: ["provider-media", activeProvider, searchQuery],
@@ -323,6 +395,9 @@ export function MediaLibrary({
 				query: searchQuery || undefined,
 			}),
 		enabled: activeProvider !== "local",
+		// A new search keeps the provider's last results on screen; another provider starts empty.
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === activeProvider ? previous : undefined,
 	});
 
 	// Get active provider info
@@ -518,7 +593,7 @@ export function MediaLibrary({
 			.querySelector(`[data-media-id="${CSS.escape(latestUploadId)}"]`)
 			?.scrollIntoView({ block: "nearest" });
 	}, [latestUploadId, uploadDialogOpen]);
-	const currentLoading = activeProvider === "local" ? isLoading : providerLoading;
+	const currentLoading = activeProvider === "local" ? isLoading : providerFetching;
 	React.useEffect(() => {
 		if (
 			pendingMediaLibraryScrollTop === null ||
@@ -562,11 +637,6 @@ export function MediaLibrary({
 			onLocalSearchChange?.("");
 		}
 	};
-	const showToolbar =
-		resultCount > 0 ||
-		hasActiveQuery ||
-		(activeProvider === "local" &&
-			(folders.length > 0 || Boolean(foldersLoading) || Boolean(foldersError)));
 	const assetPage = pagination?.page ?? 1;
 	const showFolderResults =
 		activeProvider === "local" &&
@@ -574,31 +644,81 @@ export function MediaLibrary({
 		localTypeFilter === "all" &&
 		(!folderId || searchQuery.trim() !== "");
 	const visibleFolders = showFolderResults ? folders : [];
+	const hintedFolderCount =
+		showFolderResults && !folderId && !searchQuery.trim() ? layoutHint.folders : undefined;
+	const folderPlaceholderCount =
+		showFolderResults && foldersLoading && visibleFolders.length === 0
+			? (hintedFolderCount ?? FOLDER_PLACEHOLDER_WIDTHS.length)
+			: 0;
+	const showToolbar =
+		resultCount > 0 ||
+		hasActiveQuery ||
+		(activeProvider === "local" &&
+			(folders.length > 0 || folderPlaceholderCount > 0 || Boolean(foldersError)));
 	const hasFolderSurface =
 		showFolderResults &&
-		(Boolean(foldersLoading) ||
+		(folderPlaceholderCount > 0 ||
 			Boolean(foldersError) ||
 			visibleFolders.length > 0 ||
 			hasMoreFolders);
 	const folderResultsMayFillView =
 		showFolderResults &&
-		(Boolean(foldersLoading) ||
+		(folderPlaceholderCount > 0 ||
 			Boolean(foldersError) ||
 			visibleFolders.length > 0 ||
 			(viewMode === "list" && hasFolderSurface));
 	const itemsPending =
 		currentLoading && currentItems.length === 0 && currentProviderItems.length === 0;
+	const bannerAndTabsKnown =
+		!(usageStatusPending && layoutHint.notice === undefined) &&
+		!(providersPending && !layoutHint.providers);
 	const initialContentPending =
 		itemsPending ||
-		usageStatusPending ||
-		providersPending ||
-		(showFolderResults && Boolean(foldersLoading) && visibleFolders.length === 0);
-	// Everything below the header appears together once, so late responses
-	// never push the toolbar or the grid.
+		!bannerAndTabsKnown ||
+		(folderPlaceholderCount > 0 && hintedFolderCount === undefined);
+	// The tiles stay placeholders until whatever goes above them is known, so they land where
+	// their placeholders were.
 	const [contentRevealed, setContentRevealed] = React.useState(!initialContentPending);
 	if (!contentRevealed && !initialContentPending) setContentRevealed(true);
+	// With no earlier visit to go by, a usage banner or provider tabs could still appear above
+	// the toolbar, so nothing is drawn below the header until that is known.
+	const holdBelowHeader = !contentRevealed && !bannerAndTabsKnown;
 	const showItemsPlaceholder = !contentRevealed || itemsPending;
 	const placeholderCount = pagination?.perPage ?? DEFAULT_PLACEHOLDER_COUNT;
+	const showPaginationFooter =
+		activeProvider === "local" &&
+		!!pagination &&
+		!holdBelowHeader &&
+		(pagination.totalCount > 0 || showItemsPlaceholder);
+	// Before the first reveal the folder section shows only when its size is known, from the
+	// folders themselves or the last visit's count.
+	const showFolderSection =
+		hasFolderSurface &&
+		(contentRevealed || visibleFolders.length > 0 || hintedFolderCount !== undefined);
+	const listFolderPlaceholderCount =
+		hintedFolderCount === undefined ? Math.min(folderPlaceholderCount, 2) : folderPlaceholderCount;
+	const hintedMoreFolders =
+		folderPlaceholderCount > 0 &&
+		hintedFolderCount !== undefined &&
+		layoutHint.moreFolders === true;
+
+	const settledUsageNotice =
+		usageStatusEnabled && !usageStatusPending ? liveUsageNotice : undefined;
+	const settledProviders = providersPending ? undefined : fetchedProviders;
+	const settledFolderCount =
+		showFolderResults && !folderId && !searchQuery.trim() && !foldersLoading && !foldersError
+			? visibleFolders.length
+			: undefined;
+	React.useEffect(() => {
+		const patch: MediaLayoutHint = {};
+		if (settledUsageNotice !== undefined) patch.notice = settledUsageNotice;
+		if (settledProviders) patch.providers = settledProviders;
+		if (settledFolderCount !== undefined) {
+			patch.folders = settledFolderCount;
+			patch.moreFolders = Boolean(hasMoreFolders);
+		}
+		if (Object.keys(patch).length > 0) writeLayoutHint(patch);
+	}, [hasMoreFolders, settledFolderCount, settledProviders, settledUsageNotice]);
 	const folderActionsAvailable =
 		Boolean(canManageFolders) &&
 		Boolean(onCreateFolder) &&
@@ -819,7 +939,7 @@ export function MediaLibrary({
 		},
 		<div
 			className={
-				activeProvider === "local" && pagination && pagination.totalCount > 0
+				showPaginationFooter
 					? "flex min-h-full flex-col gap-4 [&_[data-media-layout]]:scroll-mb-48 [&_tbody_*]:scroll-mb-48"
 					: "space-y-4"
 			}
@@ -882,10 +1002,18 @@ export function MediaLibrary({
 									{t`Media Library`}
 								</RouterLinkButton>
 								<Breadcrumbs.Separator />
-								<Breadcrumbs.Current loading={currentFolderLoading}>
-									<span dir="auto" className="inline-block max-w-full truncate align-bottom">
-										{currentFolder?.name ?? ""}
-									</span>
+								<Breadcrumbs.Current>
+									{currentFolderLoading ? (
+										<span
+											aria-hidden="true"
+											className="skeleton-line inline-block w-20 align-middle"
+											data-media-folder-name-placeholder
+										/>
+									) : (
+										<span dir="auto" className="inline-block max-w-full truncate align-bottom">
+											{currentFolder?.name ?? ""}
+										</span>
+									)}
 								</Breadcrumbs.Current>
 							</Breadcrumbs>
 						</nav>
@@ -919,29 +1047,29 @@ export function MediaLibrary({
 					)}
 				</div>
 			</div>
-			{contentRevealed && activeProvider === "local" && setupIncomplete ? (
+			{activeProvider === "local" && usageNotice ? (
 				<Banner
 					variant="alert"
 					title={
-						setupStatus.state === "expanded"
+						usageNotice === "setup"
 							? t`Set up media usage tracking`
-							: progressQuery.isError || setupProgress?.status === "needs_attention"
+							: usageNotice === "attention"
 								? t`Media usage tracking needs attention`
-								: setupStatus.state === "active"
+								: usageNotice === "indexing"
 									? t`Media usage tracking is indexing existing content`
 									: t`Media usage tracking is setting up`
 					}
 					description={t`Index existing content and keep Used in results up to date.`}
 					action={
 						<RouterLinkButton to="/settings/media-usage" size="sm" variant="secondary">
-							{setupStatus.state === "expanded" ? t`Open setup` : t`View setup`}
+							{usageNotice === "setup" ? t`Open setup` : t`View setup`}
 						</RouterLinkButton>
 					}
 				/>
 			) : null}
 
 			{/* Provider tabs (only when an external provider is configured) */}
-			{contentRevealed && providerTabs.length > 1 && (
+			{providerTabs.length > 1 && (
 				<Tabs
 					variant="underline"
 					value={activeProvider}
@@ -973,73 +1101,74 @@ export function MediaLibrary({
 
 			{/* Toolbar: search + type filter (start) · view toggle (end).
 			    Local library search/filter is handled server-side. */}
-			{!contentRevealed && <MediaToolbarPlaceholder />}
-			{contentRevealed && showToolbar && (
-				<TableToolbar
-					className="flex-row flex-nowrap gap-2"
-					trailing={
-						<div role="group" aria-label={t`View mode`}>
-							<Tabs
-								variant="segmented"
-								value={viewMode}
-								onValueChange={(v) => {
-									if (v === "grid" || v === "list") setViewMode(v);
-								}}
-								tabs={[
-									{
-										value: "grid",
-										label: (
-											<>
-												<SquaresFour className="h-4 w-4" aria-hidden="true" />
-												<span className="sr-only">{t`Grid view`}</span>
-											</>
-										),
-									},
-									{
-										value: "list",
-										label: (
-											<>
-												<List className="h-4 w-4" aria-hidden="true" />
-												<span className="sr-only">{t`List view`}</span>
-											</>
-										),
-									},
-								]}
+			{!holdBelowHeader && (!contentRevealed || showToolbar) && (
+				<div inert={!contentRevealed || undefined}>
+					<TableToolbar
+						className="flex-row flex-nowrap gap-2"
+						trailing={
+							<div role="group" aria-label={t`View mode`}>
+								<Tabs
+									variant="segmented"
+									value={viewMode}
+									onValueChange={(v) => {
+										if (v === "grid" || v === "list") setViewMode(v);
+									}}
+									tabs={[
+										{
+											value: "grid",
+											label: (
+												<>
+													<SquaresFour className="h-4 w-4" aria-hidden="true" />
+													<span className="sr-only">{t`Grid view`}</span>
+												</>
+											),
+										},
+										{
+											value: "list",
+											label: (
+												<>
+													<List className="h-4 w-4" aria-hidden="true" />
+													<span className="sr-only">{t`List view`}</span>
+												</>
+											),
+										},
+									]}
+								/>
+							</div>
+						}
+					>
+						{(canSearch || activeProvider === "local") && (
+							<TableToolbarSearch
+								size="base"
+								placeholder={activeProvider === "local" ? t`Search by filename...` : t`Search...`}
+								aria-label={t`Search media`}
+								value={searchQuery}
+								onChange={handleSearchChange}
+								maxLength={MEDIA_SEARCH_MAX_LENGTH}
+								className="w-auto flex-1 sm:w-72"
 							/>
-						</div>
-					}
-				>
-					{(canSearch || activeProvider === "local") && (
-						<TableToolbarSearch
-							size="base"
-							placeholder={activeProvider === "local" ? t`Search by filename...` : t`Search...`}
-							aria-label={t`Search media`}
-							value={searchQuery}
-							onChange={handleSearchChange}
-							maxLength={MEDIA_SEARCH_MAX_LENGTH}
-							className="w-auto flex-1 sm:w-72"
-						/>
-					)}
-					{activeProvider === "local" && (
-						<Select
-							size="base"
-							value={localTypeFilter}
-							onValueChange={(v) => {
-								const next = v ?? "all";
-								setLocalTypeFilter(next);
-								onLocalMimeFilterChange?.(mimeForMediaTypeFilter(next));
-							}}
-							items={{
-								all: t`All types`,
-								image: t`Images`,
-								video: t`Video`,
-								audio: t`Audio`,
-								document: t`Documents`,
-							}}
-							aria-label={t`Filter by type`}
-						/>
-					)}
-				</TableToolbar>
+						)}
+						{activeProvider === "local" && (
+							<Select
+								size="base"
+								value={localTypeFilter}
+								onValueChange={(v) => {
+									const next = v ?? "all";
+									setLocalTypeFilter(next);
+									onLocalMimeFilterChange?.(mimeForMediaTypeFilter(next));
+								}}
+								items={{
+									all: t`All types`,
+									image: t`Images`,
+									video: t`Video`,
+									audio: t`Audio`,
+									document: t`Documents`,
+								}}
+								aria-label={t`Filter by type`}
+							/>
+						)}
+					</TableToolbar>
+				</div>
 			)}
 
 			{activeProvider === "local" && (
@@ -1055,7 +1184,7 @@ export function MediaLibrary({
 				</span>
 			)}
 
-			{contentRevealed && hasFolderSurface && viewMode === "grid" && (
+			{!holdBelowHeader && showFolderSection && viewMode === "grid" && (
 				<section
 					aria-labelledby="media-folders-heading"
 					aria-busy={Boolean(foldersLoading || isLoadingMoreFolders) || undefined}
@@ -1076,16 +1205,23 @@ export function MediaLibrary({
 							{t`Folders could not be loaded.`}
 						</div>
 					)}
-					{foldersLoading && visibleFolders.length === 0 ? (
+					{folderPlaceholderCount > 0 ? (
 						<Grid variant="4up" gap="sm" className="2xl:grid-cols-6" aria-hidden="true">
-							{FOLDER_PLACEHOLDER_WIDTHS.map((width) => (
-								<LayerCard key={width} className="flex min-w-0 items-center gap-3 p-3">
-									<div className="skeleton-line size-10 shrink-0 rounded-md" />
-									<div className="min-w-0 flex-1">
-										<SkeletonLine blockHeight={24} minWidth={width} maxWidth={width} />
-									</div>
-								</LayerCard>
-							))}
+							{Array.from({ length: folderPlaceholderCount }, (_, index) => {
+								const width = folderPlaceholderWidth(index);
+								return (
+									<LayerCard
+										key={index}
+										className="flex min-w-0 items-center gap-3 p-3"
+										data-media-folder-placeholder
+									>
+										<div className="skeleton-line size-10 shrink-0 rounded-md" />
+										<div className="min-w-0 flex-1">
+											<SkeletonLine blockHeight={24} minWidth={width} maxWidth={width} />
+										</div>
+									</LayerCard>
+								);
+							})}
 						</Grid>
 					) : (
 						<Grid variant="4up" gap="sm" className="2xl:grid-cols-6">
@@ -1102,26 +1238,31 @@ export function MediaLibrary({
 							))}
 						</Grid>
 					)}
-					{hasMoreFolders && onLoadMoreFolders && (
+					{(hasMoreFolders || hintedMoreFolders) && onLoadMoreFolders && (
 						<div className="flex justify-center">
 							<Button
 								variant="outline"
 								onClick={onLoadMoreFolders}
-								disabled={isLoadingMoreFolders}
+								disabled={!hasMoreFolders || isLoadingMoreFolders}
 								loading={isLoadingMoreFolders}
 							>
 								{t`Load more folders`}
 							</Button>
 						</div>
 					)}
-					{visibleFolders.length > 0 && currentItems.length > 0 && (
-						<div className="border-t border-kumo-line" />
-					)}
+					{(visibleFolders.length > 0 || folderPlaceholderCount > 0) &&
+						(currentItems.length > 0 || showItemsPlaceholder) && (
+							<div className="border-t border-kumo-line" />
+						)}
 				</section>
 			)}
 
 			{/* Content */}
-			{showItemsPlaceholder && viewMode === "grid" ? (
+			{holdBelowHeader ? (
+				<span role="status" className="sr-only">
+					{t`Loading media`}
+				</span>
+			) : showItemsPlaceholder && viewMode === "grid" ? (
 				<>
 					<span role="status" className="sr-only">
 						{t`Loading media`}
@@ -1287,28 +1428,23 @@ export function MediaLibrary({
 						</tr>
 					</thead>
 					<tbody>
-						{showItemsPlaceholder && (
-							<DataTablePlaceholderRows
-								cells={["thumbnail", "title", "tertiary", "tertiary", "tertiary"]}
-								rows={placeholderCount}
-							/>
-						)}
-						{showFolderResults &&
-							foldersLoading &&
-							visibleFolders.length === 0 &&
-							FOLDER_PLACEHOLDER_WIDTHS.slice(0, 2).map((width) => (
-								<tr key={width} aria-hidden="true">
-									<td>
-										<div className="skeleton-line size-10 rounded" />
-									</td>
-									<td>
-										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
-									</td>
-									<td {...tertiaryColumn} />
-									<td {...tertiaryColumn} />
-									<td {...tertiaryColumn} />
-								</tr>
-							))}
+						{Array.from({ length: listFolderPlaceholderCount }, (_, index) => (
+							<tr key={`folder-${index}`} aria-hidden="true">
+								<td>
+									<div className="skeleton-line size-10 rounded" />
+								</td>
+								<td>
+									<SkeletonLine
+										blockHeight="1lh"
+										minWidth={folderPlaceholderWidth(index)}
+										maxWidth={folderPlaceholderWidth(index)}
+									/>
+								</td>
+								<td {...tertiaryColumn} />
+								<td {...tertiaryColumn} />
+								<td {...tertiaryColumn} />
+							</tr>
+						))}
 						{showFolderResults && foldersError && visibleFolders.length === 0 && (
 							<MediaFolderErrorRow onRetry={onRetryFolders} />
 						)}
@@ -1341,6 +1477,12 @@ export function MediaLibrary({
 									</Button>
 								</td>
 							</tr>
+						)}
+						{showItemsPlaceholder && (
+							<DataTablePlaceholderRows
+								cells={["thumbnail", "title", "tertiary", "tertiary", "tertiary"]}
+								rows={placeholderCount}
+							/>
 						)}
 						{activeProvider === "local"
 							? currentItems.map((item) => (
@@ -1386,11 +1528,12 @@ export function MediaLibrary({
 				</DataTable>
 			)}
 
-			{contentRevealed && activeProvider === "local" && pagination && pagination.totalCount > 0 && (
+			{showPaginationFooter && pagination && (
 				<ListPaginationFooter
 					pagination={pagination}
 					pageSizes={MEDIA_BROWSER_PAGE_SIZES}
 					label={t`Media pagination`}
+					loading={!contentRevealed || pagination.totalCount === 0}
 				/>
 			)}
 
@@ -1621,21 +1764,6 @@ function MediaFolderErrorRow({ onRetry }: { onRetry?: () => void }) {
 				</div>
 			</td>
 		</tr>
-	);
-}
-
-/** The search, type filter and view toggle in outline, shown until the library first loads. */
-function MediaToolbarPlaceholder() {
-	return (
-		<div aria-hidden="true">
-			<TableToolbar
-				className="flex-row flex-nowrap gap-2"
-				trailing={<div className="skeleton-line h-9 w-19 rounded-lg" />}
-			>
-				<div className="skeleton-line h-9 w-auto min-w-0 flex-1 rounded-lg sm:w-72 sm:flex-none" />
-				<div className="skeleton-line h-9 w-25 rounded-lg" />
-			</TableToolbar>
-		</div>
 	);
 }
 

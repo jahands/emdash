@@ -1,6 +1,6 @@
 import { Sidebar, Toasty } from "@cloudflare/kumo";
 import * as React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 
 import "../../dist/styles.css";
@@ -123,6 +123,10 @@ function lineCount(element: Element) {
 	}
 	return tops.size;
 }
+
+beforeEach(() => {
+	localStorage.clear();
+});
 
 afterEach(async () => {
 	await page.viewport(1280, 800);

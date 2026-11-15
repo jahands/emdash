@@ -177,6 +177,7 @@ let activation: Deferred<MediaUsageActivationStatus>;
 let progress: Deferred<MediaUsageProgress>;
 
 beforeEach(() => {
+	localStorage.clear();
 	activation = deferred();
 	progress = deferred();
 	usage.fetchStatus.mockReset().mockImplementation(() => activation.promise);
@@ -438,9 +439,15 @@ describe("Media Library while it first loads", () => {
 				.filter(Boolean);
 			expect(announced).toEqual(["Loading media"]);
 			expect(placeholderTiles()).toHaveLength(35);
-			const toolbar = document.querySelector("[data-media-library] [aria-hidden] .skeleton-line");
-			const searchBefore = box(toolbar);
+			const searchInput = screen.getByRole("searchbox", { name: "Search media" }).element();
+			expect(searchInput.closest("[inert]")).not.toBeNull();
+			const searchBefore = box(searchInput.parentElement);
 			const tileBefore = box(placeholderTiles()[0]!);
+			const footer = () => document.querySelector("[data-media-library] footer");
+			const pageSize = () => footer()?.querySelector("[data-slot='pagination-page-size']") ?? null;
+			expect(footer()?.closest("[inert]")).not.toBeNull();
+			const footerBefore = box(footer());
+			const pageSizeBefore = box(pageSize());
 
 			await screen.rerender(
 				library({ ...loadingRoute, items, isLoading: false, foldersLoading: false }, dir),
@@ -454,12 +461,21 @@ describe("Media Library while it first loads", () => {
 					.parentElement,
 			);
 			const tile = box(document.querySelector("[data-media-grid] > *"));
-			// The search box's width follows the type filter's label, which varies by locale.
-			for (const key of ["top", "height"] as const) {
+			for (const key of ["left", "top", "width", "height"] as const) {
 				expect(Math.abs(search[key] - searchBefore[key]), `search ${key}`).toBeLessThanOrEqual(1);
 			}
+			expect(searchInput.closest("[inert]")).toBeNull();
 			for (const key of ["left", "top", "width", "height"] as const) {
 				expect(Math.abs(tile[key] - tileBefore[key]), `first tile ${key}`).toBeLessThanOrEqual(1);
+			}
+			expect(footer()?.closest("[inert]")).toBeNull();
+			expect(Math.abs(box(footer()).height - footerBefore.height)).toBeLessThanOrEqual(1);
+			const pageSizeAfter = box(pageSize());
+			for (const key of ["left", "width"] as const) {
+				expect(
+					Math.abs(pageSizeAfter[key] - pageSizeBefore[key]),
+					`page size ${key}`,
+				).toBeLessThanOrEqual(1);
 			}
 		},
 	);
@@ -468,7 +484,7 @@ describe("Media Library while it first loads", () => {
 		const screen = await render(library(loadingRoute, "ltr"));
 		await nextFrames();
 		const regionTop = box(
-			document.querySelector("[data-media-library] [aria-hidden] .skeleton-line"),
+			screen.getByRole("searchbox", { name: "Search media" }).element().parentElement,
 		).top;
 
 		await screen.rerender(
@@ -480,5 +496,110 @@ describe("Media Library while it first loads", () => {
 		expect(placeholderTiles()).toHaveLength(0);
 		const emptyPanel = empty.element().closest(".rounded-lg");
 		expect(Math.abs(box(emptyPanel).top - regionTop)).toBeLessThanOrEqual(1);
+	});
+});
+
+describe("Media Library on a later visit", () => {
+	const box = (element: Element | null | undefined) => {
+		expect(element).toBeTruthy();
+		const { left, top, width, height } = element!.getBoundingClientRect();
+		return { left, top, width, height };
+	};
+	const expectSameBox = (
+		label: string,
+		after: ReturnType<typeof box>,
+		before: ReturnType<typeof box>,
+	) => {
+		for (const key of ["left", "top", "width", "height"] as const) {
+			expect(Math.abs(after[key] - before[key]), `${label} ${key}`).toBeLessThanOrEqual(1);
+		}
+	};
+	const firstPlaceholderTile = () =>
+		document.querySelector("[data-media-library] [data-media-placeholder]");
+	const manyFolders: MediaFolder[] = Array.from({ length: 6 }, (_, index) => ({
+		id: `folder-${index}`,
+		name: `Folder ${index}`,
+	}));
+
+	/** Loads the library once to the end, as an earlier visit in this browser would. */
+	async function visitOnce(state: RouteState, usageProgress: MediaUsageProgress) {
+		activation.resolve(activeStatus);
+		progress.resolve(usageProgress);
+		const screen = await render(library(state, "ltr"));
+		await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
+		await nextFrames();
+		await screen.unmount();
+		activation = deferred();
+		progress = deferred();
+	}
+
+	it.each([
+		{ viewport: "desktop", width: 1280, height: 800, dir: "ltr" },
+		{ viewport: "phone", width: 390, height: 844, dir: "rtl" },
+	] as const)(
+		"puts the tiles where their placeholders were when the library has folders ($viewport, $dir)",
+		async ({ width, height, dir }) => {
+			await page.viewport(width, height);
+			await visitOnce(
+				{ ...loadingRoute, items, isLoading: false, folders: manyFolders, foldersLoading: false },
+				indexing,
+			);
+
+			const screen = await render(library(loadingRoute, dir));
+			await nextFrames();
+			await expect
+				.element(screen.getByText("Media usage tracking is indexing existing content"))
+				.toBeVisible();
+			await expect.element(screen.getByRole("heading", { name: "Folders" })).toBeVisible();
+			expect(document.querySelectorAll("[data-media-folder-placeholder]")).toHaveLength(6);
+			const searchBefore = box(
+				screen.getByRole("searchbox", { name: "Search media" }).element().parentElement,
+			);
+			const tileBefore = box(firstPlaceholderTile());
+
+			activation.resolve(activeStatus);
+			progress.resolve(indexing);
+			await screen.rerender(
+				library(
+					{ ...loadingRoute, items, isLoading: false, folders: manyFolders, foldersLoading: false },
+					dir,
+				),
+			);
+			await expect
+				.element(screen.getByRole("link", { name: "Open folder Folder 5" }))
+				.toBeVisible();
+			await nextFrames();
+
+			expect(firstPlaceholderTile()).toBeNull();
+			expectSameBox(
+				"search",
+				box(screen.getByRole("searchbox", { name: "Search media" }).element().parentElement),
+				searchBefore,
+			);
+			expectSameBox("first tile", box(document.querySelector("[data-media-grid] > *")), tileBefore);
+		},
+	);
+
+	it("shows the media without waiting for folders when the last visit had none", async () => {
+		await visitOnce({ ...loadingRoute, items, isLoading: false, foldersLoading: false }, ready);
+
+		const screen = await render(library(loadingRoute, "ltr"));
+		await nextFrames();
+		const tileBefore = box(firstPlaceholderTile());
+		await screen.rerender(library({ ...loadingRoute, items, isLoading: false }, "ltr"));
+		await expect.element(screen.getByRole("button", { name: "document-0.txt" })).toBeVisible();
+		await nextFrames();
+
+		expect(screen.getByRole("heading", { name: "Folders" }).query()).toBeNull();
+		const tile = box(document.querySelector("[data-media-grid] > *"));
+		expectSameBox("first tile", tile, tileBefore);
+
+		activation.resolve(activeStatus);
+		progress.resolve(ready);
+		await screen.rerender(
+			library({ ...loadingRoute, items, isLoading: false, foldersLoading: false }, "ltr"),
+		);
+		await nextFrames();
+		expectSameBox("first tile", box(document.querySelector("[data-media-grid] > *")), tile);
 	});
 });

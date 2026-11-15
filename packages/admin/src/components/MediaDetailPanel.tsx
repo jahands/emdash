@@ -36,7 +36,13 @@ import {
 	Ruler,
 	WarningCircle,
 } from "@phosphor-icons/react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 import { flushSync } from "react-dom";
@@ -570,6 +576,7 @@ export function MediaDetailPanel({
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
 		enabled: open && canMoveLocation && locationOpen,
+		placeholderData: keepPreviousData,
 	});
 	const locationFolders = React.useMemo(
 		() => locationListQuery.data?.pages.flatMap((page) => page.items) ?? [],
@@ -1513,16 +1520,9 @@ export function MediaDetailPanel({
 													aria-label={t`Search folders`}
 													placeholder={t`Search folders`}
 												/>
-												<div
-													className={
-														locationListQuery.isFetching
-															? "p-2 text-center text-sm text-kumo-subtle"
-															: "sr-only"
-													}
-													role="status"
-												>
+												<div className="sr-only" role="status">
 													{locationListQuery.isFetching
-														? t`Loading folders...`
+														? t`Loading folders`
 														: locationListQuery.data
 															? plural(locationFolders.length, {
 																	one: "# folder loaded",
@@ -1546,6 +1546,9 @@ export function MediaDetailPanel({
 														</Combobox.Item>
 													)}
 												</Combobox.List>
+												{locationListQuery.isLoading && (
+													<LocationOptionPlaceholders rows={locationOptions.length > 1 ? 1 : 2} />
+												)}
 												{locationListQuery.error && (
 													<div
 														className="space-y-2 border-t border-kumo-line p-2 text-sm text-kumo-danger"
@@ -2044,5 +2047,23 @@ function LocationNamePlaceholder() {
 				<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
 			</span>
 		</span>
+	);
+}
+
+const LOCATION_PLACEHOLDER_WIDTHS = [55, 40];
+
+/** Folder options in outline, below the ones already known, while the first folders load. */
+function LocationOptionPlaceholders({ rows }: { rows: number }) {
+	return (
+		<div aria-hidden="true" data-location-option-placeholder>
+			{LOCATION_PLACEHOLDER_WIDTHS.slice(0, rows).map((width) => (
+				<div key={width} className="mx-1.5 flex items-center gap-2 px-2 py-1.5">
+					<div className="skeleton-line size-4 shrink-0 rounded-sm" />
+					<div className="min-w-0 flex-1">
+						<SkeletonLine blockHeight={24} minWidth={width} maxWidth={width} />
+					</div>
+				</div>
+			))}
+		</div>
 	);
 }
