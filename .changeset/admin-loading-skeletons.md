@@ -11,7 +11,7 @@ Updates the admin's loading states so each screen draws what it already knows at
 - The dashboard always shows a Scheduled count, including 0. Its Content card lists collections in the sidebar's order, and plugin widgets appear without waiting for the dashboard's stats.
 - Searches and filters in content, media, user, byline, redirect, marketplace, section and command palette lists keep the current results on screen until new ones arrive.
 - Translation panels offer no Translate or Edit action until the entry's translations have loaded, so they no longer offer to translate into a locale that already has a translation. If the translations fail to load, the panel says so and offers a retry.
-- Content, media and comment lists keep their page controls while their first page loads.
+- Content, media and comment lists keep their page controls while their first page loads. In the comment inbox, a commenter's email now shortens with an ellipsis instead of wrapping under a long name, so each row is as tall as its placeholder.
 - List tables give their columns fixed widths, so the columns stay put when rows, an empty-list message or a load error replace the placeholders. The name column takes the remaining width.
 - The Redirects tab keeps its width while its count loads, so the 404 Errors tab and the filters beside it stay put.
 - Buttons keep their size while they work. The spinner shows over the button's label instead of beside it.

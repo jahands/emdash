@@ -621,11 +621,12 @@ function CommentRow({
 				/>
 			</td>
 			<td>
-				<div className="flex flex-wrap items-baseline gap-x-2">
-					<RowTitleButton dir="auto" className="wrap-anywhere" onClick={onRowClick}>
+				{/* The email shortens rather than wrapping, so a row is as tall as its loading placeholder. */}
+				<div className="flex items-baseline gap-x-2">
+					<RowTitleButton dir="auto" className="min-w-0 wrap-anywhere" onClick={onRowClick}>
 						{author}
 					</RowTitleButton>
-					<span className="text-sm text-kumo-subtle wrap-anywhere @max-md:hidden">
+					<span className="w-0 flex-1 truncate text-sm text-kumo-subtle @max-md:hidden">
 						<bdi dir="ltr">{comment.authorEmail}</bdi>
 					</span>
 				</div>
