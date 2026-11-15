@@ -195,7 +195,15 @@ describe("withCompression", () => {
 			["/no-transform", astroLike("text/html", HTML, { "Cache-Control": "private, no-transform" })],
 		]);
 		const origin = await listen(
-			withCompression((req, res) => routes.get(req.url ?? "")!(req, res)),
+			withCompression((req, res) => {
+				const route = routes.get(req.url ?? "");
+				if (typeof route !== "function") {
+					res.statusCode = 404;
+					res.end();
+					return;
+				}
+				route(req, res);
+			}),
 		);
 
 		for (const path of routes.keys()) {
