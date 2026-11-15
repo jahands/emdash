@@ -128,6 +128,27 @@ describe("RegistryBrowse listing safety", () => {
 		expect(screen.getByRole("heading", { name: approved }).query()).not.toBeNull();
 	});
 
+	it("keeps the previous results, marked busy, while a new search loads", async () => {
+		const approved = "Approved browse result";
+		mockSearchRegistryPackages.mockResolvedValueOnce({ packages: [packageView(approved)] });
+		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		const screen = await render(
+			<QueryClientProvider client={queryClient}>
+				<RegistryBrowse config={CONFIG} />
+			</QueryClientProvider>,
+		);
+		await expect.element(screen.getByRole("heading", { name: approved })).toBeInTheDocument();
+
+		mockSearchRegistryPackages.mockReturnValue(new Promise(() => {}));
+		await screen.getByRole("searchbox").fill("gallery");
+		await vi.waitFor(() => expect(mockSearchRegistryPackages).toHaveBeenCalledTimes(2));
+
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading plugins...");
+		const heading = screen.getByRole("heading", { name: approved }).element();
+		expect(heading.closest("[aria-busy='true']")).not.toBeNull();
+		expect(screen.container.querySelector(".skeleton-line")).toBeNull();
+	});
+
 	it("shows the canonical public name and links through the handle", async () => {
 		mockSearchRegistryPackages.mockResolvedValue({ packages: [packageView("My Gallery")] });
 		const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });

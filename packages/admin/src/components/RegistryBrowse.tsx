@@ -96,9 +96,23 @@ export function RegistryBrowse({ config, installedRegistryUris = new Set() }: Re
 		refetchInterval: 30_000,
 	});
 
-	const data = isFetchedAfterMount && !error ? cachedData : undefined;
-	const packages = data?.pages.flatMap((p) => p.packages);
+	// Cached listings may predate an unapproval, so only data fetched since this mount is shown.
+	const freshData = isFetchedAfterMount && !error ? cachedData : undefined;
 	const isSafetyRefreshPending = isLoading || !isFetchedAfterMount;
+	const [lastFresh, setLastFresh] = React.useState<{
+		query: string;
+		data: NonNullable<typeof freshData>;
+	} | null>(null);
+	if (freshData && (lastFresh?.data !== freshData || lastFresh.query !== debouncedQuery)) {
+		setLastFresh({ query: debouncedQuery, data: freshData });
+	}
+	// While a new search loads, the previous search's results stay in place.
+	const shown = freshData
+		? { query: debouncedQuery, data: freshData }
+		: isSafetyRefreshPending && !error
+			? lastFresh
+			: null;
+	const packages = shown?.data.pages.flatMap((p) => p.packages);
 
 	return (
 		<div className="space-y-6">
@@ -136,44 +150,50 @@ export function RegistryBrowse({ config, installedRegistryUris = new Set() }: Re
 			) : null}
 
 			{isSafetyRefreshPending ? (
-				<>
-					<span role="status" className="sr-only">
-						{t`Loading plugins...`}
-					</span>
-					<div aria-hidden="true" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-						{PACKAGE_PLACEHOLDER_WIDTHS.map((width, index) => (
-							<div key={index} className="rounded-md border border-kumo-border bg-kumo-surface p-4">
-								<div className="flex items-start gap-3">
-									<div className="skeleton-line mt-1 size-9 shrink-0 rounded-md" />
-									<div className="min-w-0 flex-1">
-										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
-										<div className="mt-0.5">
-											<SkeletonLine blockHeight={16} minWidth={70} maxWidth={70} />
-										</div>
-										<div className="mt-2 text-sm">
-											<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
-											<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
-										</div>
+				<span role="status" className="sr-only">
+					{t`Loading plugins...`}
+				</span>
+			) : null}
+			{isSafetyRefreshPending && !packages ? (
+				<div aria-hidden="true" className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+					{PACKAGE_PLACEHOLDER_WIDTHS.map((width, index) => (
+						<div key={index} className="rounded-md border border-kumo-border bg-kumo-surface p-4">
+							<div className="flex items-start gap-3">
+								<div className="skeleton-line mt-1 size-9 shrink-0 rounded-md" />
+								<div className="min-w-0 flex-1">
+									<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+									<div className="mt-0.5">
+										<SkeletonLine blockHeight={16} minWidth={70} maxWidth={70} />
+									</div>
+									<div className="mt-2 text-sm">
+										<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
+										<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
 									</div>
 								</div>
 							</div>
-						))}
-					</div>
-				</>
+						</div>
+					))}
+				</div>
 			) : null}
 
 			{/* Empty */}
-			{packages && packages.length === 0 ? (
-				<div className="rounded-md border border-kumo-border bg-kumo-subtle p-8 text-center text-kumo-subtle">
-					{debouncedQuery
-						? t`No plugins match "${debouncedQuery}".`
+			{shown && packages?.length === 0 ? (
+				<div
+					className="rounded-md border border-kumo-border bg-kumo-subtle p-8 text-center text-kumo-subtle"
+					aria-busy={isSafetyRefreshPending || undefined}
+				>
+					{shown.query
+						? t`No plugins match "${shown.query}".`
 						: t`No plugins have been published to this registry yet.`}
 				</div>
 			) : null}
 
 			{/* Grid */}
 			{packages && packages.length > 0 ? (
-				<div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+				<div
+					className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3"
+					aria-busy={isSafetyRefreshPending || undefined}
+				>
 					{packages.map((pkg) => (
 						<RegistryPackageCard
 							key={pkg.uri}
