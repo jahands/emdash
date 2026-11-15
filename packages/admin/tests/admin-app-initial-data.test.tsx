@@ -86,4 +86,26 @@ describe("AdminApp with the data the admin page embedded", () => {
 		await expect.poll(() => requested(fetchSpy, "/_emdash/api/auth/me")).toBe(1);
 		fetchSpy.mockRestore();
 	});
+
+	it("shows the sign-in card from the embedded auth mode without fetching it", async () => {
+		mockFetch = createMockFetch();
+		mockFetch.on("GET", "/_emdash/api/auth/mode", {
+			data: { authMode: "passkey", signupEnabled: false, providers: [] },
+		});
+		const fetchSpy = vi.spyOn(globalThis, "fetch");
+		window.history.replaceState(null, "", "/_emdash/admin/login");
+
+		const screen = await render(
+			<AdminApp
+				locale="en"
+				messages={{}}
+				initialAuthMode={{ authMode: "passkey", signupEnabled: true, providers: [] }}
+			/>,
+		);
+
+		await expect.element(screen.getByRole("link", { name: "Sign up" })).toBeVisible();
+		expect(screen.getByText("Loading...").query()).toBeNull();
+		expect(requested(fetchSpy, "/_emdash/api/auth/mode")).toBe(0);
+		fetchSpy.mockRestore();
+	});
 });

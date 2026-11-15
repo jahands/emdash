@@ -33,7 +33,9 @@ const FRAME_NAV_ITEMS = Array.from({ length: 8 });
 
 // Started before the shell is sent and awaited after it, so the browser loads
 // the admin's code while the database work runs.
-const bootDataScript = loadAdminBootData(Astro.locals).then(adminBootDataScript);
+const bootDataScript = loadAdminBootData(Astro.locals, adminRoutePath(Astro.url.pathname)).then(
+	adminBootDataScript,
+);
 const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
 const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls[DEFAULT_LOCALE];

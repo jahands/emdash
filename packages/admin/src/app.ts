@@ -4,6 +4,7 @@ export { AdminApp, type AdminAppProps, type AdminInitialData } from "./App";
 export { AdminBootError, type AdminBootErrorProps } from "./components/AdminBootError";
 export type { AdminBootErrorLabels } from "./locales/server";
 export type { AdminBranding } from "./lib/admin-branding-context";
+export type { AuthModeInfo } from "./lib/api/client";
 export type { AuthProviders } from "./lib/auth-provider-context";
 export type { PluginAdmins } from "./lib/plugin-context";
 export type { RoutePrefetchFiles } from "./lib/route-prefetch.js";

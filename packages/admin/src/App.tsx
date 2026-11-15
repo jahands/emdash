@@ -18,7 +18,7 @@ import * as React from "react";
 
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AdminBrandingProvider, type AdminBranding } from "./lib/admin-branding-context";
-import type { AdminManifest } from "./lib/api/client";
+import type { AdminManifest, AuthModeInfo } from "./lib/api/client";
 import type { CommentCounts } from "./lib/api/comments";
 import {
 	currentUserQueryKey,
@@ -131,6 +131,8 @@ export interface AdminAppProps {
 	routePrefetchFiles?: RoutePrefetchFiles;
 	/** The manifest and signed-in user the admin page embedded. Without them, the admin fetches both before showing a screen. */
 	initialData?: AdminInitialData;
+	/** The auth mode the signed-out login page embedded. Without it, the login page fetches it. */
+	initialAuthMode?: AuthModeInfo;
 }
 
 export interface AdminInitialData {
@@ -156,6 +158,7 @@ export function AdminApp({
 	messages = {},
 	routePrefetchFiles = NO_PREFETCH_FILES,
 	initialData,
+	initialAuthMode,
 }: AdminAppProps) {
 	// The admin's screens remove the boot loader as they first show. A screen
 	// that fails to render shows the router's error screen instead, which doesn't.
@@ -189,6 +192,9 @@ export function AdminApp({
 			if (initialData.commentCounts) {
 				queryClient.setQueryData(["commentCounts"], initialData.commentCounts);
 			}
+		}
+		if (initialAuthMode && queryClient.getQueryData(["authMode"]) === undefined) {
+			queryClient.setQueryData(["authMode"], initialAuthMode);
 		}
 	}
 

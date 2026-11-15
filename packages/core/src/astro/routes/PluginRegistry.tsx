@@ -4,6 +4,7 @@ import {
 	type AdminBootErrorLabels,
 	type AdminBranding,
 	type AdminInitialData,
+	type AuthModeInfo,
 	type PluginAdmins,
 	type RoutePrefetchFiles,
 } from "@emdash-cms/admin/app";
@@ -27,10 +28,14 @@ interface AdminWrapperProps {
 	routePrefetchFiles: RoutePrefetchFiles;
 }
 
-interface AdminBoot {
+interface EmbeddedData {
+	initialData?: AdminInitialData;
+	initialAuthMode?: AuthModeInfo;
+}
+
+interface AdminBoot extends EmbeddedData {
 	pluginAdmins: PluginAdmins;
 	messages: Messages;
-	initialData: AdminInitialData | undefined;
 }
 
 type BootState =
@@ -45,14 +50,15 @@ async function importMessages(url: string): Promise<Messages> {
 	return catalog.messages;
 }
 
-function parseInitialData(): AdminInitialData | undefined {
+function parseEmbeddedData(): EmbeddedData {
 	const json = document.getElementById(ADMIN_BOOT_DATA_ID)?.textContent;
-	if (!json) return undefined;
+	if (!json) return {};
 	try {
-		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- written by admin.astro from the manifest and auth/me routes' code
-		return JSON.parse(json) as AdminInitialData;
+		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- written by admin.astro from the manifest, auth/me and auth/mode routes' code
+		const data = JSON.parse(json) as AdminInitialData | { authMode: AuthModeInfo };
+		return "manifest" in data ? { initialData: data } : { initialAuthMode: data.authMode };
 	} catch {
-		return undefined;
+		return {};
 	}
 }
 
@@ -61,10 +67,10 @@ function parseInitialData(): AdminInitialData | undefined {
  * it, so the admin's code loads meanwhile. It has arrived by the time the
  * document is parsed.
  */
-function readInitialData(): Promise<AdminInitialData | undefined> {
-	if (document.readyState !== "loading") return Promise.resolve(parseInitialData());
+function readEmbeddedData(): Promise<EmbeddedData> {
+	if (document.readyState !== "loading") return Promise.resolve(parseEmbeddedData());
 	return new Promise((resolve) => {
-		document.addEventListener("DOMContentLoaded", () => resolve(parseInitialData()), {
+		document.addEventListener("DOMContentLoaded", () => resolve(parseEmbeddedData()), {
 			once: true,
 		});
 	});
@@ -73,8 +79,8 @@ function readInitialData(): Promise<AdminInitialData | undefined> {
 function loadAdminBoot(messagesUrl: string): Promise<AdminBoot> {
 	let boot = boots.get(messagesUrl);
 	if (!boot) {
-		boot = Promise.all([loadPluginAdmins(), importMessages(messagesUrl), readInitialData()]).then(
-			([{ pluginAdmins }, messages, initialData]) => ({ pluginAdmins, messages, initialData }),
+		boot = Promise.all([loadPluginAdmins(), importMessages(messagesUrl), readEmbeddedData()]).then(
+			([{ pluginAdmins }, messages, embedded]) => ({ pluginAdmins, messages, ...embedded }),
 		);
 		// The component handles a failure once its effect runs, which can be after the rejection.
 		boot.catch(() => {});
@@ -135,6 +141,7 @@ export default function AdminWrapper({
 			messages={state.boot.messages}
 			routePrefetchFiles={routePrefetchFiles}
 			initialData={state.boot.initialData}
+			initialAuthMode={state.boot.initialAuthMode}
 		/>
 	);
 }

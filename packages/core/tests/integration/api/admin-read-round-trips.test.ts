@@ -25,6 +25,7 @@ import { handleDashboardStats } from "../../../src/api/handlers/dashboard.js";
 import { handleMediaList } from "../../../src/api/handlers/media.js";
 import { GET as getCommentCounts } from "../../../src/astro/routes/api/admin/comments/counts.js";
 import { GET as getCurrentUser } from "../../../src/astro/routes/api/auth/me.js";
+import { GET as getAuthMode } from "../../../src/astro/routes/api/auth/mode.js";
 import { GET as getEntry } from "../../../src/astro/routes/api/content/[collection]/[id].js";
 import { GET as listEntries } from "../../../src/astro/routes/api/content/[collection]/index.js";
 import { GET as getManifest } from "../../../src/astro/routes/api/manifest.js";
@@ -195,7 +196,9 @@ describeEachDialect("admin read round trips", (dialect) => {
 		const me = await inRequest(() => getCurrentUser(routeContext("/auth/me")));
 		const counts = await inRequest(() => getCommentCounts(routeContext("/admin/comments/counts")));
 		spans.spans = [];
-		const embedded = await runWithContext({ editMode: false }, () => loadAdminBootData(locals));
+		const embedded = await runWithContext({ editMode: false }, () =>
+			loadAdminBootData(locals, "/"),
+		);
 
 		expect(embedded).toEqual({
 			manifest: JSON.parse(manifest.text).data,
@@ -205,6 +208,26 @@ describeEachDialect("admin read round trips", (dialect) => {
 		expect(sequentialWaves(spans.spans)).toBeLessThanOrEqual(MANIFEST_MAX_WAVES);
 		// The comment counts are one statement beside the manifest's reads.
 		expect(spans.spans.length).toBeLessThanOrEqual(MANIFEST_MAX_QUERIES + 1);
+	});
+
+	it("embeds in a signed-out login page what the auth/mode route returns, in its one query", async () => {
+		await ctx.db
+			.insertInto("allowed_domains")
+			.values({ domain: "example.com", default_role: Role.AUTHOR, enabled: 1 })
+			.execute();
+		const signedOut = { emdash: handlers } as unknown as APIContext["locals"];
+		const mode = await inRequest(() =>
+			getAuthMode({ ...context("/auth/mode", {}), locals: signedOut } as unknown as APIContext),
+		);
+		spans.spans = [];
+		const embedded = await runWithContext({ editMode: false }, () =>
+			loadAdminBootData(signedOut, "/login"),
+		);
+
+		expect(embedded).toEqual({ authMode: JSON.parse(mode.text).data });
+		expect(embedded).toMatchObject({ authMode: { signupEnabled: true } });
+		expect(spans.spans.length).toBe(mode.spans.length);
+		expect(spans.spans.length).toBe(1);
 	});
 
 	it("embeds no comment counts for users who can't moderate comments", async () => {
@@ -221,7 +244,7 @@ describeEachDialect("admin read round trips", (dialect) => {
 			updatedAt: new Date(),
 		};
 		const embedded = await runWithContext({ editMode: false }, () =>
-			loadAdminBootData({ emdash: handlers, user: author }),
+			loadAdminBootData({ emdash: handlers, user: author }, "/"),
 		);
 
 		expect(embedded).not.toBeNull();

@@ -55,7 +55,7 @@ describe("adminBootDataScript", () => {
 });
 
 describe("loadAdminBootData", () => {
-	it("returns nothing for an anonymous request without reading anything", async () => {
+	it("returns nothing for an anonymous request off the login page without reading anything", async () => {
 		const emdash = new Proxy(
 			{},
 			{
@@ -64,6 +64,6 @@ describe("loadAdminBootData", () => {
 				},
 			},
 		);
-		await expect(loadAdminBootData({ emdash } as never)).resolves.toBeNull();
+		await expect(loadAdminBootData({ emdash } as never, "/signup")).resolves.toBeNull();
 	});
 });
