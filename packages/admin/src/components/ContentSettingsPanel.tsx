@@ -695,15 +695,13 @@ export function PublishActions({
 				<LayerDialog.Body>{revisions ? <PublishEditedBy {...revisions} /> : null}</LayerDialog.Body>
 				<LayerDialog.Actions dismissLabel={t`Cancel`}>
 					<LayerDialog.Action
-						{...loadingButtonProps(isPending, { disabled })}
+						{...loadingButtonProps(isPending, { disabled, children: publishLabel })}
 						aria-label={publishLabel}
 						onClick={() => {
 							setConfirmationOpen(false);
 							onPublish();
 						}}
-					>
-						{publishLabel}
-					</LayerDialog.Action>
+					/>
 				</LayerDialog.Actions>
 			</LayerDialog.Content>
 		</LayerDialog.Root>

@@ -397,10 +397,8 @@ function PublishingDateTimeDialogContent({
 						event.preventDefault();
 						onSubmit();
 					}}
-					{...loadingButtonProps(pending, { disabled: submitDisabled })}
-				>
-					{submitLabel}
-				</LayerDialog.Action>
+					{...loadingButtonProps(pending, { disabled: submitDisabled, children: submitLabel })}
+				/>
 			</LayerDialog.Actions>
 		</LayerDialog.Content>
 	);

@@ -149,10 +149,8 @@ export function WelcomeModal({ open, onClose, userName, userRole }: WelcomeModal
 				<LayerDialog.Actions>
 					<LayerDialog.Action
 						onClick={handleGetStarted}
-						{...loadingButtonProps(dismissMutation.isPending, {})}
-					>
-						{t`Get Started`}
-					</LayerDialog.Action>
+						{...loadingButtonProps(dismissMutation.isPending, { children: t`Get Started` })}
+					/>
 				</LayerDialog.Actions>
 			</LayerDialog.Content>
 		</LayerDialog.Root>

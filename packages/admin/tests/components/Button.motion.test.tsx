@@ -6,7 +6,7 @@ import { cdp } from "vitest/browser";
 
 import "../../dist/styles.css";
 import { AdminBootError } from "../../src/components/AdminBootError.js";
-import { Button } from "../../src/components/Button.js";
+import { Button, loadingButtonProps } from "../../src/components/Button.js";
 import { PublishingScheduleDialog } from "../../src/components/PublishingDateTimeEditor.js";
 import { render } from "../utils/render.js";
 
@@ -71,36 +71,61 @@ describe("loading buttons", () => {
 		);
 	});
 
-	it("keep the size and look of Kumo's loading state", async () => {
-		const cases: React.ComponentProps<typeof KumoButton>[] = [
-			{ children: "Save" },
-			{ children: "Save", variant: "primary" },
-			{ children: "Add", icon: <Plus />, size: "sm" },
-			{ children: "Add", icon: <Plus />, size: "lg", variant: "outline" },
-			{ "aria-label": "Add", icon: <Plus />, shape: "square", size: "xs" },
-		];
-		const screen = await render(
-			<div className="flex flex-col items-start gap-2">
-				{cases.map((props, index) => (
-					<div key={index} className="flex gap-2">
-						<KumoButton {...props} loading data-testid={`kumo-${index}`} />
-						<Button {...props} loading data-testid={`admin-${index}`} />
+	it.each(["ltr", "rtl"] as const)(
+		"keep their size and name when they start and stop loading in %s",
+		async (dir) => {
+			const cases: React.ComponentProps<typeof KumoButton>[] = [
+				{ children: "Save" },
+				{ children: "Save", variant: "primary" },
+				{ children: "Save", size: "sm" },
+				{ children: "Save", size: "lg", variant: "destructive" },
+				{ children: "Add", icon: <Plus />, size: "sm" },
+				{ children: "Add", icon: <Plus />, size: "lg", variant: "outline" },
+				{ children: "Add", icon: Plus, variant: "primary" },
+				{ "aria-label": "Add", icon: <Plus /> },
+				{ "aria-label": "Add", icon: <Plus />, shape: "square", size: "xs" },
+				{ "aria-label": "Add", icon: <Plus />, shape: "circle", variant: "primary" },
+			];
+			const { icon, size, children, ...dialogProps } = cases[6]!;
+			const screen = await render(
+				<div dir={dir} className="flex flex-col items-start gap-2">
+					{cases.map((props, index) => (
+						<div key={index} className="flex gap-2">
+							<Button {...props} data-testid={`idle-${index}`} />
+							<Button {...props} loading data-testid={`loading-${index}`} />
+						</div>
+					))}
+					<div className="flex gap-2">
+						<KumoButton
+							{...dialogProps}
+							{...loadingButtonProps(false, { icon, size, children })}
+							data-testid="idle-dialog"
+						/>
+						<KumoButton
+							{...dialogProps}
+							{...loadingButtonProps(true, { icon, size, children })}
+							data-testid="loading-dialog"
+						/>
 					</div>
-				))}
-			</div>,
-		);
-
-		for (const [index] of cases.entries()) {
-			const kumo = screen.getByTestId(`kumo-${index}`).element() as HTMLElement;
-			const admin = screen.getByTestId(`admin-${index}`).element() as HTMLElement;
-			const kumoBox = kumo.getBoundingClientRect();
-			const adminBox = admin.getBoundingClientRect();
-			expect(adminBox.width).toBe(kumoBox.width);
-			expect(adminBox.height).toBe(kumoBox.height);
-			expect(getComputedStyle(admin).opacity).toBe(getComputedStyle(kumo).opacity);
-			expect(admin.querySelector("svg")!.getBoundingClientRect().width).toBe(
-				kumo.querySelector("svg")!.getBoundingClientRect().width,
+				</div>,
 			);
-		}
-	});
+
+			for (const key of [...cases.keys(), "dialog"]) {
+				const idle = screen.getByTestId(`idle-${key}`).element() as HTMLElement;
+				const loading = screen.getByTestId(`loading-${key}`).element() as HTMLElement;
+				const idleBox = idle.getBoundingClientRect();
+				const loadingBox = loading.getBoundingClientRect();
+				expect([loadingBox.width, loadingBox.height], `case ${key}`).toEqual([
+					idleBox.width,
+					idleBox.height,
+				]);
+				expect(loading).toHaveAccessibleName(idle.textContent || idle.getAttribute("aria-label")!);
+				const spinner = loading
+					.querySelector('[aria-hidden="true"] > svg')!
+					.getBoundingClientRect();
+				expect(spinner.left).toBeGreaterThanOrEqual(loadingBox.left);
+				expect(spinner.right).toBeLessThanOrEqual(loadingBox.right);
+			}
+		},
+	);
 });
