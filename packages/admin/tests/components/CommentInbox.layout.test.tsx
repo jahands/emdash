@@ -157,12 +157,13 @@ describe("Comment inbox at desktop width", () => {
 describe("Comment inbox while its comments load", () => {
 	function inbox(props: {
 		isLoading: boolean;
+		width?: number;
 		searchQuery?: string;
 		comments?: AdminComment[];
 		counts?: { pending: number; approved: number; spam: number; trash: number };
 	}) {
 		return (
-			<div style={{ width: 716 }}>
+			<div style={{ width: props.width ?? 716 }}>
 				<CommentInbox
 					comments={[]}
 					counts={{ pending: 0, approved: 1, spam: 0, trash: 0 }}
@@ -188,6 +189,28 @@ describe("Comment inbox while its comments load", () => {
 			</div>
 		);
 	}
+
+	it.each([1000, 716])(
+		"keeps its columns when the comments arrive in a %ipx table",
+		async (width) => {
+			const counts = { pending: 2, approved: 0, spam: 0, trash: 0 };
+			const screen = await render(inbox({ isLoading: true, counts, width }));
+			const before = snapshotPositions(screen.getByRole("table").element().querySelectorAll("th"));
+
+			const loaded = [
+				makeComment({ id: "comment-1" }),
+				makeComment({
+					id: "comment-2",
+					authorName: "Jonas Weber",
+					body: "I tried this on a much larger site and the numbers held up, thanks for writing it.",
+				}),
+			];
+			await screen.rerender(inbox({ isLoading: false, counts, width, comments: loaded }));
+
+			await expect.element(screen.getByText("Jonas Weber")).toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
 
 	it("doesn't move or replace anything when an empty tab finishes loading", async () => {
 		const screen = await render(inbox({ isLoading: true }));

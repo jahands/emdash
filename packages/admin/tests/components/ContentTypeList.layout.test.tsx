@@ -277,3 +277,23 @@ describe("Block types table", () => {
 		await expect.element(screen.getByText("2 versions")).not.toBeVisible();
 	});
 });
+
+describe("Block types while they load", () => {
+	it("keeps its columns when the block types arrive in a 1000px table", async () => {
+		const screen = await render(
+			<div style={{ width: 1000 }}>
+				<BlockTypeList blockTypes={[]} isLoading />
+			</div>,
+		);
+		const before = snapshotPositions(screen.getByRole("table").element().querySelectorAll("th"));
+
+		await screen.rerender(
+			<div style={{ width: 1000 }}>
+				<BlockTypeList blockTypes={blockTypes} />
+			</div>,
+		);
+
+		await expect.element(screen.getByText("Active v2")).toBeVisible();
+		expect(largestMovement(before)).toBeLessThan(1);
+	});
+});

@@ -404,7 +404,7 @@ export function BylinesPage() {
 										{item.websiteUrl ? (
 											<bdi
 												dir="ltr"
-												className="block w-fit max-w-44 truncate text-sm text-kumo-subtle"
+												className="block w-fit max-w-40 truncate text-sm text-kumo-subtle"
 												title={item.websiteUrl}
 											>
 												{item.websiteUrl}

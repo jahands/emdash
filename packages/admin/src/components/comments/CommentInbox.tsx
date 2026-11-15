@@ -360,10 +360,11 @@ export function CommentInbox({
 							/>
 						</th>
 						<th scope="col">{t`Comment`}</th>
-						<th scope="col" {...tertiaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-48" {...tertiaryColumn}>
 							{t`Content`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-36" {...tertiaryColumn}>
 							{t`Date`}
 						</th>
 						<th scope="col" className="w-0">
@@ -373,7 +374,10 @@ export function CommentInbox({
 				</thead>
 				<tbody>
 					{showLoading && placeholderRows > 0 ? (
-						<CommentPlaceholderRows rows={placeholderRows} />
+						<CommentPlaceholderRows
+							rows={placeholderRows}
+							approvable={activeStatus !== "approved"}
+						/>
 					) : paginatedComments.length === 0 ? (
 						<DataTableMessage colSpan={5}>
 							<EmptyState status={activeStatus} hasFilters={hasFilters} />
@@ -546,8 +550,11 @@ function PlaceholderLine({ widths, row }: { widths: readonly number[]; row: numb
 	return <SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />;
 }
 
-/** Rows shaped like `CommentRow`'s with a one-line excerpt, shown while a tab's comments load. */
-function CommentPlaceholderRows({ rows }: { rows: number }) {
+/**
+ * Rows shaped like `CommentRow`'s with a one-line excerpt, shown while a tab's comments load.
+ * Pass `approvable` when the tab's rows have an Approve button beside their "…" button.
+ */
+function CommentPlaceholderRows({ rows, approvable }: { rows: number; approvable: boolean }) {
 	const { t } = useLingui();
 	return Array.from({ length: rows }, (_, row) => (
 		<tr key={row} aria-hidden={row > 0 || undefined}>
@@ -580,7 +587,7 @@ function CommentPlaceholderRows({ rows }: { rows: number }) {
 				</div>
 			</td>
 			<td>
-				<div aria-hidden="true" className="size-6.5" />
+				<div aria-hidden="true" className={approvable ? "h-6.5 w-14" : "size-6.5"} />
 			</td>
 		</tr>
 	));

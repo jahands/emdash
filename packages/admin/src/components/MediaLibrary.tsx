@@ -1409,13 +1409,14 @@ export function MediaLibrary({
 								{t`Preview`}
 							</th>
 							<th scope="col">{t`Filename`}</th>
-							<th scope="col" {...tertiaryColumn}>
+							{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+							<th scope="col" className="w-48" {...tertiaryColumn}>
 								{t`Type`}
 							</th>
-							<th scope="col" {...tertiaryColumn}>
+							<th scope="col" className="w-28" {...tertiaryColumn}>
 								{t`Size`}
 							</th>
-							<th scope="col" className="text-end" {...tertiaryColumn}>
+							<th scope="col" className="w-32 text-end" {...tertiaryColumn}>
 								{t`Alt text`}
 							</th>
 						</tr>

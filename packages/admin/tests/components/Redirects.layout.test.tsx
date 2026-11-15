@@ -4,6 +4,7 @@ import { page } from "vitest/browser";
 
 import "../../dist/styles.css";
 import type { NotFoundSummary, Redirect } from "../../src/lib/api/redirects.js";
+import { deferred, largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 vi.mock("../../src/lib/api/redirects.js", () => ({
@@ -223,4 +224,55 @@ describe("Disabled redirects", () => {
 		for (const part of parts) expect(shownOpacity(part)).toBe(0.5);
 		for (const part of shownParts(enabled)) expect(shownOpacity(part)).toBe(1);
 	});
+});
+
+describe("Redirects while they load", () => {
+	function renderAt(width: number) {
+		return render(
+			<Toasty>
+				<div style={{ width }}>
+					<Redirects />
+				</div>
+			</Toasty>,
+		);
+	}
+
+	it.each([1000, 560])(
+		"keeps the redirect columns when the rules arrive in a %ipx table",
+		async (width) => {
+			const response = deferred<Awaited<ReturnType<typeof fetchRedirects>>>();
+			vi.mocked(fetchRedirects).mockReturnValueOnce(response.promise);
+			const screen = await renderAt(width);
+			const table = screen.getByRole("table");
+			await expect.element(table.getByRole("status")).toBeInTheDocument();
+			const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+			response.resolve({ items: redirects, loopRedirectIds: [] });
+
+			await expect
+				.element(screen.getByRole("button", { name: "Edit redirect /loop-a" }))
+				.toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
+
+	it.each([1000, 560])(
+		"keeps the 404 columns when the paths arrive in a %ipx table",
+		async (width) => {
+			const response = deferred<NotFoundSummary[]>();
+			vi.mocked(fetch404Summary).mockReturnValueOnce(response.promise);
+			const screen = await renderAt(width);
+			await screen.getByRole("tab", { name: "404 Errors" }).click();
+			const table = screen.getByRole("table");
+			await expect.element(table.getByRole("status")).toBeInTheDocument();
+			const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+			response.resolve(notFound);
+
+			await expect
+				.element(screen.getByRole("button", { name: "Create redirect for /team" }))
+				.toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
 });

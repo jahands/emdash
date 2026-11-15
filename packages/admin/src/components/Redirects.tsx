@@ -360,13 +360,14 @@ function NotFoundPanel({
 				<thead>
 					<tr>
 						<th scope="col">{t`Path`}</th>
-						<th scope="col" className="text-end" {...secondaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-24 text-end" {...secondaryColumn}>
 							{t`Hits`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-36" {...tertiaryColumn}>
 							{t`Last seen`}
 						</th>
-						<th scope="col" className="w-0">
+						<th scope="col" className="w-28">
 							<span className="sr-only">{t`Actions`}</span>
 						</th>
 					</tr>
@@ -793,13 +794,16 @@ export function Redirects() {
 										</span>
 									</span>
 								</th>
-								<th scope="col" {...tertiaryColumn}>
+								{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+								<th scope="col" className="w-24" {...tertiaryColumn}>
 									{t`Code`}
 								</th>
-								<th scope="col" className="text-end" {...tertiaryColumn}>
+								<th scope="col" className="w-24 text-end" {...tertiaryColumn}>
 									{t`Hits`}
 								</th>
-								<th scope="col">{t`Status`}</th>
+								<th scope="col" className="w-20">
+									{t`Status`}
+								</th>
 								<th scope="col" className="w-0">
 									<span className="sr-only">{t`Actions`}</span>
 								</th>

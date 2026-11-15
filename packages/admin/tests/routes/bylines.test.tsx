@@ -13,6 +13,7 @@ import {
 } from "../../src/lib/api";
 import type { BylineSummary } from "../../src/lib/api/bylines";
 import { BylinesPage } from "../../src/routes/bylines";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.tsx";
 import { QueryWrapper } from "../utils/test-helpers.tsx";
 
@@ -237,6 +238,41 @@ describe("BylinesPage loading", () => {
 		}
 		expect(emptyStates).toEqual([]);
 		expect(table.getByRole("status").query()).toBeNull();
+	});
+
+	it("keeps its columns when bylines with a long website arrive in a 1000px table", async () => {
+		const list = deferred<{ items: BylineSummary[]; nextCursor: undefined }>();
+		fetchBylinesMock.mockReturnValueOnce(list.promise);
+		const screen = await render(
+			<div style={{ width: 1000 }}>
+				<QueryWrapper>
+					<Toast.Provider>
+						<BylinesPage />
+					</Toast.Provider>
+				</QueryWrapper>
+			</div>,
+		);
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("status")).toBeInTheDocument();
+		const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+		list.resolve({
+			items: [
+				guestByline,
+				{
+					...guestByline,
+					id: "staff",
+					displayName: "Staff Writer",
+					isGuest: false,
+					userId: "user-1",
+					websiteUrl: "https://regional-newsroom-partnership.example.com/writers/staff",
+				},
+			],
+			nextCursor: undefined,
+		});
+
+		await expect.element(screen.getByRole("button", { name: "Edit Staff Writer" })).toBeVisible();
+		expect(largestMovement(before)).toBeLessThan(1);
 	});
 
 	it("keeps the page when the bylines fail to load, and loads them again on request", async () => {

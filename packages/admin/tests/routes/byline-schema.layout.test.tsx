@@ -5,6 +5,7 @@ import { page } from "vitest/browser";
 
 import "../../dist/styles.css";
 import type { BylineFieldDefinition } from "../../src/lib/api/byline-fields.js";
+import { deferred, largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 vi.mock("../../src/lib/api/current-user", () => ({
@@ -48,6 +49,7 @@ vi.mock("../../src/lib/api/byline-fields", async () => {
 });
 
 const { BylineSchemaPage } = await import("../../src/routes/byline-schema");
+const { listBylineFields } = await import("../../src/lib/api/byline-fields");
 
 function renderPage(width: number) {
 	const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -119,4 +121,25 @@ describe("Byline fields table at tablet width", () => {
 		).toBe(1);
 		expect(visibleCount(screen.getByText("url", { exact: true }).elements())).toBe(1);
 	});
+});
+
+describe("Byline fields table while fields load", () => {
+	it.each([1000, 560])(
+		"keeps its columns when the fields arrive in a %ipx table",
+		async (width) => {
+			const response = deferred<{ items: BylineFieldDefinition[] }>();
+			vi.mocked(listBylineFields).mockReturnValueOnce(response.promise);
+			const screen = await renderPage(width);
+			const table = screen.getByRole("table");
+			await expect.element(table.getByRole("status")).toBeInTheDocument();
+			const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+			response.resolve({ items: fields });
+
+			await expect
+				.element(screen.getByRole("button", { name: "Edit Mastodon profile handle" }))
+				.toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
 });

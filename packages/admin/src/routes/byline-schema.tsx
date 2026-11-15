@@ -217,16 +217,17 @@ export function BylineSchemaPage() {
 				<thead>
 					<tr>
 						<th scope="col">{t`Label`}</th>
-						<th scope="col" {...secondaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-48" {...secondaryColumn}>
 							{t`Slug`}
 						</th>
-						<th scope="col" {...secondaryColumn}>
+						<th scope="col" className="w-32" {...secondaryColumn}>
 							{t`Type`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-40" {...tertiaryColumn}>
 							{t`Translatable`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-28" {...tertiaryColumn}>
 							{t`Required`}
 						</th>
 						<th scope="col" className="w-0">

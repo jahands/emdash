@@ -98,13 +98,14 @@ export function RelationList({
 				<thead>
 					<tr>
 						<th scope="col">{t`Slug`}</th>
-						<th scope="col" {...secondaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-48" {...secondaryColumn}>
 							{t`Connects`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-48" {...tertiaryColumn}>
 							{t`Fields`}
 						</th>
-						<th scope="col" {...secondaryColumn}>
+						<th scope="col" className="w-32" {...secondaryColumn}>
 							{t`Links`}
 						</th>
 						<th scope="col" className="w-0">

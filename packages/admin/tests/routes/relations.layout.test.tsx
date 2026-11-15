@@ -4,6 +4,7 @@ import { page } from "vitest/browser";
 import "../../dist/styles.css";
 import { RelationList } from "../../src/components/RelationList.js";
 import type { RelationWithUsage } from "../../src/lib/api/relations.js";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 vi.mock("@tanstack/react-router", async () => {
@@ -51,18 +52,25 @@ const relations: RelationWithUsage[] = [
 	},
 ];
 
-function renderList(width: number) {
-	return render(
+function relationList(
+	width: number,
+	props: { relations: RelationWithUsage[]; isLoading?: boolean },
+) {
+	return (
 		<div style={{ width }}>
 			<RelationList
-				relations={relations}
 				collections={[]}
 				onCreateRelation={vi.fn(async () => ({}))}
 				onUpdateRelation={vi.fn(async () => ({}))}
 				onDeleteRelation={vi.fn(async () => ({}))}
+				{...props}
 			/>
-		</div>,
+		</div>
 	);
+}
+
+function renderList(width: number) {
+	return render(relationList(width, { relations }));
 }
 
 type Screen = Awaited<ReturnType<typeof renderList>>;
@@ -146,4 +154,21 @@ describe("Relations table at desktop width", () => {
 
 		expect(range.getClientRects()).toHaveLength(1);
 	});
+});
+
+describe("Relations table while relations load", () => {
+	it.each([1000, 560])(
+		"keeps its columns when the relations arrive in a %ipx table",
+		async (width) => {
+			const screen = await render(relationList(width, { relations: [], isLoading: true }));
+			const before = snapshotPositions(screen.getByRole("table").element().querySelectorAll("th"));
+
+			await screen.rerender(relationList(width, { relations }));
+
+			await expect
+				.element(screen.getByRole("button", { name: "Edit posts_authors" }))
+				.toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
 });

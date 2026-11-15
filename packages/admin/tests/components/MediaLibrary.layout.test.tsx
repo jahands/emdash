@@ -7,6 +7,7 @@ import "../../dist/styles.css";
 import { MediaLibrary } from "../../src/components/MediaLibrary.js";
 import type { LocalMediaItem, MediaFolder, MediaItem } from "../../src/lib/api/media.js";
 import { formatFileSize } from "../../src/lib/media-utils.js";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 vi.mock("../../src/lib/api", async (importOriginal) => ({
@@ -413,5 +414,28 @@ describe("Media Library list view hover", () => {
 		await hoverRow(folderRow);
 		expect(backgrounds(hovered)).toEqual(resting);
 		expect(backgrounds(folderRow)).toEqual(folderResting);
+	});
+});
+
+describe("Media Library list view while files load", () => {
+	it("keeps its columns when a folder's files arrive in a 1000px table", async () => {
+		const library = (props: React.ComponentProps<typeof MediaLibrary>) => (
+			<Toasty>
+				<div style={{ width: 1000 }}>
+					<MediaLibrary folders={folders} {...props} />
+				</div>
+			</Toasty>
+		);
+		const screen = await render(library({ items: listItems }));
+		await screen.getByRole("tab", { name: "List view" }).click();
+		await screen.rerender(library({ items: [], isLoading: true }));
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("status")).toBeInTheDocument();
+		const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+		await screen.rerender(library({ items: listItems }));
+
+		await expect.element(screen.getByRole("button", { name: "a.txt", exact: true })).toBeVisible();
+		expect(largestMovement(before)).toBeLessThan(1);
 	});
 });

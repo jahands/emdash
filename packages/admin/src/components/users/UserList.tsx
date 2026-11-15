@@ -109,16 +109,17 @@ export function UserList({
 				<thead>
 					<tr>
 						<th scope="col">{t`User`}</th>
-						<th scope="col" {...secondaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-36" {...secondaryColumn}>
 							{t`Role`}
 						</th>
-						<th scope="col" {...secondaryColumn}>
+						<th scope="col" className="w-32" {...secondaryColumn}>
 							{t`Status`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-36" {...tertiaryColumn}>
 							{t`Last Login`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-28" {...tertiaryColumn}>
 							{t`Passkeys`}
 						</th>
 					</tr>
