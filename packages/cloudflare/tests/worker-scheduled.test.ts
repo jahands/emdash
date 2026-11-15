@@ -2,7 +2,9 @@ import { beforeEach, expect, it, vi } from "vitest";
 
 const scheduled = vi.hoisted(() => ({
 	general: vi.fn(
-		async (_options?: unknown): Promise<{ published: Array<{ collection: string; id: string }> }> => ({
+		async (
+			_options?: unknown,
+		): Promise<{ published: Array<{ collection: string; id: string }> }> => ({
 			published: [],
 		}),
 	),
