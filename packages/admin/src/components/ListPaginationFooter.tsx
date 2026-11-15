@@ -1,4 +1,4 @@
-import { Pagination } from "@cloudflare/kumo";
+import { Pagination, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
@@ -19,6 +19,8 @@ interface ListPaginationFooterProps {
 	pageSizes: number[];
 	/** Accessible name of the pagination navigation. */
 	label: string;
+	/** The list's first page hasn't answered: the footer holds its place, inert, with no count. */
+	loading?: boolean;
 }
 
 /**
@@ -26,7 +28,12 @@ interface ListPaginationFooterProps {
  * Render it as the last child of a `flex min-h-full flex-col` page so short
  * lists keep it at the bottom of the viewport.
  */
-export function ListPaginationFooter({ pagination, pageSizes, label }: ListPaginationFooterProps) {
+export function ListPaginationFooter({
+	pagination,
+	pageSizes,
+	label,
+	loading = false,
+}: ListPaginationFooterProps) {
 	const { t } = useLingui();
 	const paginationRootRef = React.useRef<HTMLElement>(null);
 	const requestRef = React.useRef<{
@@ -96,6 +103,7 @@ export function ListPaginationFooter({ pagination, pageSizes, label }: ListPagin
 	return (
 		<footer
 			ref={paginationRootRef}
+			inert={loading || undefined}
 			className="sticky -bottom-6 z-10 -mx-6 mt-auto -mb-6 flex min-h-12 min-w-0 shrink-0 items-center border-t border-kumo-line bg-kumo-elevated px-6 py-1"
 		>
 			<Pagination
@@ -114,11 +122,18 @@ export function ListPaginationFooter({ pagination, pageSizes, label }: ListPagin
 					pageSize: t`Page size`,
 				}}
 			>
-				<Pagination.Info className="min-w-fit">
-					{({ pageShowingRange, totalCount }) => (
-						<span role="status">{t`Showing ${pageShowingRange} of ${totalCount ?? 0}`}</span>
-					)}
-				</Pagination.Info>
+				{/* Wide enough for most counts, so the controls after it don't move when the count replaces the placeholder. */}
+				{loading ? (
+					<Pagination.Info className="w-40 shrink-0">
+						{() => <SkeletonLine blockHeight="1lh" minWidth={70} maxWidth={70} />}
+					</Pagination.Info>
+				) : (
+					<Pagination.Info className="min-w-40 shrink-0">
+						{({ pageShowingRange, totalCount }) => (
+							<span role="status">{t`Showing ${pageShowingRange} of ${totalCount ?? 0}`}</span>
+						)}
+					</Pagination.Info>
+				)}
 				<Pagination.Separator className="hidden sm:block" />
 				<div inert={pagination.isPending || undefined} className="contents">
 					<Pagination.PageSize

@@ -155,7 +155,12 @@ describe("Comment inbox at desktop width", () => {
 });
 
 describe("Comment inbox while its comments load", () => {
-	function inbox(props: { isLoading: boolean; searchQuery?: string }) {
+	function inbox(props: {
+		isLoading: boolean;
+		searchQuery?: string;
+		comments?: AdminComment[];
+		counts?: { pending: number; approved: number; spam: number; trash: number };
+	}) {
 		return (
 			<div style={{ width: 716 }}>
 				<CommentInbox
@@ -193,6 +198,23 @@ describe("Comment inbox while its comments load", () => {
 		await screen.rerender(inbox({ isLoading: false }));
 
 		expect(screen.getByRole("table").element()).toBe(table);
+		expect(largestMovement(before)).toBe(0);
+	});
+
+	it("holds the page controls in place while a tab with more than a page of comments loads", async () => {
+		const counts = { pending: 45, approved: 0, spam: 0, trash: 0 };
+		const screen = await render(inbox({ isLoading: true, counts }));
+		const next = screen.getByRole("button", { name: "Next page" });
+		await expect.element(next).toBeDisabled();
+		const before = snapshotPositions([next.element()]);
+
+		const loaded = Array.from({ length: 45 }, (_, index) =>
+			makeComment({ id: `comment-${index}`, authorName: `Reader ${index}`, body: "Thanks!" }),
+		);
+		await screen.rerender(inbox({ isLoading: false, counts, comments: loaded }));
+
+		await expect.element(screen.getByText("1 / 3")).toBeVisible();
+		await expect.element(next).toBeEnabled();
 		expect(largestMovement(before)).toBe(0);
 	});
 

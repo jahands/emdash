@@ -541,8 +541,14 @@ export function ContentList({
 		</TableToolbar>
 	);
 
+	// Until the first page of a list answers, the footer is held in outline. The trash's
+	// count is known from the list, so a trash known to be empty holds nothing.
+	const allFooterPending = !!pagination && !!isLoading;
+	const trashFooterPending = !!trashPagination && !!isTrashedLoading && trashedCount > 0;
 	const tabPagination = activeTab === "all" ? pagination : trashPagination;
-	const showPaginationFooter = !!tabPagination && tabPagination.totalCount > 0;
+	const showPaginationFooter =
+		(!!tabPagination && tabPagination.totalCount > 0) ||
+		(activeTab === "all" ? allFooterPending : trashFooterPending);
 
 	return (
 		<div
@@ -826,6 +832,7 @@ export function ContentList({
 								</DataTableMessage>
 							) : items.length === 0 && (isLoading || pagination?.isPending) ? (
 								<DataTablePlaceholderRows
+									rows={pagination?.perPage}
 									cells={[
 										...(bulkEnabled ? (["empty"] as const) : []),
 										"title",
@@ -931,12 +938,13 @@ export function ContentList({
 						</div>
 					)}
 
-					{pagination && pagination.totalCount > 0 && (
+					{pagination && (pagination.totalCount > 0 || allFooterPending) && (
 						<ListPaginationFooter
 							key="all"
 							pagination={pagination}
 							pageSizes={CONTENT_LIST_PAGE_SIZES}
 							label={t`${collectionLabel} pagination`}
+							loading={pagination.totalCount === 0}
 						/>
 					)}
 				</>
@@ -963,6 +971,11 @@ export function ContentList({
 						<tbody inert={trashPagination?.isPending || undefined}>
 							{trashedItems.length === 0 && (isTrashedLoading || trashPagination?.isPending) ? (
 								<DataTablePlaceholderRows
+									rows={
+										trashPagination && trashedCount > 0
+											? Math.min(trashedCount, trashPagination.perPage)
+											: undefined
+									}
 									cells={["title", ...(i18n ? (["tertiary"] as const) : []), "tertiary", "actions"]}
 								/>
 							) : trashedItems.length === 0 ? (
@@ -991,12 +1004,13 @@ export function ContentList({
 						</div>
 					)}
 
-					{trashPagination && trashPagination.totalCount > 0 && (
+					{trashPagination && (trashPagination.totalCount > 0 || trashFooterPending) && (
 						<ListPaginationFooter
 							key="trash"
 							pagination={trashPagination}
 							pageSizes={CONTENT_LIST_PAGE_SIZES}
 							label={t`Trash pagination`}
+							loading={trashPagination.totalCount === 0}
 						/>
 					)}
 				</>

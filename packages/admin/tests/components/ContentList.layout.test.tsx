@@ -731,6 +731,66 @@ describe("Content list while its first page loads", () => {
 	);
 });
 
+describe("Content list footer while its first page loads", () => {
+	it.each([
+		{ width: 1280, direction: "ltr" },
+		{ width: 390, direction: "rtl" },
+	])(
+		"holds the footer where the page controls arrive at $width px in $direction",
+		async ({ width, direction }) => {
+			await page.viewport(width, 800);
+			const props = {
+				collection: "posts",
+				collectionLabel: "Posts",
+				onSearchChange: vi.fn(),
+				onStatusFilterChange: vi.fn(),
+			};
+			const shell = (list: React.ReactNode) => (
+				<main dir={direction} style={{ height: "100vh", overflowY: "auto", padding: 24 }}>
+					{list}
+				</main>
+			);
+			const loading = { ...pagination(0), perPage: 20, isPending: true };
+			const screen = await render(
+				shell(<ContentList {...props} items={[]} isLoading pagination={loading} />),
+			);
+			await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+			const held = document.querySelector("footer")!.getBoundingClientRect();
+
+			await screen.rerender(
+				shell(
+					<ContentList
+						{...props}
+						items={posts.slice(0, 20)}
+						pagination={{ ...pagination(61), perPage: 20 }}
+					/>,
+				),
+			);
+			const navigation = screen.getByRole("navigation", { name: "Posts pagination" });
+			await expect.element(navigation).toBeVisible();
+			const footer = navigation.element().closest("footer")!.getBoundingClientRect();
+
+			expect(document.querySelectorAll("footer")).toHaveLength(1);
+			expect([footer.top, footer.height]).toEqual([held.top, held.height]);
+		},
+	);
+
+	it("drops the footer once the list turns out to be empty", async () => {
+		const props = { collection: "posts", collectionLabel: "Posts" };
+		const loading = { ...pagination(0), perPage: 20, isPending: true };
+		const screen = await render(
+			<ContentList {...props} items={[]} isLoading pagination={loading} />,
+		);
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+		expect(document.querySelector("footer")).not.toBeNull();
+
+		await screen.rerender(<ContentList {...props} items={[]} pagination={pagination(0)} />);
+
+		await expect.element(screen.getByText("No posts yet.", { exact: false })).toBeVisible();
+		expect(document.querySelector("footer")).toBeNull();
+	});
+});
+
 describe("Content list placeholder rows", () => {
 	const rowTops = () =>
 		Array.from(document.querySelectorAll("tbody > tr"), (row) =>
@@ -741,7 +801,7 @@ describe("Content list placeholder rows", () => {
 		{ width: 1280, direction: "ltr" },
 		{ width: 390, direction: "rtl" },
 	])(
-		"stand in for several entries at their size at $width px in $direction",
+		"stand in for a full page of entries at their size at $width px in $direction",
 		async ({ width, direction }) => {
 			await page.viewport(width, 800);
 			const props = {
@@ -757,7 +817,7 @@ describe("Content list placeholder rows", () => {
 						{...props}
 						items={[]}
 						isLoading
-						pagination={{ ...pagination(0), isPending: true }}
+						pagination={{ ...pagination(0), perPage: 20, isPending: true }}
 					/>
 				</div>,
 			);
@@ -766,13 +826,17 @@ describe("Content list placeholder rows", () => {
 
 			await screen.rerender(
 				<div dir={direction}>
-					<ContentList {...props} items={posts.slice(0, 20)} pagination={pagination(20)} />
+					<ContentList
+						{...props}
+						items={posts.slice(0, 20)}
+						pagination={{ ...pagination(61), perPage: 20 }}
+					/>
 				</div>,
 			);
 			await expect.element(screen.getByRole("link", { name: "Post 0", exact: true })).toBeVisible();
 
-			expect(placeholders.length).toBeGreaterThan(1);
-			expect(rowTops().slice(0, placeholders.length)).toEqual(placeholders);
+			expect(placeholders).toHaveLength(20);
+			expect(rowTops()).toEqual(placeholders);
 		},
 	);
 });

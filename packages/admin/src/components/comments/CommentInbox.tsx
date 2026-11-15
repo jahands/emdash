@@ -5,7 +5,7 @@
  * table with row actions, bulk selection, and detail slide-over.
  */
 
-import { Badge, Button, Checkbox, DropdownMenu, Select } from "@cloudflare/kumo";
+import { Badge, Button, Checkbox, DropdownMenu, Select, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import {
@@ -32,7 +32,6 @@ import {
 	DataTable,
 	DataTableBulkBar,
 	DataTableMessage,
-	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	RowTitleButton,
@@ -145,9 +144,9 @@ export function CommentInbox({
 	// The tab's count says how many rows are coming, so the placeholders take
 	// their space, and a tab known to be empty shows so without loading.
 	const placeholderRows =
-		counts && !hasFilters
-			? Math.min(counts[activeStatus], PLACEHOLDER_ROW_COUNT)
-			: PLACEHOLDER_ROW_COUNT;
+		counts && !hasFilters ? Math.min(counts[activeStatus], PAGE_SIZE) : PLACEHOLDER_ROW_COUNT;
+	// The tab's count also says whether the rows coming fill more than a page.
+	const pagingPending = showLoading && !hasFilters && (counts?.[activeStatus] ?? 0) > PAGE_SIZE;
 
 	// Bulk select
 	const allOnPageSelected =
@@ -374,10 +373,7 @@ export function CommentInbox({
 				</thead>
 				<tbody>
 					{showLoading && placeholderRows > 0 ? (
-						<DataTablePlaceholderRows
-							cells={["empty", "title", "tertiary", "tertiary", "actions"]}
-							rows={placeholderRows}
-						/>
+						<CommentPlaceholderRows rows={placeholderRows} />
 					) : paginatedComments.length === 0 ? (
 						<DataTableMessage colSpan={5}>
 							<EmptyState status={activeStatus} hasFilters={hasFilters} />
@@ -406,28 +402,40 @@ export function CommentInbox({
 			</DataTable>
 
 			{/* Pagination */}
-			{(totalPages > 1 || nextCursor) && (
+			{(totalPages > 1 || nextCursor || pagingPending) && (
 				<div className="flex items-center justify-between">
-					<span className="text-sm text-kumo-subtle">
-						{plural(comments.length, { one: "# comment", other: "# comments" })}
-					</span>
+					{pagingPending ? (
+						<div className="w-24" aria-hidden="true">
+							<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+						</div>
+					) : (
+						<span className="text-sm text-kumo-subtle">
+							{plural(comments.length, { one: "# comment", other: "# comments" })}
+						</span>
+					)}
 					<div className="flex items-center gap-2">
 						<Button
 							variant="outline"
 							shape="square"
-							disabled={page === 0}
+							disabled={page === 0 || pagingPending}
 							onClick={() => setPage(page - 1)}
 							aria-label={t`Previous page`}
 						>
 							<CaretPrev className="h-4 w-4" />
 						</Button>
-						<span className="text-sm">
-							{page + 1} / {totalPages}
-						</span>
+						{pagingPending ? (
+							<div className="w-10" aria-hidden="true">
+								<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+							</div>
+						) : (
+							<span className="text-sm">
+								{page + 1} / {totalPages}
+							</span>
+						)}
 						<Button
 							variant="outline"
 							shape="square"
-							disabled={page >= totalPages - 1 && !nextCursor}
+							disabled={(page >= totalPages - 1 && !nextCursor) || pagingPending}
 							onClick={() => {
 								if (page >= totalPages - 1 && nextCursor) {
 									onLoadMore();
@@ -526,6 +534,56 @@ interface CommentRowProps {
 	onDelete: (id: string) => void;
 	isAdmin: boolean;
 	isStatusPending: boolean;
+}
+
+// Fixed per row, so placeholders shown again after a remount keep their shape.
+const PLACEHOLDER_AUTHOR_WIDTHS = [30, 42, 26, 36, 48];
+const PLACEHOLDER_EXCERPT_WIDTHS = [72, 58, 80, 64, 50];
+const PLACEHOLDER_TEXT_WIDTHS = [70, 85, 60, 78, 66];
+
+function PlaceholderLine({ widths, row }: { widths: readonly number[]; row: number }) {
+	const width = widths[row % widths.length] ?? 60;
+	return <SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />;
+}
+
+/** Rows shaped like `CommentRow`'s with a one-line excerpt, shown while a tab's comments load. */
+function CommentPlaceholderRows({ rows }: { rows: number }) {
+	const { t } = useLingui();
+	return Array.from({ length: rows }, (_, row) => (
+		<tr key={row} aria-hidden={row > 0 || undefined}>
+			<td>
+				{row === 0 && (
+					<span role="status" className="sr-only">
+						{t`Loading...`}
+					</span>
+				)}
+			</td>
+			<td>
+				<div aria-hidden="true">
+					<PlaceholderLine widths={PLACEHOLDER_AUTHOR_WIDTHS} row={row} />
+					<div className="mt-0.5">
+						<PlaceholderLine widths={PLACEHOLDER_EXCERPT_WIDTHS} row={row} />
+					</div>
+					<div className="mt-1 @2xl:hidden">
+						<PlaceholderLine widths={PLACEHOLDER_AUTHOR_WIDTHS} row={row + 2} />
+					</div>
+				</div>
+			</td>
+			<td {...tertiaryColumn}>
+				<div aria-hidden="true">
+					<PlaceholderLine widths={PLACEHOLDER_TEXT_WIDTHS} row={row} />
+				</div>
+			</td>
+			<td {...tertiaryColumn}>
+				<div aria-hidden="true">
+					<PlaceholderLine widths={PLACEHOLDER_TEXT_WIDTHS} row={row + 1} />
+				</div>
+			</td>
+			<td>
+				<div aria-hidden="true" className="size-6.5" />
+			</td>
+		</tr>
+	));
 }
 
 function CommentRow({
