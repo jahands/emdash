@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, Loader, Radio, Select, SkeletonLine } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Radio, Select, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -23,6 +23,7 @@ import type { UserListItem } from "../../../lib/api/users.js";
 import { formatFileSize } from "../../../lib/media-utils.js";
 import { ConfirmDialog } from "../../ConfirmDialog.js";
 import { getMutationError } from "../../DialogError.js";
+import { Spinner } from "../../Spinner.js";
 import { SettingRow } from "../SettingsLayout.js";
 import { CopyableDigest } from "./CopyableDigest.js";
 import {
@@ -517,7 +518,7 @@ export function PlanReview({
 				<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
 					{decisionsMutation.isPending || reloadMutation.isPending ? (
 						<span className="flex items-center gap-2 text-sm text-kumo-subtle" role="status">
-							<Loader size="sm" />
+							<Spinner size="sm" />
 							{reloadMutation.isPending ? t`Reloading the plan…` : t`Updating the plan…`}
 						</span>
 					) : plan.blockers.length > 0 ? (

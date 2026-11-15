@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, LinkButton, Loader, Meter, Switch } from "@cloudflare/kumo";
+import { Badge, Banner, Button, LinkButton, Meter, Switch } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { DownloadSimple } from "@phosphor-icons/react";
@@ -18,6 +18,7 @@ import {
 import { formatFileSize } from "../../../lib/media-utils.js";
 import { canStreamToDisk } from "../../../lib/save-file.js";
 import { getMutationError } from "../../DialogError.js";
+import { Spinner } from "../../Spinner.js";
 import { SettingRow, SettingsSection } from "../SettingsLayout.js";
 import { CopyableDigest } from "./CopyableDigest.js";
 import { ExportDownloadStatus, useExportDownload } from "./ExportDownload.js";
@@ -122,7 +123,7 @@ export function ExportSection() {
 							})
 						}
 						disabled={running !== null || startMutation.isPending || exportsQuery.isPending}
-						icon={startMutation.isPending ? <Loader size="sm" /> : undefined}
+						icon={startMutation.isPending ? <Spinner size="sm" /> : undefined}
 					>
 						{startMutation.isPending ? t`Starting…` : t`Export site`}
 					</Button>
@@ -333,7 +334,7 @@ function ExportProgress({
 	}
 	return (
 		<div className="flex items-start gap-3" role="status" aria-live="polite">
-			<Loader size="sm" />
+			<Spinner size="sm" />
 			<div className="min-w-0 flex-1 text-sm leading-5">
 				<p className="font-medium">{t`Exporting: ${stage}`}</p>
 				{progress && progress.total > 0 ? (

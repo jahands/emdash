@@ -7,7 +7,6 @@ import {
 	LayerCard,
 	LayerDialog,
 	LinkButton,
-	Loader,
 	Select,
 	Text,
 } from "@cloudflare/kumo";
@@ -88,6 +87,7 @@ import type {
 import { SaveButton } from "./SaveButton";
 import { SeoPanel } from "./SeoPanel";
 import { declaredLabelTranslator } from "./Sidebar.js";
+import { Spinner } from "./Spinner.js";
 import { TaxonomySidebar, useHasApplicableTaxonomies } from "./TaxonomySidebar";
 import { TranslationsPanel } from "./TranslationsPanel.js";
 
@@ -507,7 +507,7 @@ export function PreviewButton({
 			className={compact ? compactBarButtonClassName : undefined}
 			onClick={onPreview}
 			disabled={isLoadingPreview || blocked}
-			icon={isLoadingPreview ? <Loader size="sm" /> : <Eye />}
+			icon={isLoadingPreview ? <Spinner size="sm" /> : <Eye />}
 			// The reserved label's generated text would join the button's name.
 			aria-label={compact ? label : undefined}
 		>
@@ -1539,7 +1539,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 							variant="ghost"
 							className="w-full bg-kumo-danger/10 text-kumo-danger hover:bg-kumo-danger/10 hover:text-kumo-danger"
 							disabled={isDeleting || operationsBlocked}
-							icon={isDeleting ? <Loader size="sm" /> : <Trash />}
+							icon={isDeleting ? <Spinner size="sm" /> : <Trash />}
 							onClick={trash.show}
 						>
 							{t`Move to Trash`}

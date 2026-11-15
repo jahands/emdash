@@ -10,7 +10,7 @@
  * 3. After clicking email link: Passkey registration
  */
 
-import { Button, Input, Loader, SkeletonLine } from "@cloudflare/kumo";
+import { Button, Input, SkeletonLine } from "@cloudflare/kumo";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { Link } from "@tanstack/react-router";
 import * as React from "react";
@@ -20,6 +20,7 @@ import { requestSignup, verifySignupToken, type SignupVerifyResult } from "../li
 import { PasskeyRegistration } from "./auth/PasskeyRegistration";
 import { BrandLogo } from "./Logo.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
+import { Spinner } from "./Spinner.js";
 
 export function VerificationSentMessage({ email }: { email: string }) {
 	return (
@@ -105,7 +106,7 @@ function EmailStep({ onSubmit, isLoading, error }: EmailStepProps) {
 			<Button type="submit" className="w-full" disabled={isLoading}>
 				{isLoading ? (
 					<>
-						<Loader size="sm" />
+						<Spinner size="sm" />
 						{t`Sending...`}
 					</>
 				) : (

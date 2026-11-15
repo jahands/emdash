@@ -1,4 +1,4 @@
-import { Button, Loader } from "@cloudflare/kumo";
+import { Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Check, CloudSlash, CloudWarning, FloppyDisk } from "@phosphor-icons/react";
 import { forwardRef, isValidElement } from "react";
@@ -6,6 +6,7 @@ import type { ComponentProps } from "react";
 
 import { cn } from "../lib/utils";
 import type { SyncProblem } from "./co-editing/SyncStatus";
+import { Spinner } from "./Spinner.js";
 
 type SyncKind = SyncProblem["kind"];
 type SaveState = "save" | "saving" | "saved" | SyncKind;
@@ -70,9 +71,9 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 				<FloppyDisk />
 			)
 		) : state === "saving" || state === "joining" ? (
-			// The spinner is a status region, so only the shown state mounts it.
+			// Only the shown state mounts the spinner, so an idle button runs no endless animation.
 			state === activeState ? (
-				<Loader size="sm" />
+				<Spinner size="sm" />
 			) : (
 				<span className="size-4" />
 			)

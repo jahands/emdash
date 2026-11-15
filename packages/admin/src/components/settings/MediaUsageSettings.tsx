@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, Checkbox, Loader } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Checkbox } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { CheckCircle } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +18,7 @@ import {
 	type MediaUsageProgressAdvanceResponse,
 } from "../../lib/api/media-usage-activation.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
+import { Spinner } from "../Spinner.js";
 import {
 	SettingRow,
 	SettingsFrame,
@@ -416,7 +417,7 @@ export function MediaUsageSettings() {
 						<Button
 							className="w-full sm:w-auto"
 							disabled={advanceMutation.isPending}
-							icon={advanceMutation.isPending ? <Loader size="sm" /> : undefined}
+							icon={advanceMutation.isPending ? <Spinner size="sm" /> : undefined}
 							onClick={() => setDialogOpen(true)}
 						>
 							{storedFailure ? t`Retry setup` : t`Enable tracking`}
@@ -523,7 +524,7 @@ function StatusRow({
 			<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
 				<div className="min-w-0" role={needsAttention ? "alert" : undefined}>
 					<div className="flex items-center gap-2">
-						{progressing ? <Loader size="sm" /> : null}
+						{progressing ? <Spinner size="sm" /> : null}
 						<h3
 							ref={stateHeadingRef}
 							tabIndex={-1}

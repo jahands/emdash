@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, Loader, Meter, SkeletonLine } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Meter, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { CheckCircle, FileArrowUp } from "@phosphor-icons/react";
@@ -28,6 +28,7 @@ import {
 } from "../../../lib/transfer-package.js";
 import { ConfirmDialog } from "../../ConfirmDialog.js";
 import { getMutationError } from "../../DialogError.js";
+import { Spinner } from "../../Spinner.js";
 import { SettingRow, SettingsSection } from "../SettingsLayout.js";
 import { CopyableDigest, useCopyToClipboard } from "./CopyableDigest.js";
 import { ImportReview } from "./ImportReview.js";
@@ -418,7 +419,7 @@ function UploadProgressView({
 		<div className="grid gap-3" role="status" aria-live="polite">
 			<div className="flex items-center justify-between gap-3">
 				<div className="flex items-center gap-2 text-sm font-medium">
-					<Loader size="sm" />
+					<Spinner size="sm" />
 					{reading ? t`Reading the package` : t`Uploading the package`}
 				</div>
 				<Button size="sm" variant="secondary" onClick={onStop}>
@@ -475,7 +476,7 @@ function StageProgress({
 	return (
 		<div className="grid gap-3" role="status" aria-live="polite">
 			<div className="flex items-center gap-2 text-sm font-medium">
-				<Loader size="sm" />
+				<Spinner size="sm" />
 				{stage ? `${title}: ${stage}` : title}
 			</div>
 			{progress && progress.total > 0 ? (

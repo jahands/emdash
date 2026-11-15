@@ -1,4 +1,4 @@
-import { Badge, Button, LayerCard, Loader, SkeletonLine } from "@cloudflare/kumo";
+import { Badge, Button, LayerCard, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowDown, ArrowUp, Check, FolderSimple, WarningCircle, X } from "@phosphor-icons/react";
 import * as React from "react";
@@ -14,6 +14,7 @@ import {
 } from "../../lib/media-utils.js";
 import { useRenditionFallback, useRenditionWidth } from "../../lib/use-media-rendition.js";
 import { cn } from "../../lib/utils.js";
+import { Spinner } from "../Spinner.js";
 import type { MediaUploadJob } from "./useMediaUploadQueue.js";
 
 export const MEDIA_BROWSER_PAGE_SIZES = [35, 70, 90];
@@ -274,7 +275,7 @@ export function MediaUploadPlaceholder({
 	const statusIcon = failed ? (
 		<WarningCircle className="size-5 text-kumo-danger" weight="fill" aria-hidden="true" />
 	) : (
-		<Loader size="sm" />
+		<Spinner size="sm" />
 	);
 	const actions = failed ? (
 		<div className="flex flex-wrap items-center gap-1">

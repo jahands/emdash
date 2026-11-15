@@ -10,7 +10,7 @@
  * date cannot be linked until it is published.
  */
 
-import { Input, Loader } from "@cloudflare/kumo";
+import { Input } from "@cloudflare/kumo";
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -23,6 +23,7 @@ import { useDebouncedValue } from "../../lib/hooks";
 import { contentUrl } from "../../lib/url.js";
 import { cn } from "../../lib/utils";
 import { ContentStatusBadge } from "../ContentStatusBadge.js";
+import { Spinner } from "../Spinner.js";
 
 export interface LinkSearchResult {
 	collection: string;
@@ -276,7 +277,7 @@ export function LinkDestinationInput({
 				/>
 				{(isFetching || isResolving) && (
 					<span className="absolute inset-e-2 top-1/2 -translate-y-1/2">
-						<Loader size="sm" aria-hidden="true" />
+						<Spinner size="sm" />
 					</span>
 				)}
 			</div>

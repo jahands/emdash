@@ -1,4 +1,4 @@
-import { buttonVariants, Loader } from "@cloudflare/kumo";
+import { buttonVariants } from "@cloudflare/kumo";
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { Extension, type MappablePosition } from "@tiptap/core";
@@ -11,6 +11,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { createUploadPreviewUrl } from "../../lib/media-utils.js";
 import { matchesMimeAllowlist } from "../../lib/mime-utils.js";
 import { getMutationError } from "../DialogError.js";
+import { Spinner } from "../Spinner.js";
 
 export interface ImageUploadOptions {
 	/** Uploads a file and resolves to the attributes of the image or video node to insert. */
@@ -67,7 +68,7 @@ function renderSpinner(placeholder: HTMLElement) {
 	container.setAttribute("aria-hidden", "true");
 	container.className = "flex shrink-0 text-kumo-subtle";
 	const root = createRoot(container);
-	root.render(createElement(Loader, { size: "sm" }));
+	root.render(createElement(Spinner, { size: "sm" }));
 	spinnerRoots.set(placeholder, root);
 	return container;
 }

@@ -1,4 +1,4 @@
-import { Button, Dialog, Loader } from "@cloudflare/kumo";
+import { Button, Dialog } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import {
@@ -22,6 +22,7 @@ import {
 	type MediaUploadJob,
 	type MediaUploadJobStatus,
 } from "./media/useMediaUploadQueue.js";
+import { Spinner } from "./Spinner.js";
 
 export const LOCAL_MEDIA_UPLOAD_ACCEPT =
 	"image/png,image/jpeg,image/gif,image/webp,image/avif,image/bmp,image/jxl,.jxl,video/*,audio/*,application/pdf";
@@ -56,7 +57,7 @@ function UploadStatusLabel({ status }: { status: MediaUploadJobStatus }) {
 	if (status === "uploading") {
 		return (
 			<>
-				<Loader size="sm" />
+				<Spinner size="sm" />
 				{t`Uploading`}
 			</>
 		);
