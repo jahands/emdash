@@ -4,7 +4,9 @@
  * Edit a section's content and metadata.
  */
 
-import { Input, InputArea, Label, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Input, InputArea, Label, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
+import type { MessageDescriptor } from "@lingui/core";
+import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useParams, useNavigate } from "@tanstack/react-router";
@@ -15,14 +17,16 @@ import {
 	fetchSection,
 	updateSection,
 	type Section,
+	type SectionsResult,
 	type UpdateSectionInput,
 } from "../lib/api";
 import { getPluginBlocks } from "../lib/pluginBlocks";
-import { slugify } from "../lib/utils";
+import { cn, slugify } from "../lib/utils";
 import { ArrowPrev } from "./ArrowIcons.js";
 import { GalleryDetailPanel } from "./editor/GalleryDetailPanel";
 import type { GalleryAttributes } from "./editor/GalleryNode";
 import { ImageDetailPanel, type ImageAttributes } from "./editor/ImageDetailPanel";
+import { EditorFieldsPlaceholder } from "./EditorFieldsPlaceholder.js";
 import { EditorHeader } from "./EditorHeader";
 import {
 	PortableTextEditor,
@@ -31,6 +35,21 @@ import {
 } from "./PortableTextEditor";
 import { RouterLinkButton } from "./RouterLinkButton.js";
 import { SaveButton } from "./SaveButton";
+import { PendingSaveAction } from "./settings/SettingsLayout.js";
+
+const SECTION_DETAIL_FIELDS: Array<{
+	label: MessageDescriptor;
+	help?: MessageDescriptor;
+	multiline?: boolean;
+}> = [
+	{ label: msg`Title` },
+	{
+		label: msg`Slug`,
+		help: msg`Used to identify this section. Lowercase letters, numbers, and hyphens only.`,
+	},
+	{ label: msg`Description`, multiline: true },
+	{ label: msg`Keywords`, help: msg`Comma-separated keywords for search.` },
+];
 
 export function SectionEditor() {
 	const { t } = useLingui();
@@ -47,6 +66,12 @@ export function SectionEditor() {
 		queryKey: ["sections", slug],
 		queryFn: () => fetchSection(slug),
 		staleTime: Infinity,
+		// List rows are whole sections, so one opened from the list draws at once.
+		placeholderData: () =>
+			queryClient
+				.getQueriesData<SectionsResult | Section>({ queryKey: ["sections"] })
+				.flatMap(([, data]) => (data && "items" in data ? data.items : []))
+				.find((listed) => listed.slug === slug),
 	});
 
 	const { data: manifest } = useQuery({
@@ -77,8 +102,55 @@ export function SectionEditor() {
 
 	if (isLoading) {
 		return (
-			<div className="flex items-center justify-center h-64">
-				<Loader />
+			<div className="space-y-6">
+				<span role="status" className="sr-only">
+					{t`Loading section...`}
+				</span>
+				<EditorHeader
+					leading={
+						<RouterLinkButton
+							to="/sections"
+							aria-label={t`Back to sections`}
+							variant="ghost"
+							shape="square"
+							icon={<ArrowPrev />}
+						/>
+					}
+					actions={<PendingSaveAction />}
+				>
+					<div className="w-56" aria-hidden="true">
+						<div className="text-2xl font-semibold">
+							<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+						</div>
+						<div className="text-sm">
+							<SkeletonLine blockHeight="1lh" minWidth={60} maxWidth={60} />
+						</div>
+					</div>
+				</EditorHeader>
+				<div className="grid gap-6 xl:grid-cols-12">
+					<div className="min-w-0 rounded-lg border bg-kumo-base p-6 xl:col-span-8">
+						<Label className="mb-4 block text-lg font-semibold">{t`Content`}</Label>
+						<EditorFieldsPlaceholder />
+					</div>
+					<div className="min-w-0 space-y-4 rounded-lg border bg-kumo-base p-6 xl:col-span-4">
+						<h2 className="text-lg font-semibold">{t`Section Details`}</h2>
+						{SECTION_DETAIL_FIELDS.map((field) => (
+							<div key={field.label.id}>
+								<div className="grid gap-2">
+									<span className="text-base font-medium">{t(field.label)}</span>
+									<div
+										aria-hidden="true"
+										className={cn(
+											"skeleton-line w-full rounded-lg",
+											field.multiline ? "h-20" : "h-9",
+										)}
+									/>
+								</div>
+								{field.help && <p className="mt-1 text-xs text-kumo-subtle">{t(field.help)}</p>}
+							</div>
+						))}
+					</div>
+				</div>
 			</div>
 		);
 	}

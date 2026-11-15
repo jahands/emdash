@@ -4,11 +4,11 @@
  * A modal for selecting and inserting sections into content.
  */
 
-import { Button, Dialog, Input } from "@cloudflare/kumo";
+import { Button, Dialog, Input, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { MagnifyingGlass, FolderOpen } from "@phosphor-icons/react";
 import { X } from "@phosphor-icons/react";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import * as React from "react";
 
 import { fetchSections, type Section } from "../lib/api";
@@ -22,18 +22,26 @@ interface SectionPickerModalProps {
 	onSelect: (section: Section) => void;
 }
 
+// Fixed, so placeholders shown again after a remount don't change shape.
+const SECTION_PLACEHOLDER_WIDTHS = [60, 45, 70];
+
 export function SectionPickerModal({ open, onOpenChange, onSelect }: SectionPickerModalProps) {
 	const { t } = useLingui();
 	const [searchQuery, setSearchQuery] = React.useState("");
 	const debouncedSearch = useDebouncedValue(searchQuery, 300);
 
-	const { data: sectionsData, isLoading: sectionsLoading } = useQuery({
+	const {
+		data: sectionsData,
+		isLoading: sectionsLoading,
+		isPlaceholderData: sectionsPlaceholder,
+	} = useQuery({
 		queryKey: ["sections", { search: debouncedSearch }],
 		queryFn: () =>
 			fetchSections({
 				search: debouncedSearch || undefined,
 			}),
 		enabled: open,
+		placeholderData: keepPreviousData,
 	});
 	const sections = sectionsData?.items ?? [];
 
@@ -91,8 +99,25 @@ export function SectionPickerModal({ open, onOpenChange, onSelect }: SectionPick
 				{/* Section grid */}
 				<div className="flex-1 overflow-y-auto py-4">
 					{sectionsLoading ? (
-						<div className="flex items-center justify-center h-32">
-							<div className="text-kumo-subtle">{t`Loading sections...`}</div>
+						<div>
+							<span role="status" className="sr-only">
+								{t`Loading sections...`}
+							</span>
+							<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3" aria-hidden="true">
+								{SECTION_PLACEHOLDER_WIDTHS.map((width) => (
+									<div key={width} className="overflow-hidden rounded-lg border bg-kumo-base">
+										<div className="skeleton-line aspect-video h-auto w-full rounded-none" />
+										<div className="p-3">
+											<div className="font-medium">
+												<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+											</div>
+											<div className="mt-1 text-xs">
+												<SkeletonLine blockHeight="1lh" minWidth={80} maxWidth={80} />
+											</div>
+										</div>
+									</div>
+								))}
+							</div>
 						</div>
 					) : sections.length === 0 ? (
 						<div className="flex flex-col items-center justify-center h-32 text-center">
@@ -113,7 +138,10 @@ export function SectionPickerModal({ open, onOpenChange, onSelect }: SectionPick
 							)}
 						</div>
 					) : (
-						<div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+						<div
+							className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3"
+							aria-busy={sectionsPlaceholder || undefined}
+						>
 							{sections.map((section) => (
 								<SectionCard
 									key={section.id}

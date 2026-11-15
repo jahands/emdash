@@ -36,7 +36,7 @@ vi.mock("../../src/lib/api/client.js", async () => {
 				headers: { "Content-Type": "application/json" },
 			});
 		}),
-		fetchManifest: vi.fn(async () => ({ collections: {}, i18n: manifestI18n })),
+		fetchManifest: vi.fn(async () => ({ collections: {}, taxonomies: [], i18n: manifestI18n })),
 	};
 });
 

@@ -83,6 +83,17 @@ describe("Widgets", () => {
 		await expect.element(screen.getByText("Main sidebar")).toBeInTheDocument();
 	});
 
+	it("shows the page and the core widgets while areas and components load", async () => {
+		vi.mocked(api.fetchWidgetAreas).mockReturnValue(new Promise(() => {}));
+		vi.mocked(api.fetchWidgetComponents).mockReturnValue(new Promise(() => {}));
+		const screen = await render(<Widgets />, { wrapper: Wrapper });
+
+		await expect.element(screen.getByText("Loading widgets...")).toBeInTheDocument();
+		await expect.element(screen.getByRole("button", { name: ADD_WIDGET_AREA_REGEX })).toBeVisible();
+		await expect.element(screen.getByText("Monthly/yearly archives")).toBeVisible();
+		expect(screen.getByText("No widget areas yet. Create one to get started.").query()).toBeNull();
+	});
+
 	it("shows widgets within each area", async () => {
 		const screen = await render(<Widgets />, { wrapper: Wrapper });
 

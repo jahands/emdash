@@ -4,7 +4,14 @@
  * Edit menu items with basic reordering (simplified version without drag-and-drop)
  */
 
-import { Button, Input, LayerDialog, Select, useKumoToastManager } from "@cloudflare/kumo";
+import {
+	Button,
+	Input,
+	LayerDialog,
+	Select,
+	SkeletonLine,
+	useKumoToastManager,
+} from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -31,7 +38,9 @@ import {
 	fetchMenuTranslations,
 	createMenuTranslation,
 	type CreateMenuItemInput,
+	type Menu,
 	type MenuItem,
+	type MenuWithItems,
 	type UpdateMenuItemInput,
 } from "../lib/api";
 import { fetchManifest } from "../lib/api/client.js";
@@ -148,6 +157,8 @@ function menuItemProblems(
 }
 
 const EMPTY_MENU_ITEM = toMenuItemFormValues(null);
+// Fixed per row, so placeholders shown again after a remount don't change shape.
+const MENU_ITEM_PLACEHOLDER_WIDTHS = [24, 32, 18, 28, 21];
 
 export function MenuEditor() {
 	const { t } = useLingui();
@@ -190,10 +201,10 @@ export function MenuEditor() {
 	// URL without a locale query).
 	const menuLocale = routeLocale ?? menu?.locale;
 
-	const { data: translationsData } = useQuery({
+	const { data: translationsData, isPending: translationsPending } = useQuery({
 		queryKey: ["menu-translations", name, menuLocale ?? null],
 		queryFn: () => fetchMenuTranslations(name, { locale: menuLocale }),
-		enabled: !!menu && !!i18n && i18n.locales.length > 1,
+		enabled: !!menuLocale && !!i18n && i18n.locales.length > 1,
 	});
 
 	const translateMutation = useMutation({
@@ -269,8 +280,12 @@ export function MenuEditor() {
 	};
 
 	// Sync local items with fetched data. An item whose parent is missing is
-	// edited as a top-level item, which is where the site renders it.
-	React.useEffect(() => {
+	// edited as a top-level item, which is where the site renders it. Synced
+	// during render rather than in an effect, so the first render with the menu
+	// never shows the empty state.
+	const [syncedMenu, setSyncedMenu] = React.useState<MenuWithItems | undefined>();
+	if (menu !== syncedMenu) {
+		setSyncedMenu(menu);
 		if (menu?.items) {
 			const ids = new Set(menu.items.map((item) => item.id));
 			setLocalItems(
@@ -279,7 +294,7 @@ export function MenuEditor() {
 				),
 			);
 		}
-	}, [menu]);
+	}
 
 	const createMutation = useMutation({
 		mutationFn: (input: CreateMenuItemInput) => createMenuItem(name, input, { locale: menuLocale }),
@@ -489,21 +504,22 @@ export function MenuEditor() {
 		];
 	}, [editingItem, localItems, t]);
 
-	if (isLoading) {
-		return (
-			<div className="flex items-center justify-center h-64">
-				<div className="text-kumo-subtle">{t`Loading menu...`}</div>
-			</div>
-		);
-	}
-
-	if (!menu) {
+	if (!menu && !isLoading) {
 		return (
 			<div className="text-center py-12">
 				<p className="text-kumo-subtle">{t`Menu not found`}</p>
 			</div>
 		);
 	}
+
+	// The menu list, when it was opened first, already has this menu's label and item count.
+	const listedMenu = menu
+		? undefined
+		: queryClient
+				.getQueriesData<Menu[]>({ queryKey: ["menus"] })
+				.flatMap(([, menus]) => menus ?? [])
+				.find((listed) => listed.name === name && (!routeLocale || listed.locale === routeLocale));
+	const title = (menu ?? listedMenu)?.label;
 
 	return (
 		<div className="space-y-6">
@@ -521,12 +537,18 @@ export function MenuEditor() {
 				<div className="flex flex-wrap items-center justify-between gap-4">
 					<div className="min-w-0">
 						<div className="flex min-w-0 items-start gap-1.5">
-							<h1 className="min-w-0 break-words text-2xl font-semibold leading-tight">
-								{menu.label}
-							</h1>
+							{title !== undefined ? (
+								<h1 className="min-w-0 break-words text-2xl font-semibold leading-tight">
+									{title}
+								</h1>
+							) : (
+								<div className="w-48 text-2xl leading-tight" aria-hidden="true">
+									<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+								</div>
+							)}
 							<LayerDialog.Root
 								open={isRenameOpen}
-								{...guardUnsavedInput(renameLabel !== menu.label, handleRenameOpenChange)}
+								{...guardUnsavedInput(renameLabel !== menu?.label, handleRenameOpenChange)}
 								dismissDisabled={renameMutation.isPending}
 							>
 								<LayerDialog.Trigger
@@ -539,6 +561,7 @@ export function MenuEditor() {
 											className="size-7 shrink-0"
 											icon={<Pencil className="size-4" aria-hidden="true" />}
 											aria-label={t`Rename menu`}
+											disabled={!menu}
 										/>
 									)}
 								/>
@@ -590,6 +613,7 @@ export function MenuEditor() {
 						<Button
 							icon={<FileIcon />}
 							variant="secondary"
+							disabled={!menu}
 							onClick={() => setIsContentPickerOpen(true)}
 						>
 							{t`Add Content`}
@@ -604,7 +628,7 @@ export function MenuEditor() {
 						>
 							<LayerDialog.Trigger
 								render={(props) => (
-									<Button {...props} variant="secondary" icon={<Plus />}>
+									<Button {...props} variant="secondary" icon={<Plus />} disabled={!menu}>
 										{t`Add Custom Link`}
 									</Button>
 								)}
@@ -695,17 +719,14 @@ export function MenuEditor() {
 				}}
 			/>
 
-			{i18n && i18n.locales.length > 1 && menu ? (
+			{i18n && i18n.locales.length > 1 ? (
 				<div className="border rounded-lg p-4">
 					<TranslationsPanel
 						locales={i18n.locales}
 						defaultLocale={i18n.defaultLocale}
-						currentLocale={menu.locale}
-						translations={
-							translationsData?.translations.map((tr) => ({ id: tr.id, locale: tr.locale })) ?? [
-								{ id: menu.id, locale: menu.locale },
-							]
-						}
+						currentLocale={menuLocale}
+						translations={translationsData?.translations ?? []}
+						loading={translationsPending}
 						onOpen={(tr) =>
 							navigate({
 								to: "/menus/$name",
@@ -721,7 +742,35 @@ export function MenuEditor() {
 				</div>
 			) : null}
 
-			{localItems.length === 0 ? (
+			{!menu ? (
+				<div>
+					<span role="status" className="sr-only">
+						{t`Loading menu...`}
+					</span>
+					<div className="space-y-2" aria-hidden="true">
+						{Array.from({ length: Math.max(listedMenu?.itemCount ?? 3, 1) }, (_, row) => {
+							const width =
+								MENU_ITEM_PLACEHOLDER_WIDTHS[row % MENU_ITEM_PLACEHOLDER_WIDTHS.length] ?? 24;
+							return (
+								<div
+									key={row}
+									className="flex items-center justify-between gap-2 rounded-lg border p-4"
+								>
+									<div className="flex-1">
+										<div className="font-medium">
+											<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+										</div>
+										<div className="text-sm">
+											<SkeletonLine blockHeight="1lh" minWidth={20} maxWidth={20} />
+										</div>
+									</div>
+									<div className="skeleton-line h-6.5 w-40 rounded-md" />
+								</div>
+							);
+						})}
+					</div>
+				</div>
+			) : localItems.length === 0 ? (
 				<div className="border rounded-lg p-12 text-center">
 					<LinkIcon className="mx-auto h-12 w-12 text-kumo-subtle mb-4" />
 					<h3 className="text-lg font-semibold mb-2">{t`No menu items yet`}</h3>

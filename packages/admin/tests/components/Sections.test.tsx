@@ -108,6 +108,25 @@ describe("Sections", () => {
 		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading sections...");
 	});
 
+	it("keeps the current cards, marked busy, while a search loads", async () => {
+		const screen = await render(
+			<Wrapper>
+				<Sections />
+			</Wrapper>,
+		);
+		await expect.element(screen.getByText("Hero Section")).toBeVisible();
+
+		mockFetchSections.mockImplementation(() => new Promise(() => {}));
+		await screen.getByRole("searchbox", { name: "Search sections..." }).fill("cta");
+
+		await vi.waitFor(() =>
+			expect(mockFetchSections).toHaveBeenLastCalledWith({ source: undefined, search: "cta" }),
+		);
+		const card = screen.getByText("Hero Section").element();
+		expect(card.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
+		expect(screen.getByText("Loading sections...").query()).toBeNull();
+	});
+
 	it("displays sections with titles and descriptions", async () => {
 		const screen = await render(
 			<Wrapper>

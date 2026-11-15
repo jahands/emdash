@@ -79,6 +79,22 @@ describe("SectionPickerModal", () => {
 		await expect.element(screen.getByText("Call to Action")).toBeInTheDocument();
 	});
 
+	it("keeps the current sections on screen while a search loads", async () => {
+		const screen = await render(
+			<Wrapper>
+				<SectionPickerModal open={true} onOpenChange={vi.fn()} onSelect={vi.fn()} />
+			</Wrapper>,
+		);
+		await expect.element(screen.getByText("Hero Section")).toBeVisible();
+
+		mockFetchSections.mockImplementation(() => new Promise(() => {}));
+		await screen.getByPlaceholder("Search sections...").fill("cta");
+
+		await vi.waitFor(() => expect(mockFetchSections).toHaveBeenLastCalledWith({ search: "cta" }));
+		await expect.element(screen.getByText("Hero Section")).toBeVisible();
+		expect(screen.getByText("Loading sections...").query()).toBeNull();
+	});
+
 	it("clicking a section calls onSelect and closes modal", async () => {
 		const onSelect = vi.fn();
 		const onOpenChange = vi.fn();

@@ -13,6 +13,7 @@ import {
 	InputArea,
 	LayerDialog,
 	Select,
+	SkeletonLine,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
@@ -33,7 +34,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
-import { ApiResponseError, fetchManifest } from "../lib/api/client.js";
+import { ApiResponseError, fetchManifest, type AdminManifest } from "../lib/api/client.js";
 import type {
 	TaxonomyTerm,
 	TaxonomyDef,
@@ -60,6 +61,7 @@ import {
 	useTakenValue,
 } from "../lib/dialog-form.js";
 import { inlineLabel } from "../lib/inline-label.js";
+import { resolveTaxonomyDefinitions } from "../lib/taxonomy-definitions.js";
 import { slugify, slugifyIdentifier } from "../lib/utils";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { BulkTagDialog } from "./BulkTagDialog.js";
@@ -81,6 +83,17 @@ import { TranslationsPanel } from "./TranslationsPanel.js";
 export function TaxonomyNotFoundMessage({ taxonomyName }: { taxonomyName: string }) {
 	const { t } = useLingui();
 	return <>{t`Taxonomy not found: ${taxonomyName}`}</>;
+}
+
+/** The manifest's copy of a taxonomy, in the shape the definition query returns. */
+function manifestTaxonomyDef(
+	manifest: AdminManifest | undefined,
+	name: string,
+): TaxonomyDef | undefined {
+	const variants = manifest?.taxonomies.filter((def) => def.name === name) ?? [];
+	const [def] = resolveTaxonomyDefinitions(variants, undefined, manifest?.i18n?.defaultLocale);
+	if (typeof def?.id !== "string" || typeof def.locale !== "string") return undefined;
+	return { ...def, id: def.id, locale: def.locale, translationGroup: def.translationGroup ?? null };
 }
 
 interface TaxonomyManagerProps {
@@ -622,7 +635,7 @@ function TermFormDialog({
 	);
 
 	// Translations list (only when editing an existing term and i18n is on).
-	const { data: translationsData } = useQuery({
+	const { data: translationsData, isPending: translationsPending } = useQuery({
 		queryKey: ["term-translations", taxonomyName, term?.id ?? null],
 		queryFn: () => {
 			if (!term) throw new Error("No term");
@@ -815,6 +828,7 @@ function TermFormDialog({
 									defaultLocale={i18n.defaultLocale}
 									currentLocale={term.locale}
 									translations={translationsData?.translations ?? []}
+									loading={translationsPending}
 									onOpen={(tr) => {
 										onClose();
 										onOpenTranslation?.({ slug: term.slug, locale: tr.locale });
@@ -1056,7 +1070,7 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 		queryFn: fetchManifest,
 	});
 	const i18n = useI18nConfig(manifest);
-	const [activeLocale, setActiveLocale] = React.useState<string | undefined>(undefined);
+	const [activeLocale, setActiveLocale] = React.useState(() => i18n?.defaultLocale);
 	React.useEffect(() => {
 		if (i18n && !activeLocale) setActiveLocale(i18n.defaultLocale);
 	}, [i18n, activeLocale]);
@@ -1065,17 +1079,28 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 	// def is primarily structural ("does this taxonomy exist, is it
 	// hierarchical, which collections use it"). Label translations exist per
 	// locale but are not required for the page to render.
-	const { data: taxonomyDef, isLoading: defLoading } = useQuery({
+	const { data: taxonomyDef, isPending: defPending } = useQuery({
 		queryKey: ["taxonomy-def", taxonomyName],
 		queryFn: () => fetchTaxonomyDef(taxonomyName),
+		// The manifest's collection list can name deleted collections, which the
+		// definition endpoint drops, so this only stands in until it answers.
+		placeholderData: () => manifestTaxonomyDef(manifest, taxonomyName),
 	});
 
 	// The count mode belongs in the key: the editor's taxonomy picker reads the
 	// same endpoint without counts, and this page renders them.
 	const termsQueryKey = ["taxonomy-terms", taxonomyName, activeLocale, { includeCounts: true }];
-	const { data: terms = [], isLoading: termsLoading } = useQuery({
+	const {
+		data: terms = [],
+		isLoading: termsLoading,
+		isPlaceholderData: termsFromOtherLocale,
+	} = useQuery({
 		queryKey: termsQueryKey,
 		queryFn: () => fetchTerms(taxonomyName, { locale: activeLocale }),
+		// Another locale's terms can stand in while a locale switch loads; another
+		// taxonomy's cannot.
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === taxonomyName ? previous : undefined,
 	});
 	const searchLocale = canonicalSearchLocale(activeLocale ?? i18n?.defaultLocale ?? "en");
 	const rawSearch = tagSearch.trim();
@@ -1199,8 +1224,35 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 		setEditingTerm(undefined);
 	};
 
-	if (defLoading) {
-		return <div>{t`Loading...`}</div>;
+	if (defPending) {
+		return (
+			<div className="space-y-6">
+				<div aria-hidden="true">
+					<div className="w-48 text-2xl leading-tight">
+						<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+					</div>
+					<div className="mt-1 w-72 max-w-full text-sm leading-5">
+						<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+					</div>
+				</div>
+				<DataTable>
+					<thead>
+						<tr>
+							<th scope="col">{t`Name`}</th>
+							<th scope="col" className="w-0 text-end">
+								{t`Count`}
+							</th>
+							<th scope="col" className="w-0">
+								<span className="sr-only">{t`Actions`}</span>
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						<DataTablePlaceholderRows cells={["title", "empty", "actions"]} />
+					</tbody>
+				</DataTable>
+			</div>
+		);
 	}
 
 	if (!taxonomyDef) {
@@ -1320,7 +1372,7 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 						</span>
 					</>
 				)}
-				<DataTable>
+				<DataTable aria-busy={termsFromOtherLocale || undefined}>
 					<thead>
 						<tr>
 							<th scope="col">{t`Name`}</th>
@@ -1332,7 +1384,7 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 							</th>
 						</tr>
 					</thead>
-					<tbody>
+					<tbody inert={termsFromOtherLocale || undefined}>
 						{termsLoading ? (
 							<DataTablePlaceholderRows cells={["title", "empty", "actions"]} />
 						) : terms.length === 0 ? (

@@ -12,6 +12,7 @@ import {
 	Label,
 	LayerDialog,
 	Select,
+	SkeletonLine,
 	Switch,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
@@ -184,6 +185,8 @@ const CORE_WIDGET_META: Record<string, CoreWidgetMeta> = {
 };
 
 const WIDGET_AREA_NAME_PATTERN = /^[a-z0-9-]+$/;
+// Fixed, so placeholders shown again after a remount don't change shape.
+const AREA_PLACEHOLDER_WIDTHS = [30, 42];
 
 type CreateAreaField = "name" | "label";
 
@@ -244,7 +247,7 @@ export function Widgets() {
 		queryFn: fetchWidgetAreas,
 	});
 
-	const { data: components = [] } = useQuery({
+	const { data: components = [], isPending: componentsPending } = useQuery({
 		queryKey: ["widget-components"],
 		queryFn: fetchWidgetComponents,
 	});
@@ -255,6 +258,11 @@ export function Widgets() {
 	});
 
 	const pluginBlocks = React.useMemo(() => (manifest ? getPluginBlocks(manifest) : []), [manifest]);
+
+	// The server always lists the core components, so the palette can show them
+	// before it answers.
+	const paletteComponents: Array<Pick<WidgetComponent, "id" | "label" | "description">> =
+		componentsPending ? Object.keys(CORE_WIDGET_META).map((id) => ({ id, label: id })) : components;
 
 	const createAreaMutation = useMutation({
 		mutationFn: createWidgetArea,
@@ -434,14 +442,6 @@ export function Widgets() {
 			? areas.flatMap((a) => a.widgets ?? []).find((w) => w.id === activeId)
 			: null;
 
-	if (isLoading) {
-		return (
-			<div className="flex items-center justify-center h-64">
-				<div className="text-kumo-subtle">{t`Loading widgets...`}</div>
-			</div>
-		);
-	}
-
 	return (
 		<>
 			<DndContext
@@ -551,7 +551,7 @@ export function Widgets() {
 												widgetInput={{ ...item.input, title: t(item.label) }}
 											/>
 										))}
-										{components.map((comp) => {
+										{paletteComponents.map((comp) => {
 											const meta = CORE_WIDGET_META[comp.id];
 											const label = meta ? t(meta.label) : comp.label;
 											const description = meta ? t(meta.description) : comp.description;
@@ -575,7 +575,28 @@ export function Widgets() {
 
 							{/* Widget Areas (droppable + sortable) */}
 							<div className="col-span-8 space-y-4">
-								{areas.length === 0 ? (
+								{isLoading ? (
+									<>
+										<span role="status" className="sr-only">
+											{t`Loading widgets...`}
+										</span>
+										{AREA_PLACEHOLDER_WIDTHS.map((width) => (
+											<div
+												key={width}
+												className="rounded-lg border bg-kumo-base"
+												aria-hidden="true"
+											>
+												<div className="flex items-center justify-between border-b p-4">
+													<div className="w-full text-lg">
+														<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+													</div>
+													<div className="skeleton-line size-6.5 shrink-0 rounded-md" />
+												</div>
+												<div className="min-h-[80px] p-4" />
+											</div>
+										))}
+									</>
+								) : areas.length === 0 ? (
 									<div className="rounded-lg border bg-kumo-base p-12 text-center">
 										<p className="text-kumo-subtle">{t`No widget areas yet. Create one to get started.`}</p>
 									</div>
@@ -951,7 +972,7 @@ function WidgetEditor({
 		widget.componentProps ?? {},
 	);
 
-	const { data: menus = [] } = useQuery({
+	const { data: menus = [], isPending: menusPending } = useQuery({
 		queryKey: ["menus"],
 		queryFn: () => fetchMenus(),
 		enabled: widget.type === "menu",
@@ -999,6 +1020,7 @@ function WidgetEditor({
 			{widget.type === "menu" && (
 				<Select
 					label={t`Menu`}
+					disabled={menusPending}
 					value={menuName}
 					onValueChange={(v) => setMenuName(v ?? "")}
 					items={Object.fromEntries(menus.map((m) => [m.name, m.label || m.name]))}
