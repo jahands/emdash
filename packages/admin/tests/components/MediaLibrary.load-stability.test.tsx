@@ -440,7 +440,8 @@ describe("Media Library while it first loads", () => {
 			expect(announced).toEqual(["Loading media"]);
 			expect(placeholderTiles()).toHaveLength(35);
 			const searchInput = screen.getByRole("searchbox", { name: "Search media" }).element();
-			expect(searchInput.closest("[inert]")).not.toBeNull();
+			// The toolbar is already where it stays, so it works while the media loads.
+			expect(searchInput.closest("[inert]")).toBeNull();
 			const searchBefore = box(searchInput.parentElement);
 			const tileBefore = box(placeholderTiles()[0]!);
 			const footer = () => document.querySelector("[data-media-library] footer");

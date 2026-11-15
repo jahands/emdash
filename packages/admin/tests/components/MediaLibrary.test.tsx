@@ -680,7 +680,7 @@ describe("MediaLibrary", () => {
 			expect(screen.getByAltText("photo.jpg").query()).toBeNull();
 			const search = screen.getByRole("searchbox", { name: "Search media" });
 			await expect.element(search).toBeInTheDocument();
-			expect(search.element().closest("[inert]")).not.toBeNull();
+			expect(search.element().closest("[inert]")).toBeNull();
 			expect(
 				screen.getByRole("heading", { name: "Media Library" }).element().closest("[aria-busy]"),
 			).not.toBeNull();
