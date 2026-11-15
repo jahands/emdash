@@ -423,7 +423,8 @@ describeEachDialect("published date buckets", (dialect) => {
 		expect(buckets.length).toBeLessThan(10_000);
 		expect(buckets.reduce((total, { count }) => total + count, 0)).toBe(posts);
 		await expectMainGrouping(["America/New_York", "Asia/Kathmandu", "Pacific/Kiritimati"], buckets);
-	});
+		// Seeding 50,000 rows takes several seconds on a shared CI PostgreSQL.
+	}, 30_000);
 
 	it("ignores missing and malformed publication dates and omits validators through L2", async () => {
 		await seed("valid", march);
