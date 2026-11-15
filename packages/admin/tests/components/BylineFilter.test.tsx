@@ -126,4 +126,34 @@ describe("BylineFilter", () => {
 			.toBeDisabled();
 		await expect.element(screen.getByRole("checkbox", { name: "EmDash Editorial" })).toBeDisabled();
 	});
+
+	it("holds rows as tall as the bylines' rows while they load, not the empty message", async () => {
+		let resolve: (value: { items: BylineSummary[] }) => void = () => {};
+		vi.mocked(fetchBylines).mockReturnValue(
+			new Promise((settle) => {
+				resolve = settle;
+			}),
+		);
+		const screen = await render(
+			<BylineFilter value={EMPTY_BYLINE_FILTER} onChange={vi.fn()} locale="en" />,
+		);
+		await screen.getByRole("button", { name: "Filter by byline" }).click();
+
+		const group = screen.getByRole("group", { name: "Bylines" });
+		await expect.element(group.getByRole("status")).toHaveTextContent("Loading…");
+		expect(group.getByText("No bylines found").query()).toBeNull();
+		const rowHeights = () =>
+			Array.from(
+				group.element().querySelectorAll(":scope > div"),
+				(row) => row.getBoundingClientRect().height,
+			);
+		const placeholderHeights = rowHeights();
+		expect(placeholderHeights.length).toBeGreaterThan(0);
+
+		resolve({ items: bylines });
+		await expect.element(screen.getByRole("checkbox", { name: "Guest Contributor" })).toBeVisible();
+		expect(group.getByRole("status").query()).toBeNull();
+		const [loadedHeight] = rowHeights();
+		for (const height of placeholderHeights) expect(height).toBe(loadedHeight);
+	});
 });

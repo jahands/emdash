@@ -404,7 +404,7 @@ export function ContentTypeEditor({
 		queryKey: ["relations"],
 		queryFn: () => fetchRelations(),
 	});
-	const { data: allCollections = [] } = useQuery({
+	const { data: allCollections = [], isPending: collectionsPending } = useQuery({
 		queryKey: ["schema", "collections"],
 		queryFn: fetchCollections,
 	});
@@ -881,7 +881,7 @@ export function ContentTypeEditor({
 								collectionSlug={collection.slug}
 								relations={relations}
 								collections={allCollections}
-								isLoading={relationsLoading}
+								isLoading={relationsLoading || collectionsPending}
 								onCreateRelation={onCreateRelation}
 								onUpdateRelation={onUpdateRelation}
 								onDeleteRelation={onDeleteRelation}

@@ -268,9 +268,13 @@ describe("ContentTypeList", () => {
 	});
 
 	describe("loading state", () => {
-		it("shows loading message when isLoading is true", async () => {
-			const screen = await render(<ContentTypeList collections={[]} isLoading />);
-			await expect.element(screen.getByText("Loading collections...")).toBeInTheDocument();
+		it("holds a row for each content type in the manifest while loading", async () => {
+			const screen = await render(<ContentTypeList collections={[]} isLoading expectedCount={3} />);
+			await expect
+				.element(screen.getByRole("table").getByRole("status"))
+				.toHaveTextContent("Loading...");
+			expect(screen.getByRole("table").element().querySelectorAll("tbody tr")).toHaveLength(3);
+			expect(screen.getByText("No content types yet.").query()).toBeNull();
 		});
 	});
 

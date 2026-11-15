@@ -207,6 +207,56 @@ const guestByline: BylineSummary = {
 	updatedAt: "2026-01-01",
 };
 
+describe("BylinesPage loading", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("shows the page with placeholder rows, then the rows, without passing through the empty state", async () => {
+		const list = deferred<{ items: BylineSummary[]; nextCursor: undefined }>();
+		fetchBylinesMock.mockReturnValueOnce(list.promise);
+		const screen = await renderPage();
+
+		await expect.element(screen.getByRole("heading", { name: "Bylines" })).toBeVisible();
+		await expect.element(screen.getByRole("button", { name: "New byline" })).toBeVisible();
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("status")).toHaveTextContent("Loading...");
+
+		const emptyStates: string[] = [];
+		const observer = new MutationObserver(() => {
+			if (document.body.textContent?.includes("No bylines yet")) emptyStates.push("shown");
+		});
+		observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+		try {
+			list.resolve({ items: [guestByline], nextCursor: undefined });
+			await expect
+				.element(screen.getByRole("button", { name: "Edit Guest Contributor" }))
+				.toBeVisible();
+		} finally {
+			observer.disconnect();
+		}
+		expect(emptyStates).toEqual([]);
+		expect(table.getByRole("status").query()).toBeNull();
+	});
+
+	it("keeps the page when the bylines fail to load, and loads them again on request", async () => {
+		fetchBylinesMock
+			.mockRejectedValueOnce(new Error("Server unavailable"))
+			.mockResolvedValueOnce({ items: [guestByline], nextCursor: undefined });
+		const screen = await renderPage();
+
+		const alert = screen.getByRole("table").getByRole("alert");
+		await expect.element(alert).toHaveTextContent("Failed to load bylines: Server unavailable");
+		await expect.element(screen.getByRole("heading", { name: "Bylines" })).toBeVisible();
+		await expect.element(screen.getByPlaceholder("Search bylines")).toBeVisible();
+
+		await alert.getByRole("button", { name: "Try again" }).click();
+		await expect
+			.element(screen.getByRole("button", { name: "Edit Guest Contributor" }))
+			.toBeVisible();
+	});
+});
+
 describe("BylinesPage directory", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();

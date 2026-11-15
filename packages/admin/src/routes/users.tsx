@@ -7,7 +7,13 @@
 import { useKumoToastManager } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Trans } from "@lingui/react/macro";
-import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useQuery,
+	useInfiniteQuery,
+	useMutation,
+	useQueryClient,
+} from "@tanstack/react-query";
 import * as React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
@@ -72,6 +78,7 @@ export function UsersPage() {
 			}),
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		placeholderData: keepPreviousData,
 	});
 
 	const userDetailQuery = useQuery({
@@ -79,6 +86,11 @@ export function UsersPage() {
 		queryFn: () => fetchUser(selectedUserId!),
 		enabled: !!selectedUserId,
 	});
+
+	const users = usersQuery.data?.pages.flatMap((p) => p.items) ?? [];
+	const selectedSummary = users.find((user) => user.id === selectedUserId);
+	const selectedUser = userDetailQuery.data ?? null;
+	const shownUser = selectedUser ?? selectedSummary;
 
 	// Mutations
 	const updateUserMutation = useMutation({
@@ -149,8 +161,7 @@ export function UsersPage() {
 		if (!selectedUserId) return;
 
 		// Check for role demotion — require confirmation.
-		// Guard: only check when user data is loaded (currentRole defined).
-		const currentRole = userDetailQuery.data?.role;
+		const currentRole = shownUser?.role;
 		if (data.role !== undefined && currentRole !== undefined && data.role < currentRole) {
 			setPendingSaveData(data);
 			setShowDemoteConfirm(true);
@@ -192,29 +203,17 @@ export function UsersPage() {
 		inviteMutation.mutateAsync({ email, role }),
 	);
 
-	// Error state
-	if (usersQuery.error) {
-		return (
-			<div className="rounded-lg border border-kumo-danger/50 bg-kumo-danger/10 p-6 text-center">
-				<p className="text-kumo-danger">{t`Failed to load users: ${usersQuery.error.message}`}</p>
-				<button
-					onClick={() => usersQuery.refetch()}
-					className="mt-4 text-sm text-kumo-link underline"
-				>
-					{t`Try again`}
-				</button>
-			</div>
-		);
-	}
-
-	const users = usersQuery.data?.pages.flatMap((p) => p.items) ?? [];
-	const selectedUser = userDetailQuery.data ?? null;
+	const listError = usersQuery.data ? null : usersQuery.error;
 
 	return (
 		<>
 			<UserList
 				users={users}
-				isLoading={usersQuery.isFetching}
+				isLoading={usersQuery.isPending}
+				isRefreshing={usersQuery.isPlaceholderData}
+				isLoadingMore={usersQuery.isFetchingNextPage}
+				loadError={listError ? t`Failed to load users: ${listError.message}` : undefined}
+				onRetry={() => void usersQuery.refetch()}
 				hasMore={!!usersQuery.hasNextPage}
 				searchQuery={searchQuery}
 				roleFilter={roleFilter}
@@ -231,6 +230,7 @@ export function UsersPage() {
 
 			<UserDetail
 				user={selectedUser}
+				summary={selectedSummary}
 				isLoading={userDetailQuery.isLoading}
 				isOpen={isDetailOpen}
 				isSaving={updateUserMutation.isPending}
@@ -271,8 +271,8 @@ export function UsersPage() {
 				title={t`Disable User?`}
 				description={
 					<Trans>
-						Disabling <strong>{selectedUser?.name || selectedUser?.email}</strong> will prevent them
-						from logging in until re-enabled. Their content will be preserved.
+						Disabling <strong>{shownUser?.name || shownUser?.email}</strong> will prevent them from
+						logging in until re-enabled. Their content will be preserved.
 					</Trans>
 				}
 				confirmLabel={t`Disable User`}
@@ -293,8 +293,8 @@ export function UsersPage() {
 				title={t`Demote User?`}
 				description={
 					<Trans>
-						Change <strong>{selectedUser?.name || selectedUser?.email}</strong> from{" "}
-						<strong>{getRoleLabel(selectedUser?.role ?? 0)}</strong> to{" "}
+						Change <strong>{shownUser?.name || shownUser?.email}</strong> from{" "}
+						<strong>{getRoleLabel(shownUser?.role ?? 0)}</strong> to{" "}
 						<strong>{getRoleLabel(pendingSaveData?.role ?? 0)}</strong>? They will lose access to
 						higher-level features.
 					</Trans>

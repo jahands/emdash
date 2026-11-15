@@ -335,19 +335,45 @@ export function DataTableMessage({
 	);
 }
 
+/** A full-width row saying the rows couldn't be loaded, with a button to try again. */
+export function DataTableLoadError({
+	colSpan,
+	onRetry,
+	children,
+}: {
+	colSpan: number;
+	onRetry: () => void;
+	children: React.ReactNode;
+}) {
+	const { t } = useLingui();
+	return (
+		<DataTableMessage colSpan={colSpan}>
+			<div role="alert" className="flex flex-col items-center gap-3">
+				{children}
+				<Button variant="secondary" size="sm" onClick={onRetry}>
+					{t`Try again`}
+				</Button>
+			</div>
+		</DataTableMessage>
+	);
+}
+
 /**
  * A column of `DataTablePlaceholderRows`: "title" for the row's name, which also holds the
- * line of details shown under it while tertiary columns are hidden; "text" for a column
- * always shown, and "secondary" or "tertiary" for one that hides like `secondaryColumn`
- * or `tertiaryColumn`; "thumbnail" for a 40px preview; "actions" for a row's "…" button;
- * "empty" for anything else.
+ * line of details shown under it while tertiary columns are hidden, and "iconTitle" for a
+ * name that follows a 32px icon; "text" for a column always shown, and "secondary" or
+ * "tertiary" for one that hides like `secondaryColumn` or `tertiaryColumn`; "thumbnail" for
+ * a 40px preview; "handle" for a `handleColumn` drag handle; "actions" for a row's "…"
+ * button; "empty" for anything else.
  */
 export type PlaceholderCell =
 	| "title"
+	| "iconTitle"
 	| "text"
 	| "secondary"
 	| "tertiary"
 	| "thumbnail"
+	| "handle"
 	| "actions"
 	| "empty";
 
@@ -386,7 +412,9 @@ export function DataTablePlaceholderRows({
 						? secondaryColumn
 						: cell === "tertiary"
 							? tertiaryColumn
-							: undefined)}
+							: cell === "handle"
+								? handleColumn
+								: undefined)}
 				>
 					{row === 0 && column === 0 && (
 						<span role="status" className="sr-only">
@@ -400,12 +428,24 @@ export function DataTablePlaceholderRows({
 								<PlaceholderLine width={placeholderWidth(DETAIL_WIDTHS, row)} />
 							</div>
 						</div>
+					) : cell === "iconTitle" ? (
+						<div aria-hidden="true" className="flex items-center gap-3">
+							<div className="skeleton-line size-8 shrink-0 rounded-lg" />
+							<div className="min-w-0 flex-1">
+								<PlaceholderLine width={placeholderWidth(TITLE_WIDTHS, row)} />
+								<div className="mt-1 @2xl:hidden">
+									<PlaceholderLine width={placeholderWidth(DETAIL_WIDTHS, row)} />
+								</div>
+							</div>
+						</div>
 					) : cell === "text" || cell === "secondary" || cell === "tertiary" ? (
 						<div aria-hidden="true">
 							<PlaceholderLine width={placeholderWidth(TEXT_WIDTHS, row)} />
 						</div>
 					) : cell === "thumbnail" ? (
 						<div aria-hidden="true" className="skeleton-line size-10 rounded" />
+					) : cell === "handle" ? (
+						<div aria-hidden="true" className="size-8" />
 					) : cell === "actions" ? (
 						<div aria-hidden="true" className="size-6.5" />
 					) : null}

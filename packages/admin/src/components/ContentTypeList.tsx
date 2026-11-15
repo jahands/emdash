@@ -1,4 +1,4 @@
-import { Badge, Button, DropdownMenu, Loader } from "@cloudflare/kumo";
+import { Badge, Button, DropdownMenu } from "@cloudflare/kumo";
 import {
 	DndContext,
 	KeyboardSensor,
@@ -39,6 +39,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import {
 	DataTable,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	cellCodeClassName,
@@ -67,6 +68,8 @@ export interface ContentTypeListProps {
 	collections: SchemaCollection[];
 	orphanedTables?: OrphanedTable[];
 	isLoading?: boolean;
+	/** How many content types to hold rows for while loading, when known. */
+	expectedCount?: number;
 	/** Return the request's promise to keep the confirmation open until it lands. */
 	onDelete?: (slug: string) => Promise<unknown> | void;
 	isDeleting?: boolean;
@@ -83,6 +86,7 @@ export function ContentTypeList({
 	collections,
 	orphanedTables,
 	isLoading,
+	expectedCount,
 	onDelete,
 	isDeleting = false,
 	deleteError,
@@ -119,7 +123,9 @@ export function ContentTypeList({
 		return orderedSlugs.map((slug) => bySlug.get(slug)).filter((c) => c !== undefined);
 	}, [collections, orderedSlugs]);
 
+	const placeholderRows = expectedCount ?? 5;
 	const canReorder = !!onReorder && collections.length > 1;
+	const showHandleColumn = canReorder || (isLoading && !!onReorder && placeholderRows > 1);
 
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -161,114 +167,110 @@ export function ContentTypeList({
 				</div>
 			</div>
 
-			{isLoading ? (
-				<div
-					role="status"
-					className="flex items-center justify-center gap-2 py-16 text-sm text-kumo-subtle"
-				>
-					<span aria-hidden="true">
-						<Loader size="sm" />
-					</span>
-					{t`Loading collections...`}
-				</div>
-			) : (
-				<>
-					{/* Orphaned Tables Warning */}
-					{hasOrphans && (
-						<div className="rounded-md border border-kumo-warning/50 bg-kumo-warning-tint p-4">
-							<div className="flex items-start gap-3">
-								<Warning className="h-5 w-5 text-kumo-warning mt-0.5" />
-								<div className="flex-1">
-									<h3 className="font-medium text-kumo-warning">
-										{t`Unregistered Content Tables Found`}
-									</h3>
-									<p className="text-sm text-kumo-subtle mt-1">
-										{t`The following tables contain content but aren't registered as collections. Register them to manage this content in the admin.`}
-									</p>
-									<div className="mt-3 space-y-2">
-										{orphanedTables.map((orphan) => (
-											<div
-												key={orphan.slug}
-												className="flex items-center justify-between bg-kumo-base rounded-md px-3 py-2"
-											>
-												<div>
-													<code dir="ltr" className="text-sm font-medium">
-														{orphan.slug}
-													</code>
-													<span className="text-xs text-kumo-subtle ms-2">
-														{plural(orphan.rowCount, { one: "(# item)", other: "(# items)" })}
-													</span>
-												</div>
-												<Button
-													size="sm"
-													variant="outline"
-													icon={<Check />}
-													onClick={() => onRegisterOrphan?.(orphan.slug)}
-												>
-													{t`Register`}
-												</Button>
-											</div>
-										))}
+			{/* Orphaned Tables Warning */}
+			{hasOrphans && (
+				<div className="rounded-md border border-kumo-warning/50 bg-kumo-warning-tint p-4">
+					<div className="flex items-start gap-3">
+						<Warning className="h-5 w-5 text-kumo-warning mt-0.5" />
+						<div className="flex-1">
+							<h3 className="font-medium text-kumo-warning">
+								{t`Unregistered Content Tables Found`}
+							</h3>
+							<p className="text-sm text-kumo-subtle mt-1">
+								{t`The following tables contain content but aren't registered as collections. Register them to manage this content in the admin.`}
+							</p>
+							<div className="mt-3 space-y-2">
+								{orphanedTables.map((orphan) => (
+									<div
+										key={orphan.slug}
+										className="flex items-center justify-between bg-kumo-base rounded-md px-3 py-2"
+									>
+										<div>
+											<code dir="ltr" className="text-sm font-medium">
+												{orphan.slug}
+											</code>
+											<span className="text-xs text-kumo-subtle ms-2">
+												{plural(orphan.rowCount, { one: "(# item)", other: "(# items)" })}
+											</span>
+										</div>
+										<Button
+											size="sm"
+											variant="outline"
+											icon={<Check />}
+											onClick={() => onRegisterOrphan?.(orphan.slug)}
+										>
+											{t`Register`}
+										</Button>
 									</div>
-								</div>
+								))}
 							</div>
 						</div>
-					)}
-
-					{/* Table */}
-					<DndContext
-						sensors={sensors}
-						collisionDetection={closestCenter}
-						onDragEnd={handleDragEnd}
-					>
-						<DataTable aria-labelledby={headingId}>
-							<thead>
-								<tr>
-									{canReorder && (
-										<th scope="col" {...handleColumn}>
-											<span className="sr-only">{t`Reorder`}</span>
-										</th>
-									)}
-									<th scope="col">{t`Name`}</th>
-									<th scope="col" {...tertiaryColumn}>
-										{t`Slug`}
-									</th>
-									<th scope="col" {...tertiaryColumn}>
-										{t`Source`}
-									</th>
-									<th scope="col" {...tertiaryColumn}>
-										{t`Features`}
-									</th>
-									<th scope="col" className="w-0">
-										<span className="sr-only">{t`Actions`}</span>
-									</th>
-								</tr>
-							</thead>
-							<tbody>
-								{collections.length === 0 && !hasOrphans ? (
-									<DataTableMessage colSpan={columnCount}>
-										{t`No content types yet.`}{" "}
-										<Link to="/content-types/new" className="text-kumo-link underline">
-											{t`Create your first content type`}
-										</Link>
-									</DataTableMessage>
-								) : (
-									<SortableContext items={orderedSlugs} strategy={verticalListSortingStrategy}>
-										{orderedCollections.map((collection) => (
-											<ContentTypeRow
-												key={collection.id}
-												collection={collection}
-												canReorder={canReorder}
-												onRequestDelete={setDeleteTarget}
-											/>
-										))}
-									</SortableContext>
-								)}
-							</tbody>
-						</DataTable>
-					</DndContext>
-				</>
+					</div>
+				</div>
 			)}
+
+			{/* Table */}
+			<DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+				{/* A fixed layout takes column widths from the header alone, so the columns stay put when
+				    rows replace the placeholders. */}
+				<DataTable aria-labelledby={headingId} className="table-fixed">
+					<thead>
+						<tr>
+							{showHandleColumn && (
+								<th scope="col" className="!w-10" {...handleColumn}>
+									<span className="sr-only">{t`Reorder`}</span>
+								</th>
+							)}
+							<th scope="col">{t`Name`}</th>
+							<th scope="col" className="w-48" {...tertiaryColumn}>
+								{t`Slug`}
+							</th>
+							<th scope="col" className="w-32" {...tertiaryColumn}>
+								{t`Source`}
+							</th>
+							<th scope="col" className="w-1/4" {...tertiaryColumn}>
+								{t`Features`}
+							</th>
+							<th scope="col" className="w-15 @max-md:w-12.5">
+								<span className="sr-only">{t`Actions`}</span>
+							</th>
+						</tr>
+					</thead>
+					<tbody>
+						{isLoading && placeholderRows > 0 ? (
+							<DataTablePlaceholderRows
+								cells={[
+									...(showHandleColumn ? (["handle"] as const) : []),
+									"iconTitle",
+									"tertiary",
+									"tertiary",
+									"tertiary",
+									"actions",
+								]}
+								rows={placeholderRows}
+							/>
+						) : collections.length === 0 && !hasOrphans ? (
+							<DataTableMessage colSpan={columnCount}>
+								{t`No content types yet.`}{" "}
+								<Link to="/content-types/new" className="text-kumo-link underline">
+									{t`Create your first content type`}
+								</Link>
+							</DataTableMessage>
+						) : (
+							<SortableContext items={orderedSlugs} strategy={verticalListSortingStrategy}>
+								{orderedCollections.map((collection) => (
+									<ContentTypeRow
+										key={collection.id}
+										collection={collection}
+										canReorder={canReorder}
+										onRequestDelete={setDeleteTarget}
+									/>
+								))}
+							</SortableContext>
+						)}
+					</tbody>
+				</DataTable>
+			</DndContext>
 
 			<ConfirmDialog
 				open={!!deleteTarget}

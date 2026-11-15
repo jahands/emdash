@@ -1,4 +1,4 @@
-import { Button, Input, Select } from "@cloudflare/kumo";
+import { Button, Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import { Dialog } from "@cloudflare/kumo/primitives";
 import { useLingui } from "@lingui/react/macro";
 import {
@@ -12,7 +12,7 @@ import {
 } from "@phosphor-icons/react";
 import * as React from "react";
 
-import type { UserDetail as UserDetailType, UpdateUserInput } from "../../lib/api";
+import type { UserDetail as UserDetailType, UpdateUserInput, UserListItem } from "../../lib/api";
 import { useStableCallback } from "../../lib/hooks";
 import { cn, formatDate, isolate } from "../../lib/utils.js";
 import { UserAvatar } from "../UserAvatar.js";
@@ -20,6 +20,8 @@ import { useRolesConfig } from "./useRolesConfig.js";
 
 export interface UserDetailProps {
 	user: UserDetailType | null;
+	/** The user's list row, shown while their details load. */
+	summary?: UserListItem;
 	isLoading?: boolean;
 	isOpen: boolean;
 	isSaving?: boolean;
@@ -40,7 +42,8 @@ export interface UserDetailProps {
  * User detail slide-over panel with inline editing
  */
 export function UserDetail({
-	user,
+	user: detail,
+	summary,
 	isLoading,
 	isOpen,
 	isSaving,
@@ -57,15 +60,19 @@ export function UserDetail({
 }: UserDetailProps) {
 	const { t, i18n } = useLingui();
 	const { roles, roleLabels, getRoleLabel } = useRolesConfig();
+	const user = detail ?? (isLoading ? summary : undefined) ?? null;
 	const [name, setName] = React.useState(user?.name ?? "");
 	const [email, setEmail] = React.useState(user?.email ?? "");
 	const [role, setRole] = React.useState(user?.role ?? 30);
 
-	// Reset form when viewing a different user
-	const userIdRef = React.useRef(user?.id);
-	if (user?.id !== userIdRef.current) {
-		userIdRef.current = user?.id;
-		if (user) {
+	// Reset the form for a different user, and when the details replace the list row unless
+	// the form has been edited since, as the row may be older than the details.
+	const [seed, setSeed] = React.useState(user);
+	if (user !== seed) {
+		setSeed(user);
+		const edited =
+			!!seed && (name !== (seed.name ?? "") || email !== seed.email || role !== seed.role);
+		if (user && (user.id !== seed?.id || (seed === summary && !edited))) {
 			setName(user.name ?? "");
 			setEmail(user.email ?? "");
 			setRole(user.role);
@@ -130,7 +137,7 @@ export function UserDetail({
 
 					{/* Content */}
 					<div className="flex-1 overflow-y-auto p-6">
-						{isLoading ? (
+						{isLoading && !user ? (
 							<UserDetailSkeleton />
 						) : user ? (
 							<form id="user-edit-form" onSubmit={handleSubmit} className="space-y-6">
@@ -252,13 +259,33 @@ export function UserDetail({
 									<div className="rounded-lg border bg-kumo-base p-4">
 										<h4 className="text-sm font-medium text-kumo-subtle mb-3 flex items-center gap-2">
 											<Key className="h-4 w-4" aria-hidden="true" />
-											{t`Passkeys (${user.credentials.length})`}
+											{t`Passkeys (${detail?.credentials.length ?? user.credentialCount})`}
 										</h4>
-										{user.credentials.length === 0 ? (
+										{!detail && user.credentialCount > 0 ? (
+											<div className="space-y-2">
+												<span role="status" className="sr-only">
+													{t`Loading passkeys...`}
+												</span>
+												{Array.from(
+													{
+														length: Math.min(
+															user.credentialCount,
+															CREDENTIAL_PLACEHOLDER_WIDTHS.length,
+														),
+													},
+													(_, i) => (
+														<PasskeyPlaceholderRow
+															key={i}
+															width={CREDENTIAL_PLACEHOLDER_WIDTHS[i]!}
+														/>
+													),
+												)}
+											</div>
+										) : !detail || detail.credentials.length === 0 ? (
 											<p className="text-sm text-kumo-subtle">{t`No passkeys registered`}</p>
 										) : (
 											<div className="space-y-2">
-												{user.credentials.map((cred) => (
+												{detail.credentials.map((cred) => (
 													<div key={cred.id} className="flex justify-between text-sm">
 														<div>
 															<div>{cred.name || t`Unnamed passkey`}</div>
@@ -279,14 +306,32 @@ export function UserDetail({
 									</div>
 
 									{/* OAuth accounts */}
-									{user.oauthAccounts.length > 0 && (
+									{!detail && user.oauthProviders.length > 0 && (
 										<div className="rounded-lg border bg-kumo-base p-4">
 											<h4 className="text-sm font-medium text-kumo-subtle mb-3 flex items-center gap-2">
 												<ArrowSquareOut className="h-4 w-4" aria-hidden="true" />
-												{t`Linked Accounts (${user.oauthAccounts.length})`}
+												{t`Linked Accounts (${user.oauthProviders.length})`}
 											</h4>
 											<div className="space-y-2">
-												{user.oauthAccounts.map((account, i) => (
+												{user.oauthProviders.map((provider, i) => (
+													<div key={`${provider}-${i}`} className="flex justify-between text-sm">
+														<span className="capitalize">{provider}</span>
+														<div className="w-32" aria-hidden="true">
+															<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+														</div>
+													</div>
+												))}
+											</div>
+										</div>
+									)}
+									{detail && detail.oauthAccounts.length > 0 && (
+										<div className="rounded-lg border bg-kumo-base p-4">
+											<h4 className="text-sm font-medium text-kumo-subtle mb-3 flex items-center gap-2">
+												<ArrowSquareOut className="h-4 w-4" aria-hidden="true" />
+												{t`Linked Accounts (${detail.oauthAccounts.length})`}
+											</h4>
+											<div className="space-y-2">
+												{detail.oauthAccounts.map((account, i) => (
 													<div
 														key={`${account.provider}-${i}`}
 														className="flex justify-between text-sm"
@@ -359,31 +404,66 @@ export function UserDetail({
 	);
 }
 
-/** Loading skeleton for user detail */
-function UserDetailSkeleton() {
+// Fixed, so placeholders shown again after a remount don't change shape.
+const CREDENTIAL_PLACEHOLDER_WIDTHS = [55, 42, 48, 60, 38];
+
+/** A passkey's row in outline: its name and kind, and when it was created and last used. */
+function PasskeyPlaceholderRow({ width }: { width: number }) {
 	return (
-		<div className="space-y-6 animate-pulse">
-			{/* Profile skeleton */}
-			<div className="flex items-start gap-4">
-				<div className="h-16 w-16 rounded-full bg-kumo-tint" />
-				<div className="flex-1 space-y-2">
-					<div className="h-6 w-48 bg-kumo-tint rounded" />
-					<div className="h-4 w-36 bg-kumo-tint rounded" />
-					<div className="h-5 w-24 bg-kumo-tint rounded" />
+		<div className="flex justify-between gap-4 text-sm" aria-hidden="true">
+			<div className="flex-1">
+				<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+				<div className="text-xs">
+					<SkeletonLine blockHeight="1lh" minWidth={30} maxWidth={30} />
 				</div>
 			</div>
+			<div className="flex w-36 flex-col items-end">
+				<div className="w-full">
+					<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+				</div>
+				<div className="w-4/5 text-xs">
+					<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+				</div>
+			</div>
+		</div>
+	);
+}
 
-			{/* Cards skeleton */}
-			{Array.from({ length: 2 }, (_, i) => (
-				<div key={i} className="rounded-lg border bg-kumo-base p-4 space-y-3">
-					<div className="h-4 w-24 bg-kumo-tint rounded" />
-					<div className="space-y-2">
-						<div className="h-4 w-full bg-kumo-tint rounded" />
-						<div className="h-4 w-full bg-kumo-tint rounded" />
-						<div className="h-4 w-3/4 bg-kumo-tint rounded" />
+/** A user's details in outline, for a user whose list row isn't at hand. */
+function UserDetailSkeleton() {
+	const { t } = useLingui();
+	return (
+		<div className="space-y-6">
+			<span role="status" className="sr-only">
+				{t`Loading...`}
+			</span>
+			<div className="space-y-6" aria-hidden="true">
+				<div className="flex items-start gap-4">
+					<div className="skeleton-line size-16 shrink-0 rounded-full" />
+					<div className="flex-1 space-y-3">
+						{["w-12", "w-10"].map((width) => (
+							<div key={width} className="space-y-1.5">
+								<div className={cn("skeleton-line h-4 rounded", width)} />
+								<div className="skeleton-line h-9 w-full rounded-lg" />
+							</div>
+						))}
 					</div>
 				</div>
-			))}
+				<div className="space-y-1.5">
+					<div className="skeleton-line h-4 w-10 rounded" />
+					<div className="skeleton-line h-9 w-full rounded-lg" />
+				</div>
+				{[4, 1].map((rows) => (
+					<div key={rows} className="space-y-3 rounded-lg border bg-kumo-base p-4">
+						<div className="skeleton-line h-4 w-24 rounded" />
+						<div className="space-y-2">
+							{CREDENTIAL_PLACEHOLDER_WIDTHS.slice(0, rows).map((width) => (
+								<SkeletonLine key={width} blockHeight={20} minWidth={width} maxWidth={width} />
+							))}
+						</div>
+					</div>
+				))}
+			</div>
 		</div>
 	);
 }

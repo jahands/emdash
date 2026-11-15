@@ -1,4 +1,4 @@
-import { Button, Loader, Select } from "@cloudflare/kumo";
+import { Button, Select } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { UserPlus, Prohibit, CheckCircle } from "@phosphor-icons/react";
 import * as React from "react";
@@ -7,6 +7,7 @@ import type { UserListItem } from "../../lib/api";
 import { cn, formatDate } from "../../lib/utils.js";
 import {
 	DataTable,
+	DataTableLoadError,
 	DataTableMessage,
 	DataTablePlaceholderRows,
 	RowMeta,
@@ -21,7 +22,14 @@ import { useRolesConfig } from "./useRolesConfig.js";
 
 export interface UserListProps {
 	users: UserListItem[];
+	/** The first page is loading, so there are no rows yet. */
 	isLoading?: boolean;
+	/** Rows for a new search or filter are loading while the last ones stay. */
+	isRefreshing?: boolean;
+	isLoadingMore?: boolean;
+	/** The first page failed to load. */
+	loadError?: string;
+	onRetry?: () => void;
 	hasMore?: boolean;
 	searchQuery: string;
 	roleFilter: number | undefined;
@@ -38,6 +46,10 @@ export interface UserListProps {
 export function UserList({
 	users,
 	isLoading,
+	isRefreshing,
+	isLoadingMore,
+	loadError,
+	onRetry,
 	hasMore,
 	searchQuery,
 	roleFilter,
@@ -92,7 +104,7 @@ export function UserList({
 				</Select>
 			</TableToolbar>
 
-			<DataTable>
+			<DataTable aria-busy={isRefreshing || undefined}>
 				<thead>
 					<tr>
 						<th scope="col">{t`User`}</th>
@@ -111,7 +123,11 @@ export function UserList({
 					</tr>
 				</thead>
 				<tbody>
-					{users.length === 0 && isLoading ? (
+					{loadError !== undefined ? (
+						<DataTableLoadError colSpan={5} onRetry={() => onRetry?.()}>
+							{loadError}
+						</DataTableLoadError>
+					) : users.length === 0 && isLoading ? (
 						<DataTablePlaceholderRows
 							cells={["title", "secondary", "secondary", "tertiary", "tertiary"]}
 						/>
@@ -145,21 +161,18 @@ export function UserList({
 							<UserListRow key={user.id} user={user} onSelect={() => onSelectUser(user.id)} />
 						))
 					)}
-					{isLoading && users.length > 0 && (
-						<DataTableMessage colSpan={5}>
-							<div className="flex items-center justify-center gap-2">
-								<Loader size="sm" />
-								{t`Loading...`}
-							</div>
-						</DataTableMessage>
-					)}
 				</tbody>
 			</DataTable>
 
 			{/* Load more */}
-			{hasMore && !isLoading && (
+			{hasMore && (
 				<div className="flex justify-center">
-					<Button variant="outline" onClick={onLoadMore}>
+					<Button
+						variant="outline"
+						onClick={onLoadMore}
+						loading={isLoadingMore}
+						disabled={isLoadingMore}
+					>
 						{t`Load More`}
 					</Button>
 				</div>

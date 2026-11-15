@@ -182,6 +182,33 @@ describe("Content types while the schema loads", () => {
 			expect(largestMovement(before)).toBeLessThanOrEqual(1);
 		},
 	);
+
+	it.each([900, 1100])(
+		"holds rows as tall as one-line content type rows in a %ipx column",
+		async (width) => {
+			const posts = { ...collections[0]!, supports: ["drafts"], hasSeo: false };
+			const loaded = [posts, { ...posts, id: "3", slug: "pages", label: "Pages" }];
+			const screen = await render(
+				<div style={{ width }}>
+					<ContentTypeList collections={[]} isLoading expectedCount={2} onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("table").getByRole("status")).toBeInTheDocument();
+			const body = () => screen.getByRole("table").element().querySelector("tbody")!;
+			const placeholderHeight = body().getBoundingClientRect().height;
+
+			await screen.rerender(
+				<div style={{ width }}>
+					<ContentTypeList collections={loaded} onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("link", { name: "Pages" })).toBeVisible();
+
+			expect(
+				Math.abs(body().getBoundingClientRect().height - placeholderHeight),
+			).toBeLessThanOrEqual(1);
+		},
+	);
 });
 
 const fingerprint = (seed: string) => `block-type:v1:sha256:${seed.repeat(64).slice(0, 64)}`;

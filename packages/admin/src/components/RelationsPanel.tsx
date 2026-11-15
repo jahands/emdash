@@ -7,7 +7,7 @@
  * be created, renamed and deleted without leaving the content type.
  */
 
-import { Button } from "@cloudflare/kumo";
+import { Button, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowRight, LinkSimple, Pencil, Plus, Trash } from "@phosphor-icons/react";
@@ -28,6 +28,7 @@ export interface RelationsPanelProps {
 	/** Every relation on the site; the panel keeps the ones this end is in. */
 	relations: RelationWithUsage[];
 	collections: SchemaCollection[];
+	/** The relations, or the collections its dialogs offer, are loading. */
 	isLoading?: boolean;
 	onCreateRelation?: (input: CreateRelationInput) => Promise<unknown>;
 	onUpdateRelation?: (id: string, input: UpdateRelationInput) => Promise<unknown>;
@@ -36,6 +37,9 @@ export interface RelationsPanelProps {
 	isDeletingRelation?: boolean;
 	deleteRelationError?: unknown;
 }
+
+// Fixed, so placeholders shown again after a remount don't change shape.
+const RELATION_PLACEHOLDER_WIDTHS = [45, 60];
 
 export function RelationsPanel({
 	collectionSlug,
@@ -63,23 +67,51 @@ export function RelationsPanel({
 			<div className="flex items-center justify-between gap-4 p-4 border-b">
 				<div>
 					<h2 className="font-semibold">{t`Relations`}</h2>
-					<p className="text-sm text-kumo-subtle">
-						{isLoading
-							? t`Loading relations...`
-							: plural(participating.length, {
-									one: "# relation this content type takes part in",
-									other: "# relations this content type takes part in",
-								})}
-					</p>
+					{isLoading ? (
+						<div className="w-56 text-sm">
+							<span role="status" className="sr-only">
+								{t`Loading relations...`}
+							</span>
+							<div aria-hidden="true">
+								<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+							</div>
+						</div>
+					) : (
+						<p className="text-sm text-kumo-subtle">
+							{plural(participating.length, {
+								one: "# relation this content type takes part in",
+								other: "# relations this content type takes part in",
+							})}
+						</p>
+					)}
 				</div>
 				{onCreateRelation && (
-					<Button icon={<Plus />} onClick={() => setCreateOpen(true)}>
+					<Button icon={<Plus />} disabled={isLoading} onClick={() => setCreateOpen(true)}>
 						{t`New Relation`}
 					</Button>
 				)}
 			</div>
 
-			{participating.length === 0 ? (
+			{isLoading ? (
+				<div className="divide-y divide-kumo-line" aria-hidden="true">
+					{RELATION_PLACEHOLDER_WIDTHS.map((width) => (
+						<div key={width} className="flex items-center gap-4 px-4 py-3">
+							<div className="min-w-0 flex-1">
+								<div className="text-sm">
+									<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+								</div>
+								<div className="mt-1 text-sm">
+									<SkeletonLine blockHeight="1lh" minWidth={30} maxWidth={30} />
+								</div>
+								<div className="mt-1 text-xs">
+									<SkeletonLine blockHeight="1lh" minWidth={40} maxWidth={40} />
+								</div>
+							</div>
+							<div className="size-9" />
+						</div>
+					))}
+				</div>
+			) : participating.length === 0 ? (
 				<div className="p-8 text-center text-kumo-subtle">
 					<LinkSimple className="mx-auto h-12 w-12 mb-4 opacity-50" />
 					<p className="font-medium">{t`No relations yet`}</p>

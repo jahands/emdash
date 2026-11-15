@@ -6,6 +6,7 @@ import {
 	InputArea,
 	LayerDialog,
 	Select,
+	SkeletonLine,
 	Switch,
 } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
@@ -522,6 +523,9 @@ function slugRejection(error: unknown): MessageDescriptor | undefined {
 	return undefined;
 }
 
+// Fixed, so placeholders shown again after a remount don't change shape.
+const BLOCK_TYPE_PLACEHOLDER_WIDTHS = [30, 42, 36];
+
 /**
  * Field editor dialog for creating/editing fields
  */
@@ -552,13 +556,13 @@ export function FieldEditor({
 
 	const isReferenceType = formState.selectedType === "reference";
 
-	const { data: collections = [] } = useQuery({
+	const { data: collections = [], isPending: collectionsPending } = useQuery({
 		queryKey: ["collections"],
 		queryFn: fetchCollections,
 		enabled: open && isReferenceType,
 	});
 
-	const { data: fetchedRelations = [] } = useQuery({
+	const { data: fetchedRelations = [], isPending: relationsPending } = useQuery({
 		queryKey: ["relations"],
 		queryFn: () => fetchRelations(),
 		enabled: open && isReferenceType,
@@ -1089,6 +1093,7 @@ export function FieldEditor({
 													? [{ label: t`Create relation`, value: CREATE_RELATION }]
 													: []),
 											]}
+											disabled={relationsPending}
 											placeholder={t`Select a relationship`}
 											required
 											error={errors.relation}
@@ -1339,6 +1344,7 @@ export function FieldEditor({
 												className="w-full"
 												value={relation}
 												onValueChange={(v) => handleRelationChange(v ?? "")}
+												disabled={relationsPending}
 												items={[
 													{ label: t`Quick create a relationship`, value: "" },
 													...bindableRelations.map(({ relation: rel }) => ({
@@ -1396,6 +1402,7 @@ export function FieldEditor({
 															value={targetCollection}
 															onValueChange={(v) => setField("targetCollection", v ?? "")}
 															items={collections.map((c) => ({ label: c.label, value: c.slug }))}
+															disabled={collectionsPending}
 															placeholder={t`Select a collection`}
 															required
 															error={errors.targetCollection}
@@ -1440,7 +1447,28 @@ export function FieldEditor({
 									help={t`The order controls how block types appear in the picker.`}
 								>
 									{blockTypesLoading ? (
-										<p className="text-sm text-kumo-subtle">{t`Loading block types…`}</p>
+										<div className="space-y-2">
+											<span role="status" className="sr-only">
+												{t`Loading block types…`}
+											</span>
+											{BLOCK_TYPE_PLACEHOLDER_WIDTHS.map((width) => (
+												<div
+													key={width}
+													className="rounded-lg border border-kumo-line p-3"
+													aria-hidden="true"
+												>
+													<div className="flex items-start gap-2 text-base">
+														<div className="skeleton-line mt-0.5 size-4 shrink-0 rounded-sm" />
+														<div className="flex-1">
+															<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+														</div>
+													</div>
+													<div className="mt-2 text-xs">
+														<SkeletonLine blockHeight="1lh" minWidth={20} maxWidth={20} />
+													</div>
+												</div>
+											))}
+										</div>
 									) : blockTypesError ? (
 										<p className="rounded-lg border border-kumo-danger/50 p-4 text-sm text-kumo-danger">
 											{t`Block types could not be loaded.`}
