@@ -122,6 +122,33 @@ describe("learned layout prefetch", () => {
 		expect(await queriesOf(home, "/page/[slug]")).toEqual(homeBaseline);
 	});
 
+	it("keeps starting each locale's reads when locales share a route", async () => {
+		const route = "/[locale]/posts";
+		const render = (locale: string) => async () => {
+			await getMenu("primary", { locale });
+		};
+		const renderIn = (locale: string) => {
+			const ctx: EmDashRequestContext = { editMode: false };
+			return runWithContext(ctx, async () => {
+				const prefetch = startLayoutPrefetch(ctx, route, locale);
+				await render(locale)();
+				await prefetch.settled;
+				prefetch.trackResponse(new Response(null));
+			});
+		};
+		const menuBaseline = await queriesOf(render("fr"));
+		expect(menuBaseline.length).toBeGreaterThan(0);
+		await renderIn("fr");
+		await renderIn("en");
+		await renderIn("fr");
+		await renderIn("en");
+
+		queries = [];
+		const ctx: EmDashRequestContext = { editMode: false };
+		await runWithContext(ctx, () => startLayoutPrefetch(ctx, route, "fr").settled);
+		expect(queries.toSorted()).toEqual(menuBaseline);
+	});
+
 	it("seeds a new route with the reads every render so far has made", async () => {
 		const sidebarBaseline = await queriesOf(sidebarPage);
 		expect(sidebarBaseline.some((sql) => sql.includes("_emdash_widget"))).toBe(true);

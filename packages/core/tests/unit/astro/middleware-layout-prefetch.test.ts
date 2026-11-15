@@ -50,9 +50,13 @@ vi.mock(
 	() => ({ default: { database: { config: { binding: "DB" } }, auth: { mode: "none" } } }),
 	{ virtual: true },
 );
-vi.mock("virtual:emdash/dialect", () => ({ createDialect: vi.fn(), createRequestScopedDb }), {
-	virtual: true,
-});
+vi.mock(
+	"virtual:emdash/dialect",
+	() => ({ createDialect: vi.fn(), createCoalescingDialect: undefined, createRequestScopedDb }),
+	{
+		virtual: true,
+	},
+);
 vi.mock("virtual:emdash/media-providers", () => ({ mediaProviders: [] }), { virtual: true });
 vi.mock("virtual:emdash/plugins", () => ({ plugins: [] }), { virtual: true });
 vi.mock(
@@ -133,7 +137,7 @@ describe("layout prefetch on anonymous HTML navigations", () => {
 		await navigate();
 
 		expect(startLayoutPrefetch).toHaveBeenCalledOnce();
-		expect(startLayoutPrefetch).toHaveBeenCalledWith(expect.anything(), "/posts/[slug]");
+		expect(startLayoutPrefetch).toHaveBeenCalledWith(expect.anything(), "/posts/[slug]", undefined);
 	});
 
 	it("skips the prefetch when the request-scoped db runs one query at a time", async () => {

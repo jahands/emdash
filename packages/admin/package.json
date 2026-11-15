@@ -15,9 +15,9 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
-    "./app": {
-      "types": "./dist/app.d.ts",
-      "default": "./dist/app.js"
+    "./internal/app": {
+      "types": "./dist/internal/app.d.ts",
+      "default": "./dist/internal/app.js"
     },
     "./route-modules": {
       "types": "./dist/route-modules.d.ts",

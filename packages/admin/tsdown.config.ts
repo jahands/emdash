@@ -62,12 +62,13 @@ export default defineConfig({
 	// locales/config and locales/emails are separate server-safe entries:
 	// EmDash core imports them from API routes, where the locales barrel's
 	// React/Kumo graph must not be pulled into the server bundle. Likewise,
-	// internal/co-editing/types keeps Yjs out of core code that only needs room types.
+	// internal/co-editing/types keeps Yjs out of core code that only needs room types,
+	// and internal/app keeps core's declaration build from loading the full barrel's type graph.
 	// Each route module is an entry so it keeps a stable file name that EmDash
 	// core can find in the site's client build and preload.
 	entry: [
 		"src/index.ts",
-		"src/app.ts",
+		"src/internal/app.ts",
 		"src/route-modules.ts",
 		...routeModuleEntries,
 		"src/locales/index.ts",

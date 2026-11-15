@@ -9,7 +9,7 @@
  *
  * Only reads the page is known to make are started. Each render records the
  * layout helpers it called (see `layout-reads.ts`); later requests for the
- * same route start those reads. A route that has not rendered yet starts the
+ * same route and locale start those reads. A route that has not rendered yet starts the
  * reads every finished render so far has made. A read that was started but
  * not used is never started again for that route. So the prefetch issues no
  * query the page would not issue itself, except at most once per route and
@@ -86,7 +86,14 @@ function learn(route: string, log: LayoutReadLog, started: Set<string>, ok: bool
  * reads. Call inside the request ALS frame that owns `ctx`, before rendering.
  * Never throws: a failed read is left for the helper to run on demand.
  */
-export function startLayoutPrefetch(ctx: EmDashRequestContext, route: string): LayoutPrefetch {
+export function startLayoutPrefetch(
+	ctx: EmDashRequestContext,
+	routePattern: string,
+	locale?: string,
+): LayoutPrefetch {
+	// One route pattern can serve every locale, and each locale reads its own
+	// menus and terms, so learning them under one key would reject them in turn.
+	const route = locale === undefined ? routePattern : `${routePattern}\0${locale}`;
 	const log: LayoutReadLog = { owner: ctx, reads: new Map() };
 	ctx.layoutReads = log;
 
