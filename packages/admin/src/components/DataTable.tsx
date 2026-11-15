@@ -1,4 +1,4 @@
-import { Button, DropdownMenu, Table } from "@cloudflare/kumo";
+import { Button, DropdownMenu, SkeletonLine, Table } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { DotsThree, X } from "@phosphor-icons/react";
@@ -333,6 +333,76 @@ export function DataTableMessage({
 			</td>
 		</tr>
 	);
+}
+
+/**
+ * A column of `DataTablePlaceholderRows`: "title" for the row's name, which also holds the
+ * line of details shown under it while tertiary columns are hidden; "text" for a column
+ * always shown, and "secondary" or "tertiary" for one that hides like `secondaryColumn`
+ * or `tertiaryColumn`; "actions" for a row's "…" button; "empty" for anything else.
+ */
+export type PlaceholderCell = "title" | "text" | "secondary" | "tertiary" | "actions" | "empty";
+
+// Fixed per row, so placeholders shown again after a remount don't change shape.
+const TITLE_WIDTHS = [62, 48, 74, 55, 68];
+const DETAIL_WIDTHS = [40, 32, 45, 36, 42];
+const TEXT_WIDTHS = [70, 85, 60, 78, 66];
+
+function placeholderWidth(widths: readonly number[], row: number) {
+	return widths[row % widths.length] ?? 60;
+}
+
+function PlaceholderLine({ width }: { width: number }) {
+	return <SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />;
+}
+
+/**
+ * Rows as tall as a line of text, shown while the first rows load, so the rows take their
+ * place without moving the table. Pass one cell per column, and as many `rows` as are
+ * expected when that is known.
+ */
+export function DataTablePlaceholderRows({
+	cells,
+	rows = 5,
+}: {
+	cells: readonly PlaceholderCell[];
+	rows?: number;
+}) {
+	const { t } = useLingui();
+	return Array.from({ length: rows }, (_, row) => (
+		<tr key={row} aria-hidden={row > 0 || undefined}>
+			{cells.map((cell, column) => (
+				<td
+					key={column}
+					{...(cell === "secondary"
+						? secondaryColumn
+						: cell === "tertiary"
+							? tertiaryColumn
+							: undefined)}
+				>
+					{row === 0 && column === 0 && (
+						<span role="status" className="sr-only">
+							{t`Loading...`}
+						</span>
+					)}
+					{cell === "title" ? (
+						<div aria-hidden="true">
+							<PlaceholderLine width={placeholderWidth(TITLE_WIDTHS, row)} />
+							<div className="mt-1 @2xl:hidden">
+								<PlaceholderLine width={placeholderWidth(DETAIL_WIDTHS, row)} />
+							</div>
+						</div>
+					) : cell === "text" || cell === "secondary" || cell === "tertiary" ? (
+						<div aria-hidden="true">
+							<PlaceholderLine width={placeholderWidth(TEXT_WIDTHS, row)} />
+						</div>
+					) : cell === "actions" ? (
+						<div aria-hidden="true" className="size-6.5" />
+					) : null}
+				</td>
+			))}
+		</tr>
+	));
 }
 
 const stackClassName = "grid [&>*]:[grid-area:1/1]";

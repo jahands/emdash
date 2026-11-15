@@ -5,7 +5,7 @@
  * empty site, and decide MCP approval requests for either.
  */
 
-import { Banner, Loader } from "@cloudflare/kumo";
+import { Banner } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import * as React from "react";
@@ -16,7 +16,12 @@ import {
 	TRANSFER_CAPABILITIES_QUERY_KEY,
 } from "../../lib/api/transfer.js";
 import { getMutationError } from "../DialogError.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsLoadingSection,
+	SettingsSection,
+} from "./SettingsLayout.js";
 import { ApprovalsSection } from "./transfer/ApprovalsSection.js";
 import { ExportSection } from "./transfer/ExportSection.js";
 import { ImportSection } from "./transfer/ImportSection.js";
@@ -62,13 +67,7 @@ export function TransferSettings({ focusImport = false }: { focusImport?: boolea
 	if (userLoading || (isAdmin && (capabilitiesQuery.isPending || sectionsPending))) {
 		return (
 			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
+				<SettingsLoadingSection />
 			</SettingsFrame>
 		);
 	}

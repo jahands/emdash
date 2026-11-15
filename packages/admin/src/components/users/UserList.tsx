@@ -8,6 +8,7 @@ import { cn, formatDate } from "../../lib/utils.js";
 import {
 	DataTable,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowMeta,
 	RowTitleButton,
 	secondaryColumn,
@@ -110,7 +111,11 @@ export function UserList({
 					</tr>
 				</thead>
 				<tbody>
-					{users.length === 0 && !isLoading ? (
+					{users.length === 0 && isLoading ? (
+						<DataTablePlaceholderRows
+							cells={["title", "secondary", "secondary", "tertiary", "tertiary"]}
+						/>
+					) : users.length === 0 ? (
 						<DataTableMessage colSpan={5}>
 							{searchQuery || roleFilter !== undefined ? (
 								<>
@@ -140,7 +145,7 @@ export function UserList({
 							<UserListRow key={user.id} user={user} onSelect={() => onSelectUser(user.id)} />
 						))
 					)}
-					{isLoading && (
+					{isLoading && users.length > 0 && (
 						<DataTableMessage colSpan={5}>
 							<div className="flex items-center justify-center gap-2">
 								<Loader size="sm" />
@@ -221,43 +226,5 @@ function UserListRow({ user, onSelect }: UserListRowProps) {
 				</span>
 			</td>
 		</tr>
-	);
-}
-
-/** Loading skeleton for user list */
-export function UserListSkeleton() {
-	return (
-		<div className="space-y-4">
-			{/* Header skeleton */}
-			<div className="flex items-center justify-between">
-				<div className="h-8 w-24 bg-kumo-tint animate-pulse rounded" />
-				<div className="h-10 w-32 bg-kumo-tint animate-pulse rounded" />
-			</div>
-
-			{/* Filters skeleton */}
-			<div className="flex gap-4">
-				<div className="h-10 w-64 bg-kumo-tint animate-pulse rounded" />
-				<div className="h-10 w-44 bg-kumo-tint animate-pulse rounded" />
-			</div>
-
-			<DataTable aria-hidden="true">
-				<thead>
-					<tr>
-						<th colSpan={5}>
-							<div className="h-5 w-full animate-pulse rounded bg-kumo-tint" />
-						</th>
-					</tr>
-				</thead>
-				<tbody>
-					{Array.from({ length: 5 }, (_, i) => (
-						<tr key={i}>
-							<td colSpan={5}>
-								<div className="h-9 w-full animate-pulse rounded bg-kumo-tint" />
-							</td>
-						</tr>
-					))}
-				</tbody>
-			</DataTable>
-		</div>
 	);
 }

@@ -74,7 +74,7 @@ describe("CommentInbox", () => {
 		expect(noopProps.onStatusChange).toHaveBeenCalledWith("approved");
 	});
 
-	it("shows page context and a standalone empty state without table chrome", async () => {
+	it("shows page context and the empty state in the table's place", async () => {
 		const screen = await render(
 			<CommentInbox
 				{...noopProps}
@@ -86,8 +86,52 @@ describe("CommentInbox", () => {
 		await expect
 			.element(screen.getByText("Review and moderate comments across your content."))
 			.toBeInTheDocument();
+		await expect
+			.element(screen.getByRole("cell", { name: /No comments awaiting moderation\./ }))
+			.toBeInTheDocument();
+	});
+
+	it("shows a tab known to be empty as empty while its comments load", async () => {
+		const screen = await render(
+			<CommentInbox
+				{...noopProps}
+				comments={[]}
+				isLoading
+				counts={{ pending: 0, approved: 0, spam: 0, trash: 0 }}
+			/>,
+		);
+
 		await expect.element(screen.getByText("No comments awaiting moderation.")).toBeInTheDocument();
-		expect(screen.getByRole("table").query()).toBeNull();
+		expect(screen.getByRole("status").query()).toBeNull();
+	});
+
+	it("holds a row for each comment a tab's count says is coming", async () => {
+		const screen = await render(
+			<CommentInbox
+				{...noopProps}
+				comments={[]}
+				isLoading
+				counts={{ pending: 2, approved: 0, spam: 0, trash: 0 }}
+			/>,
+		);
+
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+		expect(screen.container.querySelectorAll("tbody tr")).toHaveLength(2);
+	});
+
+	it("holds rows while comments matching a search load, whatever the tab's count", async () => {
+		const screen = await render(
+			<CommentInbox
+				{...noopProps}
+				comments={[]}
+				isLoading
+				searchQuery="watches"
+				counts={{ pending: 0, approved: 0, spam: 0, trash: 0 }}
+			/>,
+		);
+
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+		expect(screen.getByText("No comments match your filters.").query()).toBeNull();
 	});
 
 	it("toggles selection when a row checkbox is clicked", async () => {

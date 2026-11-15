@@ -118,6 +118,7 @@ import {
 } from "./ContentSettingsPanel.js";
 import { focusDocumentStart } from "./editor/BlockCommands.js";
 import { EditorDraftPatchPreview } from "./EditorDraftPatchPreview.js";
+import { EditorFieldsPlaceholder } from "./EditorFieldsPlaceholder.js";
 import { ImageFieldRenderer, type ImageFieldValue } from "./ImageFieldRenderer.js";
 import { NonListFieldValue, isNonListValue } from "./NonListFieldValue.js";
 import { PluginFieldErrorBoundary } from "./PluginFieldErrorBoundary.js";
@@ -2906,8 +2907,8 @@ export function ContentEditor({
 											}
 										>
 											{fieldsLoading && (
-												<div className="sticky top-24 flex justify-center py-16">
-													<Loader aria-label={t`Loading`} />
+												<div role="status" aria-label={t`Loading`}>
+													<EditorFieldsPlaceholder />
 												</div>
 											)}
 											{(fieldsLoading ? [] : Object.entries(fields)).map(([name, field]) => {

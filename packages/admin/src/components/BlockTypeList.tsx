@@ -8,6 +8,7 @@ import { cn } from "../lib/utils.js";
 import {
 	DataTable,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowMeta,
 	cellCodeClassName,
 	tertiaryColumn,
@@ -48,7 +49,7 @@ export function BlockTypeList({ blockTypes, isLoading = false }: BlockTypeListPr
 				</thead>
 				<tbody>
 					{isLoading ? (
-						<DataTableMessage colSpan={4}>{t`Loading block types…`}</DataTableMessage>
+						<DataTablePlaceholderRows cells={["title", "tertiary", "text", "tertiary"]} />
 					) : blockTypes.length === 0 ? (
 						<DataTableMessage colSpan={4}>{t`No block types defined`}</DataTableMessage>
 					) : (

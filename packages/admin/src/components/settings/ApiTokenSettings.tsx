@@ -4,7 +4,7 @@
  * Allows admins to list, create, and revoke Personal Access Tokens.
  */
 
-import { Banner, Button, Checkbox, Input, Loader, Select, Tooltip } from "@cloudflare/kumo";
+import { Banner, Button, Checkbox, Input, Select, Tooltip } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -23,7 +23,12 @@ import {
 import { fetchPlugins } from "../../lib/api/plugins.js";
 import { parseTimestamp } from "../../lib/utils.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsLoadingSection,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 // =============================================================================
 // Expiry options
@@ -213,13 +218,7 @@ export function ApiTokenSettings() {
 	if (isLoading) {
 		return (
 			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
+				<SettingsLoadingSection />
 			</SettingsFrame>
 		);
 	}

@@ -5,7 +5,7 @@
  * configuring the active email provider and sending a test email.
  */
 
-import { Banner, Button, Input, Loader, Select, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, Input, Select, useKumoToastManager } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -20,7 +20,12 @@ import {
 	type EmailSettings as EmailSettingsData,
 } from "../../lib/api/email-settings.js";
 import { getMutationError } from "../DialogError.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsLoadingSection,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 const SMTP_PROVIDER_ID = "emdash-builtin-smtp";
 const PROVIDER_LABELS: Record<string, MessageDescriptor> = {
@@ -184,13 +189,7 @@ export function EmailSettings() {
 	if (isLoading) {
 		return (
 			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
+				<SettingsLoadingSection />
 			</SettingsFrame>
 		);
 	}

@@ -24,6 +24,7 @@ import { ArrowPrev } from "./ArrowIcons.js";
 import {
 	DataTable,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	RowTitleButton,
@@ -113,7 +114,9 @@ export function RelationList({
 				</thead>
 				<tbody>
 					{isLoading ? (
-						<DataTableMessage colSpan={5}>{t`Loading relations...`}</DataTableMessage>
+						<DataTablePlaceholderRows
+							cells={["title", "secondary", "tertiary", "secondary", "actions"]}
+						/>
 					) : relations.length === 0 ? (
 						<DataTableMessage colSpan={5}>{t`No relations yet.`}</DataTableMessage>
 					) : (

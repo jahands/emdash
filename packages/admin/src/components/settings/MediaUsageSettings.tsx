@@ -18,7 +18,12 @@ import {
 	type MediaUsageProgressAdvanceResponse,
 } from "../../lib/api/media-usage-activation.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsLoadingSection,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 const ROLE_ADMIN = 50;
 
@@ -607,17 +612,9 @@ function ConfirmationDialog({
 }
 
 function LoadingPage({ title, description }: { title: string; description: string }) {
-	const { t } = useLingui();
 	return (
 		<SettingsFrame title={title} description={description}>
-			<SettingsSection title={t`Status`}>
-				<SettingRow>
-					<div className="flex items-center gap-2 text-sm text-kumo-subtle" role="status">
-						<Loader size="sm" />
-						{t`Loading media usage tracking settings…`}
-					</div>
-				</SettingRow>
-			</SettingsSection>
+			<SettingsLoadingSection />
 		</SettingsFrame>
 	);
 }

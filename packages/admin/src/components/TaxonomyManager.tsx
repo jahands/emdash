@@ -64,7 +64,13 @@ import { slugify, slugifyIdentifier } from "../lib/utils";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { BulkTagDialog } from "./BulkTagDialog.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
-import { DataTable, DataTableMessage, RowActionsMenu, RowTitleButton } from "./DataTable.js";
+import {
+	DataTable,
+	DataTableMessage,
+	DataTablePlaceholderRows,
+	RowActionsMenu,
+	RowTitleButton,
+} from "./DataTable.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { DialogSection } from "./DialogSection.js";
 import { HelpLabel, HelpTooltip } from "./FieldHelpLabel.js";
@@ -1328,7 +1334,7 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 					</thead>
 					<tbody>
 						{termsLoading ? (
-							<DataTableMessage colSpan={3}>{t`Loading terms...`}</DataTableMessage>
+							<DataTablePlaceholderRows cells={["title", "empty", "actions"]} />
 						) : terms.length === 0 ? (
 							<DataTableMessage colSpan={3}>
 								{t`No ${inlineLabel(taxonomyDef.label, lingui.locale)} yet. Create one to get started.`}

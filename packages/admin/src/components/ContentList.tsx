@@ -7,7 +7,6 @@ import {
 	LayerDialog,
 	Popover,
 	Select,
-	SkeletonLine,
 	Tabs,
 } from "@cloudflare/kumo";
 import type { DateRange } from "@cloudflare/kumo";
@@ -75,6 +74,7 @@ import {
 	DataTableBulkBar,
 	DataTableBulkNotice,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	rowTitleClassName,
@@ -825,15 +825,15 @@ export function ContentList({
 									</div>
 								</DataTableMessage>
 							) : items.length === 0 && (isLoading || pagination?.isPending) ? (
-								<PlaceholderRows
+								<DataTablePlaceholderRows
 									cells={[
 										...(bulkEnabled ? (["empty"] as const) : []),
 										"title",
-										...listColumns.map(() => "text" as const),
-										"text",
-										...(i18n ? (["text"] as const) : []),
-										"text",
-										...extensionColumns.map(() => "text" as const),
+										...listColumns.map(() => "tertiary" as const),
+										"tertiary",
+										...(i18n ? (["tertiary"] as const) : []),
+										"tertiary",
+										...extensionColumns.map(() => "tertiary" as const),
 										"actions",
 									]}
 								/>
@@ -962,8 +962,8 @@ export function ContentList({
 						</thead>
 						<tbody inert={trashPagination?.isPending || undefined}>
 							{trashedItems.length === 0 && (isTrashedLoading || trashPagination?.isPending) ? (
-								<PlaceholderRows
-									cells={["title", ...(i18n ? (["text"] as const) : []), "text", "actions"]}
+								<DataTablePlaceholderRows
+									cells={["title", ...(i18n ? (["tertiary"] as const) : []), "tertiary", "actions"]}
 								/>
 							) : trashedItems.length === 0 ? (
 								<DataTableMessage colSpan={trashColSpan}>{t`Trash is empty`}</DataTableMessage>
@@ -1830,64 +1830,6 @@ function TrashedListItem({
 			</td>
 		</tr>
 	);
-}
-
-type PlaceholderCell = "empty" | "title" | "text" | "actions";
-
-const PLACEHOLDER_ROW_COUNT = 5;
-
-const placeholderLine = "motion-reduce:after:animate-none";
-
-/**
- * Rows as tall as entry rows, shown while the first page loads, so the entries take their
- * place without moving the table. Pass one cell per column: "text" for a column that hides
- * in a narrow table, and "title" for the title, which then also holds the line of details
- * shown under it.
- */
-function PlaceholderRows({ cells }: { cells: readonly PlaceholderCell[] }) {
-	const { t } = useLingui();
-	return Array.from({ length: PLACEHOLDER_ROW_COUNT }, (_, row) => (
-		<tr key={row} aria-hidden={row > 0 || undefined}>
-			{cells.map((cell, column) => (
-				<td key={column} {...(cell === "text" ? tertiaryColumn : undefined)}>
-					{row === 0 && column === 0 && (
-						<span role="status" className="sr-only">
-							{t`Loading...`}
-						</span>
-					)}
-					{cell === "title" ? (
-						<div aria-hidden="true">
-							<SkeletonLine
-								blockHeight="1lh"
-								minWidth={40}
-								maxWidth={80}
-								className={placeholderLine}
-							/>
-							<div className="mt-1 @2xl:hidden">
-								<SkeletonLine
-									blockHeight="1lh"
-									minWidth={30}
-									maxWidth={50}
-									className={placeholderLine}
-								/>
-							</div>
-						</div>
-					) : cell === "text" ? (
-						<div aria-hidden="true">
-							<SkeletonLine
-								blockHeight="1lh"
-								minWidth={50}
-								maxWidth={90}
-								className={placeholderLine}
-							/>
-						</div>
-					) : cell === "actions" ? (
-						<div aria-hidden="true" className="size-6.5" />
-					) : null}
-				</td>
-			))}
-		</tr>
-	));
 }
 
 function LocaleChip({ locale }: { locale: string }) {

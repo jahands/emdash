@@ -15,7 +15,7 @@
  * this page — so the in-component check is the source of truth.
  */
 
-import { Button, DropdownMenu, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Button, DropdownMenu, useKumoToastManager } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowDown, ArrowUp, IdentificationCard, Pencil, Plus, Trash } from "@phosphor-icons/react";
@@ -27,6 +27,7 @@ import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import {
 	DataTable,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	RowTitleButton,
@@ -146,13 +147,7 @@ export function BylineSchemaPage() {
 		},
 	});
 
-	if (userLoading) {
-		return (
-			<div className="flex items-center justify-center min-h-[50vh]">
-				<Loader />
-			</div>
-		);
-	}
+	if (userLoading) return null;
 
 	// Permission gate. Sidebar already hides the entry for non-admins, but
 	// direct URL navigation still lands here — render an access-denied
@@ -241,7 +236,9 @@ export function BylineSchemaPage() {
 				</thead>
 				<tbody>
 					{fieldsQuery.isLoading ? (
-						<DataTableMessage colSpan={6}>{t`Loading byline fields…`}</DataTableMessage>
+						<DataTablePlaceholderRows
+							cells={["title", "secondary", "secondary", "tertiary", "tertiary", "actions"]}
+						/>
 					) : fieldsQuery.isError ? (
 						// Distinguish "couldn't load" from "empty list" — falling
 						// through to the empty-state copy would tell the admin "no

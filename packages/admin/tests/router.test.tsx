@@ -375,6 +375,57 @@ function buildRouter() {
 	return { router, queryClient, TestApp };
 }
 
+describe("CommentsPage – counts embedded in the admin page", () => {
+	let mockedFetch: typeof fetch;
+	let requests: string[];
+	let holdComments: Promise<void>;
+	let releaseComments: () => void;
+
+	beforeEach(() => {
+		requests = [];
+		holdComments = new Promise((resolve) => {
+			releaseComments = resolve;
+		});
+		mockedFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const href =
+				typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			const url = new URL(href, location.origin);
+			requests.push(url.pathname);
+			if (url.pathname === "/_emdash/api/manifest") return Response.json({ data: MANIFEST });
+			if (url.pathname === "/_emdash/api/auth/me") {
+				return Response.json({ data: { id: "user_01", role: 60 } });
+			}
+			if (url.pathname === "/_emdash/api/admin/comments") {
+				await holdComments;
+				return Response.json({ data: { items: [] } });
+			}
+			if (url.pathname === "/_emdash/api/admin/comments/counts") {
+				return Response.json({ data: { pending: 0, approved: 0, spam: 0, trash: 0 } });
+			}
+			throw new Error(`Unexpected request: ${url.pathname}`);
+		}) as typeof fetch;
+	});
+
+	afterEach(() => {
+		releaseComments();
+		globalThis.fetch = mockedFetch;
+	});
+
+	it("shows the embedded counts on the tabs before the comments load, without requesting them", async () => {
+		const { router, queryClient, TestApp } = buildRouter();
+		queryClient.setQueryDefaults(["commentCounts"], { gcTime: Infinity });
+		queryClient.setQueryData(["commentCounts"], { pending: 3, approved: 7, spam: 2, trash: 0 });
+		await router.navigate({ to: "/comments" });
+		const screen = await render(<TestApp />);
+
+		await expect.element(screen.getByRole("tab", { name: /Pending/ })).toHaveTextContent("3");
+		await expect.element(screen.getByRole("tab", { name: /Spam/ })).toHaveTextContent("2");
+		expect(screen.container.querySelectorAll("tbody tr")).toHaveLength(3);
+		expect(requests).not.toContain("/_emdash/api/admin/comments/counts");
+	});
+});
+
 describe("MediaPage – upload completion", () => {
 	let mockFetch: ReturnType<typeof createMockFetch>;
 

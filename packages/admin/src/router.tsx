@@ -4,7 +4,7 @@
  * Defines all admin routes and their components.
  */
 
-import { Banner, Button, Loader, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { msg, plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type { QueryClient } from "@tanstack/react-query";
@@ -43,6 +43,7 @@ import type {
 	ContentListSort,
 	ContentStatusFilter,
 } from "./components/ContentList";
+import { EditorFieldsPlaceholder } from "./components/EditorFieldsPlaceholder.js";
 import { EntryLockNotice } from "./components/EntryLockNotice";
 import { RequireAdmin } from "./components/RequireAdmin.js";
 import { Shell } from "./components/Shell";
@@ -913,9 +914,7 @@ function ContentListPage() {
 	// Keep every hook above the early returns below — a render that takes a
 	// guard (e.g. `error`) must run the same number of hooks as a full render,
 	// or React throws #300 "Rendered fewer hooks than expected" (#1415).
-	if (!manifest) {
-		return <RouteLoading />;
-	}
+	if (!manifest) return null;
 
 	const collectionConfig = manifest.collections[collection];
 
@@ -3095,10 +3094,11 @@ function CommentsPage() {
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
 	});
 
-	// Fetch counts
+	// The admin page embeds these for moderators, so the tabs show them without a request.
 	const { data: counts } = useQuery({
 		queryKey: ["commentCounts"],
 		queryFn: fetchCommentCounts,
+		staleTime: 60 * 1000,
 	});
 
 	// Status change mutation
@@ -3172,7 +3172,7 @@ function CommentsPage() {
 	return (
 		<CommentInbox
 			comments={allComments}
-			counts={counts ?? { pending: 0, approved: 0, spam: 0, trash: 0 }}
+			counts={counts}
 			isLoading={isLoading}
 			nextCursor={lastPage?.nextCursor}
 			collections={manifest?.collections ?? {}}
@@ -4127,16 +4127,14 @@ declare module "@tanstack/react-router" {
 
 // Shared components
 
-/** Fills the page area while a screen or its data loads, inside the admin's frame. */
+/** Holds the page title's place while a screen or its data loads, inside the admin's frame. */
 function RouteLoading() {
 	const { t } = useLingui();
 	return (
-		<div
-			className="flex items-center justify-center min-h-[50vh]"
-			role="status"
-			aria-label={t`Loading`}
-		>
-			<Loader />
+		<div className="flex min-h-9 items-center" role="status" aria-label={t`Loading`}>
+			<div className="w-48">
+				<SkeletonLine minWidth={100} maxWidth={100} className="h-5 rounded" />
+			</div>
 		</div>
 	);
 }
@@ -4153,16 +4151,13 @@ function EditorSkeleton() {
 			<div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-kumo-line px-3 py-2 sm:px-4">
 				<div className="size-8 shrink-0" />
 				<div className="w-48">
-					<SkeletonLine blockHeight={16} minWidth={60} maxWidth={100} />
+					<SkeletonLine blockHeight={16} minWidth={80} maxWidth={80} />
 				</div>
 			</div>
 			<div className="flex min-h-0 flex-1">
 				<div className="min-w-0 flex-1">
-					<div className="emdash-editor-page mx-auto w-full max-w-[52rem] space-y-4 pt-8 sm:pt-12">
-						<SkeletonLine blockHeight={36} minWidth={40} maxWidth={70} />
-						{Array.from({ length: 6 }, (_, i) => (
-							<SkeletonLine key={i} blockHeight={16} minWidth={70} maxWidth={100} />
-						))}
+					<div className="emdash-editor-page mx-auto w-full max-w-[52rem] pt-8 sm:pt-12">
+						<EditorFieldsPlaceholder />
 					</div>
 				</div>
 				<div className="hidden w-92 shrink-0 border-s border-kumo-line lg:block" />

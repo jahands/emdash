@@ -1,3 +1,5 @@
+import { SkeletonLine } from "@cloudflare/kumo";
+import { useLingui } from "@lingui/react/macro";
 import { Link } from "@tanstack/react-router";
 import * as React from "react";
 
@@ -45,6 +47,34 @@ export function PendingSaveAction() {
 	return (
 		<div className="invisible" aria-hidden="true" inert>
 			<SaveButton isDirty={false} isSaving={false} announce={false} />
+		</div>
+	);
+}
+
+// Fixed, so the outline keeps its shape if the page remounts while loading.
+const LOADING_ROW_LABEL_WIDTHS = [28, 20, 34];
+
+/** A settings section in outline, shown in a page's content while its settings load. */
+export function SettingsLoadingSection() {
+	const { t } = useLingui();
+	return (
+		<div>
+			<span role="status" className="sr-only">
+				{t`Loading settings...`}
+			</span>
+			<div aria-hidden="true">
+				<div className="w-40">
+					<SkeletonLine blockHeight={24} minWidth={100} maxWidth={100} className="h-3 rounded" />
+				</div>
+				<div className="mt-3 divide-y divide-kumo-line overflow-hidden rounded-xl border border-kumo-line bg-kumo-base">
+					{LOADING_ROW_LABEL_WIDTHS.map((width) => (
+						<div key={width} className="grid gap-2 px-4 py-4">
+							<SkeletonLine blockHeight={24} minWidth={width} maxWidth={width} />
+							<SkeletonLine minWidth={100} maxWidth={100} className="h-9 rounded-lg" />
+						</div>
+					))}
+				</div>
+			</div>
 		</div>
 	);
 }

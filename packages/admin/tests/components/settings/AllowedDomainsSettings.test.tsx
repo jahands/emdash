@@ -91,7 +91,7 @@ describe("AllowedDomainsSettings", () => {
 		await expect
 			.element(screen.getByRole("heading", { name: "Self-Signup Domains", level: 1 }))
 			.toBeInTheDocument();
-		await expect.element(screen.getByText("Loading...")).toBeInTheDocument();
+		await expect.element(screen.getByText("Loading settings...")).toBeInTheDocument();
 		expect(screen.getByRole("button", { name: "Add Domain" }).query()).toBeNull();
 	});
 

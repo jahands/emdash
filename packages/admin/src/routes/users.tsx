@@ -11,13 +11,7 @@ import { useQuery, useInfiniteQuery, useMutation, useQueryClient } from "@tansta
 import * as React from "react";
 
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
-import {
-	UserList,
-	UserListSkeleton,
-	UserDetail,
-	InviteUserModal,
-	useRolesConfig,
-} from "../components/users";
+import { UserList, UserDetail, InviteUserModal, useRolesConfig } from "../components/users";
 import {
 	fetchUsers,
 	fetchUser,
@@ -197,11 +191,6 @@ export function UsersPage() {
 	const handleInvite = useSingleFlight((email: string, role: number) =>
 		inviteMutation.mutateAsync({ email, role }),
 	);
-
-	// Loading state
-	if (usersQuery.isLoading && !usersQuery.data) {
-		return <UserListSkeleton />;
-	}
 
 	// Error state
 	if (usersQuery.error) {

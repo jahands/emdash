@@ -5,6 +5,7 @@ import { page } from "vitest/browser";
 import "../../dist/styles.css";
 import { CommentInbox } from "../../src/components/comments/CommentInbox.js";
 import type { AdminComment } from "../../src/lib/api/comments.js";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 const createdAt = "2026-01-02T00:00:00Z";
@@ -150,5 +151,61 @@ describe("Comment inbox at desktop width", () => {
 
 		await expect.element(screen.getByRole("columnheader", { name: "Content" })).toBeVisible();
 		expect(tray.scrollWidth).toBeLessThanOrEqual(tray.clientWidth);
+	});
+});
+
+describe("Comment inbox while its comments load", () => {
+	function inbox(props: { isLoading: boolean; searchQuery?: string }) {
+		return (
+			<div style={{ width: 716 }}>
+				<CommentInbox
+					comments={[]}
+					counts={{ pending: 0, approved: 1, spam: 0, trash: 0 }}
+					collections={{ posts: { label: "Posts" } }}
+					activeStatus="pending"
+					onStatusChange={vi.fn()}
+					collectionFilter=""
+					onCollectionFilterChange={vi.fn()}
+					searchQuery=""
+					onSearchChange={vi.fn()}
+					onCommentStatusChange={vi.fn().mockResolvedValue(undefined)}
+					onCommentDelete={vi.fn().mockResolvedValue(undefined)}
+					onBulkAction={vi.fn().mockResolvedValue(undefined)}
+					onLoadMore={vi.fn()}
+					isAdmin={true}
+					isStatusPending={false}
+					deleteError={null}
+					onDeleteErrorReset={vi.fn()}
+					bulkError={null}
+					onBulkErrorReset={vi.fn()}
+					{...props}
+				/>
+			</div>
+		);
+	}
+
+	it("doesn't move or replace anything when an empty tab finishes loading", async () => {
+		const screen = await render(inbox({ isLoading: true }));
+		const table = screen.getByRole("table").element();
+		const empty = screen.getByText("No comments awaiting moderation.").element();
+		const before = snapshotPositions([table, empty]);
+
+		await screen.rerender(inbox({ isLoading: false }));
+
+		expect(screen.getByRole("table").element()).toBe(table);
+		expect(largestMovement(before)).toBe(0);
+	});
+
+	it("keeps the table and its header in place when a search finishes loading with no results", async () => {
+		const screen = await render(inbox({ isLoading: true, searchQuery: "watches" }));
+		const table = screen.getByRole("table").element();
+		const header = table.querySelector("thead")!;
+		const before = snapshotPositions([header]);
+
+		await screen.rerender(inbox({ isLoading: false, searchQuery: "watches" }));
+
+		await expect.element(screen.getByText("No comments match your filters.")).toBeVisible();
+		expect(screen.getByRole("table").element()).toBe(table);
+		expect(largestMovement(before)).toBe(0);
 	});
 });

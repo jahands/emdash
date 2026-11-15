@@ -6,15 +6,7 @@
  * D1 Time Travel for point-in-time restore on Cloudflare.
  */
 
-import {
-	Banner,
-	Button,
-	Input,
-	LinkButton,
-	Loader,
-	Switch,
-	useKumoToastManager,
-} from "@cloudflare/kumo";
+import { Banner, Button, Input, LinkButton, Switch, useKumoToastManager } from "@cloudflare/kumo";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { DownloadSimple, Trash } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,7 +26,13 @@ import {
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { getMutationError } from "../DialogError.js";
 import { SaveButton } from "../SaveButton.js";
-import { PendingSaveAction, SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	PendingSaveAction,
+	SettingRow,
+	SettingsFrame,
+	SettingsLoadingSection,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 function formatBytes(bytes: number): string {
 	if (bytes < 1024) return `${bytes} B`;
@@ -153,13 +151,7 @@ export function BackupSettings() {
 				description={description}
 				actions={manifest?.storageAvailable === false ? undefined : <PendingSaveAction />}
 			>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
+				<SettingsLoadingSection />
 			</SettingsFrame>
 		);
 	}

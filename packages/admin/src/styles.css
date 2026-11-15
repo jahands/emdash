@@ -261,6 +261,12 @@ body:has(> #admin-root) {
 	cursor: pointer;
 }
 
+@media (prefers-reduced-motion: reduce) {
+	.skeleton-line::after {
+		animation: none;
+	}
+}
+
 /* Keep editor menu choices visibly distinct from their dropdown surfaces. */
 [data-emdash-heading-item][data-highlighted] {
 	background-color: var(--color-kumo-interact) !important;

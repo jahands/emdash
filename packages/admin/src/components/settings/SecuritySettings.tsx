@@ -5,7 +5,7 @@
  * is configured, this page shows an informational message instead.
  */
 
-import { Banner, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, useKumoToastManager } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Plus } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -14,7 +14,12 @@ import * as React from "react";
 import { deletePasskey, fetchManifest, fetchPasskeys, renamePasskey } from "../../lib/api";
 import { PasskeyRegistration } from "../auth/PasskeyRegistration.js";
 import { PasskeyList } from "./PasskeyList.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsLoadingSection,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 interface SecuritySettingsProps {
 	/** Open the add-passkey form, e.g. after signing in at a new address. */
@@ -96,13 +101,7 @@ export function SecuritySettings({ addPasskey = false }: SecuritySettingsProps) 
 	if (manifestLoading || isLoading) {
 		return (
 			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
+				<SettingsLoadingSection />
 			</SettingsFrame>
 		);
 	}

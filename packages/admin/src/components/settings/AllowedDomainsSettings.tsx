@@ -10,7 +10,6 @@ import {
 	Button,
 	Input,
 	LayerDialog,
-	Loader,
 	Select,
 	Switch,
 	useKumoToastManager,
@@ -40,7 +39,12 @@ import {
 } from "../../lib/dialog-form.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { DialogError, getMutationError } from "../DialogError.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsLoadingSection,
+	SettingsSection,
+} from "./SettingsLayout.js";
 import { useAllowedDomainsRolesConfig } from "./useAllowedDomainsRolesConfig.js";
 
 export function DomainRemovalMessage({ domain }: { domain: string }) {
@@ -222,13 +226,7 @@ export function AllowedDomainsSettings() {
 	if (manifestLoading || isLoading) {
 		return (
 			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
+				<SettingsLoadingSection />
 			</SettingsFrame>
 		);
 	}
