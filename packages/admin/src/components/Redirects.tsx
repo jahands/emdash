@@ -749,12 +749,20 @@ export function Redirects() {
 									aria-hidden="true"
 								/>
 								{t`Redirects`}
-								{redirectsQuery.data && (
+								{redirectsQuery.data ? (
 									<Badge variant="secondary">
 										{redirects.length}
 										{redirectsQuery.hasNextPage ? "+" : ""}
 									</Badge>
-								)}
+								) : redirectsQuery.isPending ? (
+									// An empty badge as wide as a one-digit count, so the tabs and the filters
+									// beside them stay put when the count arrives.
+									<span aria-hidden="true" className="flex">
+										<Badge variant="secondary" className="text-transparent">
+											0
+										</Badge>
+									</span>
+								) : null}
 							</span>
 						),
 					},

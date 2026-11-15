@@ -293,3 +293,35 @@ describe("Redirects while they load", () => {
 		},
 	);
 });
+
+describe("Redirects tabs while the rules load", () => {
+	it.each([
+		{ count: "a one-digit", items: redirects },
+		{ count: "no", items: [] },
+	])("keep the tabs and filters in place when $count count arrives", async ({ items }) => {
+		const response = deferred<Awaited<ReturnType<typeof fetchRedirects>>>();
+		vi.mocked(fetchRedirects).mockReturnValueOnce(response.promise);
+		const screen = await render(
+			<Toasty>
+				<div style={{ width: 1000 }}>
+					<Redirects />
+				</div>
+			</Toasty>,
+		);
+		await expect.element(screen.getByRole("table").getByRole("status")).toBeInTheDocument();
+		const before = snapshotPositions([
+			screen.getByRole("tab", { name: "Redirects" }).element(),
+			screen.getByRole("tab", { name: "404 Errors" }).element(),
+			screen.getByRole("searchbox").element(),
+			screen.getByRole("textbox", { name: "Filter by group" }).element(),
+			screen.getByRole("combobox", { name: "Filter by status" }).element(),
+		]);
+
+		response.resolve({ items, loopRedirectIds: [] });
+
+		await expect
+			.element(screen.getByRole("tab", { name: new RegExp(`^Redirects\\s?${items.length}$`) }))
+			.toBeInTheDocument();
+		expect(largestMovement(before)).toBeLessThan(1);
+	});
+});
