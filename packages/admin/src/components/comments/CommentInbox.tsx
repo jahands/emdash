@@ -369,6 +369,8 @@ export function CommentInbox({
 						</th>
 						<th scope="col" className="w-0">
 							<span className="sr-only">{t`Actions`}</span>
+							{/* As wide as a row's buttons, so an empty tab leaves the other columns in place. */}
+							<div aria-hidden="true" className={activeStatus !== "approved" ? "w-14" : "w-6.5"} />
 						</th>
 					</tr>
 				</thead>

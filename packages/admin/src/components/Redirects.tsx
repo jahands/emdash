@@ -57,6 +57,7 @@ import { ArrowNext } from "./ArrowIcons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableLoadError,
 	DataTableMessage,
 	DataTablePlaceholderRows,
@@ -804,9 +805,7 @@ export function Redirects() {
 								<th scope="col" className="w-20">
 									{t`Status`}
 								</th>
-								<th scope="col" className="w-0">
-									<span className="sr-only">{t`Actions`}</span>
-								</th>
+								<DataTableActionsHeader />
 							</tr>
 						</thead>
 						<tbody>

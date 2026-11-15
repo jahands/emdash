@@ -26,6 +26,7 @@ import { BylineFieldEditor } from "../components/BylineFieldEditor.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableMessage,
 	DataTablePlaceholderRows,
 	RowActionsMenu,
@@ -230,9 +231,7 @@ export function BylineSchemaPage() {
 						<th scope="col" className="w-28" {...tertiaryColumn}>
 							{t`Required`}
 						</th>
-						<th scope="col" className="w-0">
-							<span className="sr-only">{t`Actions`}</span>
-						</th>
+						<DataTableActionsHeader />
 					</tr>
 				</thead>
 				<tbody>

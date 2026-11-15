@@ -161,6 +161,7 @@ describe("Comment inbox while its comments load", () => {
 		searchQuery?: string;
 		comments?: AdminComment[];
 		counts?: { pending: number; approved: number; spam: number; trash: number };
+		activeStatus?: "pending" | "approved";
 	}) {
 		return (
 			<div style={{ width: props.width ?? 716 }}>
@@ -253,4 +254,21 @@ describe("Comment inbox while its comments load", () => {
 		expect(screen.getByRole("table").element()).toBe(table);
 		expect(largestMovement(before)).toBe(0);
 	});
+
+	it.each([
+		{ width: 1000, activeStatus: "pending" },
+		{ width: 716, activeStatus: "approved" },
+	] as const)(
+		"keeps its columns when a search finds nothing in a $width px $activeStatus tab",
+		async ({ width, activeStatus }) => {
+			const props = { searchQuery: "watches", width, activeStatus };
+			const screen = await render(inbox({ isLoading: true, ...props }));
+			const before = snapshotPositions(screen.getByRole("table").element().querySelectorAll("th"));
+
+			await screen.rerender(inbox({ isLoading: false, ...props }));
+
+			await expect.element(screen.getByText("No comments match your filters.")).toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
 });

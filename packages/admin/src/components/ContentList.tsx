@@ -71,6 +71,7 @@ import {
 } from "./ContentStatusBadge.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableBulkBar,
 	DataTableBulkNotice,
 	DataTableMessage,
@@ -963,9 +964,7 @@ export function ContentList({
 								<th scope="col" {...tertiaryColumn}>
 									{t`Deleted`}
 								</th>
-								<th scope="col" className="w-0">
-									<span className="sr-only">{t`Actions`}</span>
-								</th>
+								<DataTableActionsHeader />
 							</tr>
 						</thead>
 						<tbody inert={trashPagination?.isPending || undefined}>

@@ -586,6 +586,21 @@ export function RowTitleButton({ className, ...props }: React.ComponentProps<"bu
 	);
 }
 
+/**
+ * The header of a column of `RowActionsMenu` buttons. It holds the column at the button's width,
+ * so placeholder rows, a message spanning the table, and loaded rows all leave the other columns
+ * in the same place.
+ */
+export function DataTableActionsHeader() {
+	const { t } = useLingui();
+	return (
+		<th scope="col" className="w-0">
+			<span className="sr-only">{t`Actions`}</span>
+			<div aria-hidden="true" className="w-6.5" />
+		</th>
+	);
+}
+
 /** The "…" button that opens a row's actions. Pass `DropdownMenu` items as children. */
 export function RowActionsMenu({ label, children }: { label: string; children: React.ReactNode }) {
 	return (

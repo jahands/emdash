@@ -142,4 +142,21 @@ describe("Byline fields table while fields load", () => {
 			expect(largestMovement(before)).toBeLessThan(1);
 		},
 	);
+
+	it.each([1000, 560])(
+		"keeps its columns when an empty list arrives in a %ipx table",
+		async (width) => {
+			const response = deferred<{ items: BylineFieldDefinition[] }>();
+			vi.mocked(listBylineFields).mockReturnValueOnce(response.promise);
+			const screen = await renderPage(width);
+			const table = screen.getByRole("table");
+			await expect.element(table.getByRole("status")).toBeInTheDocument();
+			const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+			response.resolve({ items: [] });
+
+			await expect.element(screen.getByText("No byline fields yet.")).toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
 });

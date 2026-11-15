@@ -7,16 +7,19 @@ import { page } from "vitest/browser";
 import "../../dist/styles.css";
 import { TaxonomyManager } from "../../src/components/TaxonomyManager.js";
 import type { TaxonomyTerm } from "../../src/lib/api/taxonomies.js";
+import { deferred, largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 let manifestI18n: { defaultLocale: string; locales: string[] } | undefined;
 let terms: TaxonomyTerm[] = [];
+let termsHeld: Promise<void> = Promise.resolve();
 
 vi.mock("../../src/lib/api/client.js", async () => {
 	const actual = await vi.importActual("../../src/lib/api/client.js");
 	return {
 		...actual,
 		apiFetch: vi.fn(async (url: string) => {
+			if (url.includes("/terms")) await termsHeld;
 			const data = url.includes("/terms")
 				? { terms }
 				: {
@@ -178,4 +181,30 @@ describe("Taxonomy term table layout", () => {
 		}
 		expectInside(screen.getByRole("combobox", { name: "Locale" }).element(), box);
 	});
+});
+
+describe("Taxonomy term table while terms load", () => {
+	it.each([1000, 560])(
+		"keeps its columns when an empty list arrives in a %ipx table",
+		async (width) => {
+			manifestI18n = undefined;
+			terms = [];
+			const held = deferred<void>();
+			termsHeld = held.promise;
+			try {
+				const screen = await renderAtWidth(width);
+				const table = screen.getByRole("table");
+				await expect.element(table.getByRole("status")).toBeInTheDocument();
+				await expect.element(screen.getByRole("heading", { name: "Categories" })).toBeVisible();
+				const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+				held.resolve();
+
+				await expect.element(screen.getByText(/^No categories yet/)).toBeVisible();
+				expect(largestMovement(before)).toBeLessThan(1);
+			} finally {
+				termsHeld = Promise.resolve();
+			}
+		},
+	);
 });

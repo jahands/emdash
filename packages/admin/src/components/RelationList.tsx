@@ -23,6 +23,7 @@ import { cn } from "../lib/utils.js";
 import { ArrowPrev } from "./ArrowIcons.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableMessage,
 	DataTablePlaceholderRows,
 	RowActionsMenu,
@@ -108,9 +109,7 @@ export function RelationList({
 						<th scope="col" className="w-32" {...secondaryColumn}>
 							{t`Links`}
 						</th>
-						<th scope="col" className="w-0">
-							<span className="sr-only">{t`Actions`}</span>
-						</th>
+						<DataTableActionsHeader />
 					</tr>
 				</thead>
 				<tbody>

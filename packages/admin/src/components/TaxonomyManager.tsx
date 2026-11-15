@@ -69,6 +69,7 @@ import { BulkTagDialog } from "./BulkTagDialog.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableMessage,
 	DataTablePlaceholderRows,
 	RowActionsMenu,
@@ -1244,9 +1245,7 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 							<th scope="col" className="w-0 text-end">
 								{t`Count`}
 							</th>
-							<th scope="col" className="w-0">
-								<span className="sr-only">{t`Actions`}</span>
-							</th>
+							<DataTableActionsHeader />
 						</tr>
 					</thead>
 					<tbody>
@@ -1381,9 +1380,7 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 							<th scope="col" className="w-0 text-end">
 								{t`Count`}
 							</th>
-							<th scope="col" className="w-0">
-								<span className="sr-only">{t`Actions`}</span>
-							</th>
+							<DataTableActionsHeader />
 						</tr>
 					</thead>
 					<tbody inert={termsFromOtherLocale || undefined}>

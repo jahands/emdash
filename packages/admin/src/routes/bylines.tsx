@@ -9,6 +9,7 @@ import { BylineFormDialog, type BylineFormValues } from "../components/BylineFor
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableLoadError,
 	DataTablePlaceholderRows,
 	RowActionsMenu,
@@ -348,9 +349,7 @@ export function BylinesPage() {
 							<Table.Head className="w-48" {...tertiaryColumn}>
 								{t`Website`}
 							</Table.Head>
-							<Table.Head className="w-0">
-								<span className="sr-only">{t`Actions`}</span>
-							</Table.Head>
+							<DataTableActionsHeader />
 						</Table.Row>
 					</Table.Header>
 					<Table.Body>
