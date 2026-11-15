@@ -11,7 +11,7 @@
  * - User settings (adding additional passkeys)
  */
 
-import { Button, Input, LinkButton } from "@cloudflare/kumo";
+import { Input, LinkButton } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import {
 	DeviceMobile,
@@ -32,6 +32,7 @@ import {
 	isWebAuthnSecureContext,
 } from "../../lib/webauthn-environment";
 import type { PasskeyClientCapabilities, PasskeyPlatform } from "../../lib/webauthn-environment";
+import { Button } from "../Button.js";
 import { InsecurePasskeyContextMessage } from "./PasskeyContextMessage.js";
 
 // ============================================================================

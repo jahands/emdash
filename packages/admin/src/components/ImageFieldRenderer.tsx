@@ -8,7 +8,7 @@
  * sub-fields) can reuse the same picker without a circular import.
  */
 
-import { Button, DropdownMenu, Label, LayerCard, Text, Tooltip } from "@cloudflare/kumo";
+import { DropdownMenu, Label, LayerCard, Text, Tooltip } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import {
 	Image as ImageIcon,
@@ -38,6 +38,7 @@ import {
 } from "../lib/use-media-rendition.js";
 import { cn } from "../lib/utils.js";
 import { DISCLOSURE_EASE, DISCLOSURE_MS, IMAGE_EDGE, ROW_BUTTON } from "./block-field-styles.js";
+import { Button } from "./Button.js";
 import { FieldHelpLabel } from "./FieldHelpLabel.js";
 import { ImageDropTarget } from "./media/ImageDropTarget.js";
 import { useMediaAssetEditor } from "./media/useMediaAssetEditor.js";

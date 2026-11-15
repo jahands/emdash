@@ -1,4 +1,4 @@
-import { Button, Input, LayerDialog } from "@cloudflare/kumo";
+import { Input, LayerDialog } from "@cloudflare/kumo";
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -12,6 +12,7 @@ import {
 	revealErrors,
 	useSingleFlight,
 } from "../../lib/dialog-form.js";
+import { Button } from "../Button.js";
 import { DialogError, getMutationError } from "../DialogError.js";
 
 export interface ChangeDomainDialogProps {

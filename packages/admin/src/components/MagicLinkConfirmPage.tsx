@@ -3,12 +3,12 @@
  * The token is only used when the recipient presses Continue.
  */
 
-import { Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
 import { useAdminBranding } from "../lib/admin-branding-context.js";
 import { apiFetch } from "../lib/api.js";
+import { Button } from "./Button.js";
 import { BrandLogo } from "./Logo.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
 

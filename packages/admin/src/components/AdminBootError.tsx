@@ -1,7 +1,6 @@
-import { Button } from "@cloudflare/kumo";
-
 import type { AdminBootErrorLabels } from "../locales/server.js";
 import { useRemoveBootLoader } from "./AdminFrameSkeleton.js";
+import { Button } from "./Button.js";
 
 export interface AdminBootErrorProps {
 	/** Resolved on the server: the admin's own catalog may be what failed to load. */

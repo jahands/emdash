@@ -1,4 +1,4 @@
-import { Badge, Button, Checkbox, Input, InputArea, Label, Select, Switch } from "@cloudflare/kumo";
+import { Badge, Checkbox, Input, InputArea, Label, Select, Switch } from "@cloudflare/kumo";
 import {
 	DndContext,
 	closestCenter,
@@ -40,6 +40,7 @@ import type {
 import { useConfirmedRequest } from "../lib/dialog-form.js";
 import { cn, slugifyIdentifier } from "../lib/utils";
 import { ArrowPrev } from "./ArrowIcons.js";
+import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EditorHeader } from "./EditorHeader";
 import { FieldEditor } from "./FieldEditor";

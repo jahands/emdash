@@ -1,10 +1,11 @@
-import { Button, Select } from "@cloudflare/kumo";
+import { Select } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { UserPlus, Prohibit, CheckCircle } from "@phosphor-icons/react";
 import * as React from "react";
 
 import type { UserListItem } from "../../lib/api";
 import { cn, formatDate } from "../../lib/utils.js";
+import { Button } from "../Button.js";
 import {
 	DataTable,
 	DataTableLoadError,

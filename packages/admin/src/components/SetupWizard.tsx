@@ -11,7 +11,7 @@
  *    - Any configured auth provider (AT Protocol, GitHub, Google, etc.)
  */
 
-import { Button, Input, Meter, Radio, SkeletonLine } from "@cloudflare/kumo";
+import { Input, Meter, Radio, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -22,6 +22,7 @@ import { apiFetch, parseApiResponse } from "../lib/api/client";
 import { useAuthProviderList, type AuthProviderModule } from "../lib/auth-provider-context";
 import { navigateTo } from "../lib/navigation.js";
 import { PasskeyRegistration } from "./auth/PasskeyRegistration";
+import { Button } from "./Button.js";
 import { BrandLogo } from "./Logo.js";
 
 // ============================================================================

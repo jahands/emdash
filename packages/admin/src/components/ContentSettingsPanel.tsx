@@ -1,6 +1,5 @@
 import {
 	Badge,
-	Button,
 	Collapsible,
 	Input,
 	Label,
@@ -60,6 +59,7 @@ import {
 } from "../lib/publishing-datetime.js";
 import { cn, isolate } from "../lib/utils.js";
 import { getLocaleLabel } from "../locales/config.js";
+import { Button, loadingButtonProps } from "./Button.js";
 import { BylineCreditsEditor } from "./BylineCreditsEditor.js";
 import type { BylineFormValues } from "./BylineFormDialog.js";
 import { SyncStatus, type SyncProblem } from "./co-editing/SyncStatus.js";
@@ -695,8 +695,7 @@ export function PublishActions({
 				<LayerDialog.Body>{revisions ? <PublishEditedBy {...revisions} /> : null}</LayerDialog.Body>
 				<LayerDialog.Actions dismissLabel={t`Cancel`}>
 					<LayerDialog.Action
-						loading={isPending}
-						disabled={disabled}
+						{...loadingButtonProps(isPending, { disabled })}
 						aria-label={publishLabel}
 						onClick={() => {
 							setConfirmationOpen(false);

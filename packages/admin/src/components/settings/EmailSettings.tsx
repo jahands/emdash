@@ -5,7 +5,7 @@
  * configuring the active email provider and sending a test email.
  */
 
-import { Banner, Button, Input, Select, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Input, Select, useKumoToastManager } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -19,6 +19,7 @@ import {
 	sendTestEmail,
 	type EmailSettings as EmailSettingsData,
 } from "../../lib/api/email-settings.js";
+import { Button } from "../Button.js";
 import { getMutationError } from "../DialogError.js";
 import {
 	SettingRow,

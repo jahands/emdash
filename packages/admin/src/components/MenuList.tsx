@@ -4,15 +4,7 @@
  * Displays all menus with ability to create, edit, and delete.
  */
 
-import {
-	Banner,
-	Button,
-	Input,
-	LayerCard,
-	LayerDialog,
-	SkeletonLine,
-	Toast,
-} from "@cloudflare/kumo";
+import { Banner, Input, LayerCard, LayerDialog, SkeletonLine, Toast } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -30,6 +22,7 @@ import {
 	useTakenValue,
 } from "../lib/dialog-form.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
+import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { HelpLabel } from "./FieldHelpLabel.js";

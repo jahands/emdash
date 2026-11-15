@@ -6,7 +6,6 @@
  */
 
 import { Badge } from "@cloudflare/kumo/components/badge";
-import { Button } from "@cloudflare/kumo/components/button";
 import { Checkbox } from "@cloudflare/kumo/components/checkbox";
 import { InputGroup } from "@cloudflare/kumo/components/input-group";
 import { LayerCard } from "@cloudflare/kumo/components/layer-card";
@@ -33,6 +32,7 @@ import { inlineLabel } from "../lib/inline-label.js";
 import { resolveTaxonomyDefinitions } from "../lib/taxonomy-definitions.js";
 import { foldForMatch, termExactMatches, termMatches } from "../lib/taxonomy-match.js";
 import { cn } from "../lib/utils.js";
+import { Button } from "./Button.js";
 
 interface TaxonomyTerm {
 	id: string;

@@ -1,5 +1,4 @@
 import {
-	Button,
 	Dialog,
 	Grid,
 	Input,
@@ -56,6 +55,7 @@ import { useCurrentUser } from "../lib/api/current-user.js";
 import { useDebouncedValue } from "../lib/hooks.js";
 import { canonicalMediaProviderId, providerItemToMediaItem } from "../lib/media-utils.js";
 import { matchesMimeAllowlist, mimeFromUrl } from "../lib/mime-utils.js";
+import { Button } from "./Button.js";
 import {
 	MediaBrowserFolder,
 	MediaBrowserItem,

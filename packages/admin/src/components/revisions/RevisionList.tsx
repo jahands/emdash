@@ -1,4 +1,4 @@
-import { Badge, Button } from "@cloudflare/kumo";
+import { Badge } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowCounterClockwise } from "@phosphor-icons/react";
@@ -8,6 +8,7 @@ import type { RevisionListItem, RevisionListResponse } from "../../lib/api";
 import { restoredSources } from "../../lib/revision-diff/index.js";
 import type { ChangeItem } from "../../lib/revision-diff/types.js";
 import { cn, isolate } from "../../lib/utils.js";
+import { Button } from "../Button.js";
 import { changeLabel } from "./change-labels.js";
 import {
 	localDayKey,

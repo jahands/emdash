@@ -5,14 +5,7 @@
  * (posts per page, date format, timezone).
  */
 
-import {
-	Autocomplete,
-	Badge,
-	Banner,
-	Button,
-	SkeletonLine,
-	useKumoToastManager,
-} from "@cloudflare/kumo";
+import { Autocomplete, Badge, Banner, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowSquareOut, WarningCircle, Upload, X } from "@phosphor-icons/react";
@@ -34,6 +27,7 @@ import {
 } from "../../lib/api";
 import { useCurrentUser } from "../../lib/api/current-user.js";
 import { useDateLocale } from "../../locales/date-locale.js";
+import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { SaveButton } from "../SaveButton.js";

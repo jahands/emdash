@@ -17,7 +17,7 @@
  * immediately rather than an empty list.
  */
 
-import { Button, Checkbox, Dialog, Input, Select, SkeletonLine } from "@cloudflare/kumo";
+import { Checkbox, Dialog, Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { MagnifyingGlass, FolderOpen, X } from "@phosphor-icons/react";
 import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
@@ -28,6 +28,7 @@ import type { ContentItem } from "../lib/api";
 import { getEntryTitle } from "../lib/entryTitle.js";
 import { useDebouncedValue } from "../lib/hooks";
 import { cn } from "../lib/utils";
+import { Button } from "./Button.js";
 import { ContentStatusLabel, type ContentStatusState } from "./ContentStatusBadge.js";
 
 /** A chosen content entry, carrying its collection and a display title. */

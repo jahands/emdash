@@ -1,4 +1,4 @@
-import { Button, LinkButton, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
+import { LinkButton, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { Dialog, Drawer } from "@cloudflare/kumo/primitives";
 import { useLingui } from "@lingui/react/macro";
 import {
@@ -44,6 +44,7 @@ import { openPreviewWindow } from "../../lib/preview-window.js";
 import { contentUrl } from "../../lib/url.js";
 import { cn } from "../../lib/utils.js";
 import { getLocaleLabel } from "../../locales/index.js";
+import { Button } from "../Button.js";
 import { getMutationError } from "../DialogError.js";
 import { PublishingScheduleDialog } from "../PublishingDateTimeEditor.js";
 import { RouterLinkButton } from "../RouterLinkButton.js";

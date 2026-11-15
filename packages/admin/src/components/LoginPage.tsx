@@ -13,7 +13,7 @@
  * redirects to the admin dashboard since authentication is handled externally.
  */
 
-import { Button, Input, Select, SkeletonLine } from "@cloudflare/kumo";
+import { Input, Select, SkeletonLine } from "@cloudflare/kumo";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
@@ -27,6 +27,7 @@ import { cn } from "../lib/utils";
 import { SUPPORTED_LOCALES } from "../locales/index.js";
 import { useLocale } from "../locales/useLocale.js";
 import { PasskeyLogin } from "./auth/PasskeyLogin";
+import { Button } from "./Button.js";
 import { BrandLogo } from "./Logo.js";
 
 // ============================================================================

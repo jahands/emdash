@@ -1,7 +1,6 @@
 import {
 	Badge,
 	Banner,
-	Button,
 	Checkbox,
 	Field,
 	Input,
@@ -104,6 +103,7 @@ import {
 	type FieldChrome,
 	issuesInViewOrder,
 } from "./BlocksField.js";
+import { Button } from "./Button.js";
 import type { BylineFormValues } from "./BylineFormDialog.js";
 import type { SyncProblem } from "./co-editing/SyncStatus.js";
 import { ContentPickerModal, type PickedContentEntry } from "./ContentPickerModal.js";

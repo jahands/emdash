@@ -7,7 +7,7 @@
  * live, so the whole panel follows suit instead of a save-button form).
  */
 
-import { Button, Input, Label, Select } from "@cloudflare/kumo";
+import { Input, Label, Select } from "@cloudflare/kumo";
 import {
 	DndContext,
 	KeyboardSensor,
@@ -32,6 +32,7 @@ import * as React from "react";
 import type { MediaItem } from "../../lib/api";
 import { canonicalMediaProviderId, metaString } from "../../lib/media-utils";
 import { cn } from "../../lib/utils";
+import { Button } from "../Button.js";
 import { useMediaAssetEditor } from "../media/useMediaAssetEditor.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { GalleryPreviewImage, type GalleryAttributes, type GalleryImage } from "./GalleryNode";

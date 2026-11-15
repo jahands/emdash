@@ -7,7 +7,6 @@
 
 import {
 	Banner,
-	Button,
 	ClipboardText,
 	Combobox,
 	Dialog,
@@ -81,6 +80,7 @@ import {
 	type MediaFocalPoint,
 } from "../lib/media-utils";
 import { formatDate } from "../lib/utils.js";
+import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { HelpTooltip } from "./FieldHelpLabel.js";

@@ -1,10 +1,11 @@
-import { Button, Popover } from "@cloudflare/kumo";
+import { Popover } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Check, CloudWarning, Copy } from "@phosphor-icons/react";
 import * as React from "react";
 
 import type { KeptReason } from "../../lib/co-editing/session.js";
 import { cn } from "../../lib/utils";
+import { Button } from "../Button.js";
 
 /** A room state the save button shows in place of Save, and explains when selected. */
 export type SyncProblem =

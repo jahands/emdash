@@ -1,7 +1,6 @@
 import {
 	Banner,
 	Breadcrumbs,
-	Button,
 	Grid,
 	LayerCard,
 	Select,
@@ -76,6 +75,7 @@ import {
 	metaNumber,
 } from "../lib/media-utils";
 import { cn } from "../lib/utils";
+import { Button } from "./Button.js";
 import {
 	DataTable,
 	DataTablePlaceholderRows,
