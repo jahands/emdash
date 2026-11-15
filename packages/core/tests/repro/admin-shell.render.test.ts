@@ -63,12 +63,17 @@ describe("admin shell", () => {
 		["a signed-out visitor", "/_emdash/admin", {}],
 		["a signed-in user on the sign-in screen", "/_emdash/admin/login", signedIn],
 		["a signed-in user authorizing a device", "/_emdash/admin/device/", signedIn],
-	])("shows %s no frame or loading indicator", async (_who, path, locals) => {
-		const loader = bootLoader(await renderAdmin("en", path, locals));
+	])(
+		"shows %s a sign-in card in outline instead of the frame, announced once",
+		async (_who, path, locals) => {
+			const loader = bootLoader(await renderAdmin("en", path, locals));
 
-		expect(loader).not.toContain("emdash-frame");
-		expect(loader).not.toContain('role="status"');
-	});
+			expect(loader).not.toContain("emdash-frame");
+			expect(loader).toContain('class="emdash-standalone-card"');
+			expect(loader.match(/role="status"/g)).toHaveLength(1);
+			expect(loader.replace(/<[^>]*>/g, "").trim()).toBe("Loading");
+		},
+	);
 
 	it.each([
 		["en", "Failed to load admin", "Try again"],

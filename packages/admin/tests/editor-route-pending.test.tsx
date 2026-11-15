@@ -136,8 +136,11 @@ describe("opening an entry", () => {
 			to: "/content/$collection/$id",
 			params: { collection: "posts", id: "post_1" },
 		});
-		await expect.element(screen.getByRole("status", { name: "Loading entry" })).toBeVisible();
+		await expect
+			.element(screen.getByRole("status").filter({ hasText: "Loading entry" }))
+			.toBeInTheDocument();
 		expect(screen.getByRole("link", { name: /add new/i }).query()).toBeNull();
+		await expect.element(screen.getByRole("link", { name: "Back to Posts list" })).toBeVisible();
 
 		editorChunk.release();
 		await expect.element(screen.getByTestId("content-editor")).toHaveTextContent("First");
@@ -157,7 +160,9 @@ describe("opening an entry", () => {
 			to: "/content/$collection/$id",
 			params: { collection: "posts", id: "post_2" },
 		});
-		await expect.element(screen.getByRole("status", { name: "Loading entry" })).toBeVisible();
+		await expect
+			.element(screen.getByRole("status").filter({ hasText: "Loading entry" }))
+			.toBeInTheDocument();
 		expect(document.body.textContent).not.toContain("Loading configuration");
 
 		releaseSecondEntry();

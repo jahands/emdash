@@ -173,9 +173,23 @@ body:has(> #admin-root) {
 }
 
 .emdash-frame-sidebar-footer {
+	display: flex;
 	flex-shrink: 0;
+	align-items: center;
 	height: 3rem;
+	padding-inline: 1rem;
 	border-top: 1px solid var(--color-kumo-line);
+}
+
+/* Centered in the place of the sidebar's 2.125rem collapse button. */
+.emdash-frame-footer-trigger {
+	margin-inline: 0.5rem;
+}
+
+.emdash-frame .emdash-frame-footer-version {
+	width: 5rem;
+	height: 0.5rem;
+	margin-inline-start: 0.5rem;
 }
 
 .emdash-frame-main {
@@ -186,13 +200,59 @@ body:has(> #admin-root) {
 }
 
 .emdash-frame-header {
+	display: flex;
 	flex-shrink: 0;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 0.5rem;
 	height: 58px;
+	padding-inline: 1rem;
 	border-bottom: 1px solid var(--color-kumo-line);
+}
+
+/* The header's View Site, theme and account buttons, each the size of a small Kumo button. */
+.emdash-frame-button {
+	height: 1.625rem;
+	border-radius: 0.375rem;
+}
+
+.emdash-frame-view-site {
+	width: 5.5rem;
+}
+
+.emdash-frame-theme {
+	width: 1.625rem;
+}
+
+/* The account button shows the user's name from 640px. */
+.emdash-frame-user {
+	width: 2.25rem;
+}
+
+@media (min-width: 640px) {
+	.emdash-frame-user {
+		width: 7.5rem;
+	}
+}
+
+/* Centered in the place of the phone header's 2.125rem navigation button. */
+.emdash-frame-header-menu {
+	margin-inline: 0.5rem auto;
+}
+
+@media (min-width: 768px) {
+	.emdash-frame-header-menu {
+		display: none;
+	}
 }
 
 .emdash-frame .skeleton-line {
 	flex-shrink: 0;
+}
+
+/* The frame around an error the admin shows before it can load. */
+.emdash-frame[data-settled] .skeleton-line::after {
+	animation: none;
 }
 
 .emdash-frame-icon {
@@ -229,6 +289,81 @@ body:has(> #admin-root) {
 
 .emdash-frame-sidebar-item:nth-child(4n) .emdash-frame-label {
 	width: 4.75rem;
+}
+
+/*
+ * The sign-in card in outline, shown while a screen without the sidebar loads.
+ * admin.astro and StandalonePending render it, so the sizes follow LoginPage.
+ */
+.emdash-standalone {
+	display: grid;
+	grid-template-rows: 1fr auto 1fr;
+	justify-items: center;
+	min-height: 100vh;
+	padding: 1rem;
+	background: var(--color-kumo-base);
+}
+
+.emdash-standalone-column {
+	grid-row-start: 2;
+	width: 100%;
+	max-width: 28rem;
+}
+
+.emdash-standalone-heading {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	margin-bottom: 2rem;
+}
+
+.emdash-standalone .skeleton-line {
+	flex-shrink: 0;
+}
+
+.emdash-standalone-logo {
+	width: 10rem;
+	height: 2.5rem;
+	border-radius: 0.5rem;
+}
+
+.emdash-standalone-title {
+	width: 14rem;
+	max-width: 100%;
+	height: 1.25rem;
+	margin-top: 0.875rem;
+	margin-bottom: 0.375rem;
+	border-radius: 9999px;
+}
+
+.emdash-standalone-card {
+	padding: 1.5rem;
+	border: 1px solid var(--color-kumo-line);
+	border-radius: 0.5rem;
+	background: var(--color-kumo-base);
+	@apply shadow-sm;
+}
+
+.emdash-standalone-control {
+	width: 100%;
+	height: 2.25rem;
+	border-radius: 0.5rem;
+}
+
+.emdash-standalone-text {
+	width: 60%;
+	height: 0.5rem;
+	margin: 1.25rem auto 0.25rem;
+	border-radius: 9999px;
+}
+
+.emdash-standalone-text + .emdash-standalone-text {
+	width: 30%;
+	margin-top: 2rem;
+}
+
+.emdash-standalone-text + .emdash-standalone-control {
+	margin-top: 1.75rem;
 }
 
 /* Shown in place of the frame when the admin's code fails to load before React runs. */

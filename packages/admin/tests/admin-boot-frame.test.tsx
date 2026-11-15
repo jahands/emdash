@@ -33,6 +33,7 @@ function requestUrl(input: string | URL | Request) {
 }
 
 let manifestHeld: Promise<void> = Promise.resolve();
+let manifestFails = false;
 
 function renderAdmin() {
 	const queryClient = new QueryClient({
@@ -71,13 +72,26 @@ function shownBackground(element: Element | null): string {
 }
 
 /** Where the sidebar, the header and the page area sit. */
-function frameLayout(parts: { sidebar: Element | null; header: Element; main: Element }) {
+function frameLayout(parts: {
+	sidebar: Element | null;
+	header: Element;
+	main: Element;
+	theme: Element;
+	account: Element;
+}) {
 	const sidebar = parts.sidebar && box(parts.sidebar);
+	const theme = box(parts.theme);
 	return {
 		sidebar: sidebar && sidebar.width > 0 ? { x: sidebar.x, width: sidebar.width } : null,
 		header: { ...box(parts.header), border: borderBottom(parts.header) },
 		main: { x: box(parts.main).x, background: shownBackground(parts.main) },
+		theme: { width: theme.width, height: theme.height },
+		accountEnd: Math.round(parts.account.getBoundingClientRect()[endSide()]),
 	};
+}
+
+function endSide() {
+	return document.documentElement.dir === "rtl" ? "left" : "right";
 }
 
 describe("the admin's loading frame", () => {
@@ -87,10 +101,17 @@ describe("the admin's loading frame", () => {
 		originalFetch = globalThis.fetch;
 		localStorage.clear();
 		manifestHeld = Promise.resolve();
+		manifestFails = false;
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url = requestUrl(input);
 			if (url === "/_emdash/api/manifest") {
 				await manifestHeld;
+				if (manifestFails) {
+					return new Response(JSON.stringify({ error: { code: "INTERNAL", message: "Down" } }), {
+						status: 500,
+						headers: { "Content-Type": "application/json" },
+					});
+				}
 				return json({ data: manifest });
 			}
 			if (url === "/_emdash/api/auth/me") {
@@ -137,6 +158,8 @@ describe("the admin's loading frame", () => {
 				sidebar: admin.container.querySelector("aside"),
 				header: admin.container.querySelector("header")!,
 				main: admin.container.querySelector("main")!,
+				theme: admin.getByRole("button", { name: /^Switch to / }).element(),
+				account: admin.getByRole("button", { name: "Ada", exact: true }).element(),
 			});
 			await admin.unmount();
 
@@ -145,13 +168,15 @@ describe("the admin's loading frame", () => {
 				sidebar: skeleton.container.querySelector(".emdash-frame-sidebar"),
 				header: skeleton.container.querySelector(".emdash-frame-header")!,
 				main: skeleton.container.querySelector(".emdash-frame-main")!,
+				theme: skeleton.container.querySelector(".emdash-frame-theme")!,
+				account: skeleton.container.querySelector(".emdash-frame-user")!,
 			});
 
 			expect(loading).toEqual(shown);
 		},
 	);
 
-	it("keeps the page's boot loader until the admin's frame is on screen, and announces nothing more", async () => {
+	it("keeps the page's boot loader until the admin's frame is on screen, which goes on announcing the loading once", async () => {
 		const bootLoader = document.createElement("div");
 		bootLoader.id = "emdash-boot-loader";
 		bootLoader.innerHTML = '<div class="emdash-frame"><span role="status">Loading</span></div>';
@@ -177,7 +202,10 @@ describe("the admin's loading frame", () => {
 			const { AdminApp } = await import("../src/App");
 			const screen = await render(<AdminApp />, { container });
 			await expect.poll(() => frameAtRemoval).toBe(true);
-			expect(document.querySelectorAll("[role=status]")).toHaveLength(0);
+			const statuses = document.querySelectorAll("[role=status]");
+			expect(statuses).toHaveLength(1);
+			expect(container.contains(statuses[0]!)).toBe(true);
+			expect(statuses[0]!.textContent).toBe("Loading");
 
 			releaseManifest();
 			await expect.element(screen.getByRole("heading", { name: "Dashboard" })).toBeInTheDocument();
@@ -187,5 +215,17 @@ describe("the admin's loading frame", () => {
 			container.remove();
 			history.replaceState(null, "", previousUrl);
 		}
+	});
+
+	it("shows a failed load in the frame's page area, where the admin would have been", async () => {
+		manifestFails = true;
+		const admin = await renderAdmin();
+
+		const retry = admin.getByRole("button", { name: "Retry" });
+		await expect.element(retry).toBeVisible();
+		const main = admin.container.querySelector(".emdash-frame-main")!;
+		expect(main.contains(retry.element())).toBe(true);
+		expect(admin.container.querySelector(".emdash-frame-sidebar")).not.toBeNull();
+		expect(admin.getByRole("status").query()).toBeNull();
 	});
 });

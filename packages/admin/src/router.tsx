@@ -4,7 +4,7 @@
  * Defines all admin routes and their components.
  */
 
-import { Banner, Button, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, useKumoToastManager } from "@cloudflare/kumo";
 import { msg, plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type { QueryClient } from "@tanstack/react-query";
@@ -43,10 +43,16 @@ import type {
 	ContentListSort,
 	ContentStatusFilter,
 } from "./components/ContentList";
-import { EditorFieldsPlaceholder } from "./components/EditorFieldsPlaceholder.js";
 import { EntryLockNotice } from "./components/EntryLockNotice";
 import { RequireAdmin } from "./components/RequireAdmin.js";
 import { Shell } from "./components/Shell";
+import {
+	ContentTypeEditorPending,
+	EditorFramePending,
+	RoutePending,
+	SettingsPagePending,
+	StandalonePending,
+} from "./components/ShellRoutePending.js";
 import { useAdminBranding } from "./lib/admin-branding-context.js";
 import {
 	apiFetch,
@@ -502,6 +508,7 @@ const setupRoute = createRoute({
 	path: "/setup",
 	staticData: { pageTitle: msg`Setup` },
 	component: SetupWizard,
+	pendingComponent: StandalonePending,
 });
 
 // Login route (standalone, no Shell)
@@ -510,6 +517,7 @@ const loginRoute = createRoute({
 	path: "/login",
 	staticData: { pageTitle: msg`Log in` },
 	component: withRouteModules(LoginPageWrapper, LoginPage),
+	pendingComponent: StandalonePending,
 });
 
 function LoginPageWrapper() {
@@ -524,6 +532,7 @@ const magicLinkConfirmRoute = createRoute({
 	path: "/login/magic-link",
 	staticData: { pageTitle: msg`Confirm magic link` },
 	component: withRouteModules(MagicLinkConfirmPageWrapper, MagicLinkConfirmPage),
+	pendingComponent: StandalonePending,
 	validateSearch: (search: Record<string, unknown>) => ({
 		token: typeof search.token === "string" ? search.token : undefined,
 		redirect: typeof search.redirect === "string" ? search.redirect : undefined,
@@ -542,6 +551,7 @@ const signupRoute = createRoute({
 	path: "/signup",
 	staticData: { pageTitle: msg`Sign up` },
 	component: SignupPage,
+	pendingComponent: StandalonePending,
 });
 
 // Invite accept route (standalone, no Shell)
@@ -550,6 +560,7 @@ const inviteAcceptRoute = createRoute({
 	path: "/invite/accept",
 	staticData: { pageTitle: msg`Accept invitation` },
 	component: InviteAcceptPage,
+	pendingComponent: StandalonePending,
 	validateSearch: (search: Record<string, unknown>) => ({
 		token: typeof search.token === "string" ? search.token : undefined,
 	}),
@@ -561,6 +572,7 @@ const deviceRoute = createRoute({
 	path: "/device",
 	staticData: { pageTitle: msg`Authorize device` },
 	component: DeviceAuthorizePage,
+	pendingComponent: StandalonePending,
 });
 
 // Layout route with Shell wrapper for admin pages (pathless - matches all admin routes)
@@ -568,6 +580,7 @@ const adminLayoutRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	id: "_admin",
 	component: RootComponent,
+	pendingComponent: AdminFrameSkeleton,
 });
 
 // Isomorphic requestIdleCallback polyfill
@@ -611,7 +624,11 @@ function RootComponent() {
 	}
 
 	if (error || !manifest) {
-		return <ErrorScreen error={error?.message ?? t`Failed to load admin`} />;
+		return (
+			<AdminFrameSkeleton>
+				<ErrorScreen error={error?.message ?? t`Failed to load admin`} />
+			</AdminFrameSkeleton>
+		);
 	}
 
 	// Plugin admin components are passed via props and available through PluginAdminContext
@@ -1003,7 +1020,7 @@ const contentNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/new",
 	component: withRouteModules(ContentNewPage, ContentEditor),
-	pendingComponent: EditorSkeleton,
+	pendingComponent: EditorFramePending,
 	staticData: { fullBleed: true, pageTitle: msg`New content` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
@@ -1106,7 +1123,7 @@ function ContentNewPage() {
 	);
 
 	if (!manifest) {
-		return <EditorSkeleton />;
+		return <EditorFramePending />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -1156,7 +1173,7 @@ const contentEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/$id",
 	component: withRouteModules(ContentEditPage, ContentEditor),
-	pendingComponent: EditorSkeleton,
+	pendingComponent: EditorFramePending,
 	staticData: { fullBleed: true, pageTitle: msg`Edit content` },
 	validateSearch: (search) => ({
 		...(typeof search.field === "string" && { field: search.field }),
@@ -2566,7 +2583,7 @@ function ContentEditPage() {
 	}, [collection, id, queryClient]);
 
 	if (!manifest) {
-		return <EditorSkeleton />;
+		return <EditorFramePending />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -2576,7 +2593,7 @@ function ContentEditPage() {
 	}
 
 	if (isLoading) {
-		return <EditorSkeleton />;
+		return <EditorFramePending />;
 	}
 
 	if (itemError && !rawItem) {
@@ -2592,7 +2609,7 @@ function ContentEditPage() {
 	}
 
 	if (!showsEditor) {
-		return <EditorSkeleton />;
+		return <EditorFramePending />;
 	}
 
 	const readOnlyBanner = (
@@ -2737,7 +2754,7 @@ const mediaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/media",
 	component: withRouteModules(MediaPage, MediaLibrary),
-	staticData: { pageTitle: msg`Media` },
+	staticData: { pageTitle: msg`Media`, heading: msg`Media Library` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		folder:
 			typeof search.folder === "string" && search.folder.length > 0 && search.folder.length <= 64
@@ -3213,14 +3230,16 @@ const settingsRoute = createRoute({
 const mediaUsageSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/media-usage",
+	pendingComponent: SettingsPagePending,
 	component: MediaUsageSettings,
-	staticData: { pageTitle: msg`Media Usage` },
+	staticData: { pageTitle: msg`Media Usage`, heading: msg`Media usage tracking` },
 });
 
 // Security settings route
 const securitySettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/security",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(SecuritySettingsWrapper, SecuritySettings),
 	staticData: { pageTitle: msg`Security Settings` },
 	validateSearch: (search: Record<string, unknown>): { addPasskey?: boolean } =>
@@ -3238,6 +3257,7 @@ function SecuritySettingsWrapper() {
 const allowedDomainsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/allowed-domains",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(
 		() => (
 			<RequireAdmin>
@@ -3246,13 +3266,14 @@ const allowedDomainsSettingsRoute = createRoute({
 		),
 		AllowedDomainsSettings,
 	),
-	staticData: { pageTitle: msg`Allowed Domains` },
+	staticData: { pageTitle: msg`Allowed Domains`, heading: msg`Self-Signup Domains` },
 });
 
 // API tokens settings route
 const apiTokenSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/api-tokens",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(
 		() => (
 			<RequireAdmin>
@@ -3268,6 +3289,7 @@ const apiTokenSettingsRoute = createRoute({
 const emailSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/email",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(
 		() => (
 			<RequireAdmin>
@@ -3283,6 +3305,7 @@ const emailSettingsRoute = createRoute({
 const backupSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/backups",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(
 		() => (
 			<RequireAdmin>
@@ -3297,6 +3320,7 @@ const backupSettingsRoute = createRoute({
 const transferSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/transfer",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(TransferSettingsPage, TransferSettings),
 	staticData: { pageTitle: msg`Transfer` },
 	validateSearch: (search: Record<string, unknown>): { start?: "import" } =>
@@ -3311,7 +3335,9 @@ function TransferSettingsPage() {
 const sidebarsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/sidebars",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(SidebarsSettingsPage, SidebarsSettings),
+	staticData: { heading: msg`Sidebars` },
 	validateSearch: (search: Record<string, unknown>): { tab?: "editor" } =>
 		search.tab === "editor" ? { tab: "editor" } : {},
 });
@@ -3325,6 +3351,7 @@ function SidebarsSettingsPage() {
 const generalSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/general",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(
 		() => (
 			<RequireAdmin>
@@ -3340,6 +3367,7 @@ const generalSettingsRoute = createRoute({
 const socialSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/social",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(
 		() => (
 			<RequireAdmin>
@@ -3348,13 +3376,14 @@ const socialSettingsRoute = createRoute({
 		),
 		SocialSettings,
 	),
-	staticData: { pageTitle: msg`Social Settings` },
+	staticData: { pageTitle: msg`Social Settings`, heading: msg`Social Links` },
 });
 
 // SEO settings route
 const seoSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/seo",
+	pendingComponent: SettingsPagePending,
 	component: withRouteModules(
 		() => (
 			<RequireAdmin>
@@ -3426,7 +3455,7 @@ const marketplaceBrowseRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/marketplace",
 	component: MarketplaceUnavailablePage,
-	staticData: { pageTitle: msg`Plugin Marketplace` },
+	staticData: { pageTitle: msg`Plugin Marketplace`, heading: msg`Marketplace` },
 });
 
 // Marketplace plugin detail route
@@ -3472,7 +3501,7 @@ const themeMarketplaceBrowseRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/themes/marketplace",
 	component: MarketplaceUnavailablePage,
-	staticData: { pageTitle: msg`Theme Marketplace` },
+	staticData: { pageTitle: msg`Theme Marketplace`, heading: msg`Themes` },
 });
 
 // Theme marketplace detail route
@@ -3616,7 +3645,7 @@ const bylineSchemaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/byline-schema",
 	component: BylineSchemaPage,
-	staticData: { pageTitle: msg`Byline Schema` },
+	staticData: { pageTitle: msg`Byline Schema`, heading: msg`Byline schema` },
 });
 
 // Content Types routes
@@ -3630,6 +3659,7 @@ const contentTypesListRoute = createRoute({
 function ContentTypesListPage() {
 	const { t } = useLingui();
 	const queryClient = useQueryClient();
+	const { data: manifest } = useQuery({ queryKey: ["manifest"], queryFn: fetchManifest });
 	const toastManager = useKumoToastManager();
 
 	const {
@@ -3700,21 +3730,20 @@ function ContentTypesListPage() {
 		return <ErrorScreen error={error.message} />;
 	}
 
-	const loading = collectionsLoading || orphansLoading || blockTypesLoading;
-
 	return (
 		<div className="space-y-6">
 			<ContentTypeList
 				collections={collections ?? []}
 				orphanedTables={orphanedTables}
-				isLoading={loading}
+				isLoading={collectionsLoading || orphansLoading}
+				expectedCount={manifest ? Object.keys(manifest.collections).length : undefined}
 				onDelete={(slug) => deleteMutation.mutateAsync(slug)}
 				isDeleting={deleteMutation.isPending}
 				deleteError={deleteMutation.error}
 				onRegisterOrphan={(slug) => registerOrphanMutation.mutate(slug)}
 				onReorder={(slugs) => reorderMutation.mutate(slugs)}
 			/>
-			{!loading && <BlockTypeList blockTypes={blockTypes ?? []} />}
+			<BlockTypeList blockTypes={blockTypes ?? []} isLoading={blockTypesLoading} />
 		</div>
 	);
 }
@@ -3723,6 +3752,7 @@ const contentTypesNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/new",
 	component: withRouteModules(ContentTypesNewPage, ContentTypeEditor),
+	pendingComponent: ContentTypeEditorPending,
 	staticData: { pageTitle: msg`New content type` },
 });
 
@@ -3820,6 +3850,7 @@ const contentTypesEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/$slug",
 	component: withRouteModules(ContentTypesEditPage, ContentTypeEditor),
+	pendingComponent: ContentTypeEditorPending,
 	staticData: { pageTitle: msg`Edit content type` },
 });
 
@@ -3970,7 +4001,7 @@ function ContentTypesEditPage() {
 	}
 
 	if (isLoading) {
-		return <RouteLoading />;
+		return <ContentTypeEditorPending />;
 	}
 
 	return (
@@ -4112,7 +4143,7 @@ export function createAdminRouter(queryClient: QueryClient) {
 		context: { queryClient },
 		basepath: "/_emdash/admin",
 		defaultPreload: "intent",
-		defaultPendingComponent: RouteLoading,
+		defaultPendingComponent: RoutePending,
 		defaultPendingMs: 150,
 		defaultPendingMinMs: 300,
 	});
@@ -4127,49 +4158,10 @@ declare module "@tanstack/react-router" {
 
 // Shared components
 
-/** Holds the page title's place while a screen or its data loads, inside the admin's frame. */
-function RouteLoading() {
-	const { t } = useLingui();
-	return (
-		<div className="flex min-h-9 items-center" role="status" aria-label={t`Loading`}>
-			<div className="w-48">
-				<SkeletonLine minWidth={100} maxWidth={100} className="h-5 rounded" />
-			</div>
-		</div>
-	);
-}
-
-/** The editor's frame, shown while its code or the entry loads. */
-function EditorSkeleton() {
-	const { t } = useLingui();
-	return (
-		<div
-			className="flex h-full flex-col bg-kumo-elevated"
-			role="status"
-			aria-label={t`Loading entry`}
-		>
-			<div className="flex min-h-12 shrink-0 items-center gap-3 border-b border-kumo-line px-3 py-2 sm:px-4">
-				<div className="size-8 shrink-0" />
-				<div className="w-48">
-					<SkeletonLine blockHeight={16} minWidth={80} maxWidth={80} />
-				</div>
-			</div>
-			<div className="flex min-h-0 flex-1">
-				<div className="min-w-0 flex-1">
-					<div className="emdash-editor-page mx-auto w-full max-w-[52rem] pt-8 sm:pt-12">
-						<EditorFieldsPlaceholder />
-					</div>
-				</div>
-				<div className="hidden w-92 shrink-0 border-s border-kumo-line lg:block" />
-			</div>
-		</div>
-	);
-}
-
 function ErrorScreen({ error }: { error: string }) {
 	const { t } = useLingui();
 	return (
-		<div className="flex items-center justify-center min-h-screen">
+		<div className="flex items-center justify-center min-h-[50vh] p-4">
 			<div className="text-center">
 				<h1 className="text-2xl font-semibold leading-tight text-kumo-danger">{t`Error`}</h1>
 				<p className="mt-2 text-sm text-kumo-subtle">{error}</p>

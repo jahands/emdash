@@ -1,15 +1,24 @@
+import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
 const NAV_ITEMS = Array.from({ length: 8 }, (_, index) => index);
 
 /**
  * The admin's frame as admin.astro renders it before the admin loads, shown
- * until the admin's data is ready. The page's own frame announces the loading.
+ * until the admin's data is ready. With `children`, the frame has stopped
+ * loading and shows them in its page area instead, such as an error.
  */
-export function AdminFrameSkeleton() {
+export function AdminFrameSkeleton({ children }: { children?: React.ReactNode }) {
+	const { t } = useLingui();
+	const settled = children !== undefined;
 	return (
-		<div className="emdash-frame" aria-hidden="true">
-			<div className="emdash-frame-sidebar">
+		<div className="emdash-frame" data-settled={settled || undefined}>
+			{!settled && (
+				<span className="sr-only" role="status">
+					{t`Loading`}
+				</span>
+			)}
+			<div className="emdash-frame-sidebar" aria-hidden="true">
 				<div className="emdash-frame-sidebar-header">
 					<div className="skeleton-line emdash-frame-icon" />
 					<div className="skeleton-line emdash-frame-label" />
@@ -22,10 +31,19 @@ export function AdminFrameSkeleton() {
 						</div>
 					))}
 				</div>
-				<div className="emdash-frame-sidebar-footer" />
+				<div className="emdash-frame-sidebar-footer">
+					<div className="skeleton-line emdash-frame-icon emdash-frame-footer-trigger" />
+					<div className="skeleton-line emdash-frame-label emdash-frame-footer-version" />
+				</div>
 			</div>
 			<div className="emdash-frame-main">
-				<div className="emdash-frame-header" />
+				<div className="emdash-frame-header" aria-hidden="true">
+					<div className="skeleton-line emdash-frame-icon emdash-frame-header-menu" />
+					<div className="skeleton-line emdash-frame-button emdash-frame-view-site" />
+					<div className="skeleton-line emdash-frame-button emdash-frame-theme" />
+					<div className="skeleton-line emdash-frame-button emdash-frame-user" />
+				</div>
+				{children}
 			</div>
 		</div>
 	);

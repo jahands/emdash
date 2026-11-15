@@ -41,7 +41,7 @@ const modulePreloads = adminPreloadHrefs(adminPreloadsJson, Astro.url.pathname);
 const routePrefetchFiles = adminPrefetchFiles(adminPreloadsJson, Astro.url.pathname);
 const bootLabels = await loadAdminBootLabels(resolvedLocale);
 // Signed-out visitors are headed for a standalone screen or a redirect to one,
-// and neither shows the sidebar and header.
+// and neither shows the sidebar and header, so they see a sign-in card's outline.
 const showFrame =
 	Boolean(Astro.locals.user) &&
 	!isAdminStandaloneRoute(adminRoutePath(Astro.url.pathname));
@@ -138,7 +138,7 @@ const faviconLink: Promise<{ href?: string; type?: string }> = (async () => {
 				data-error-retry={bootLabels.error.retry}
 			>
 				{
-					showFrame && (
+					showFrame ? (
 						<div class="emdash-frame">
 							<span class="sr-only" role="status">
 								{bootLabels.loading}
@@ -156,10 +156,36 @@ const faviconLink: Promise<{ href?: string; type?: string }> = (async () => {
 										</div>
 									))}
 								</div>
-								<div class="emdash-frame-sidebar-footer" />
+								<div class="emdash-frame-sidebar-footer">
+									<div class="skeleton-line emdash-frame-icon emdash-frame-footer-trigger" />
+									<div class="skeleton-line emdash-frame-label emdash-frame-footer-version" />
+								</div>
 							</div>
 							<div class="emdash-frame-main" aria-hidden="true">
-								<div class="emdash-frame-header" />
+								<div class="emdash-frame-header">
+									<div class="skeleton-line emdash-frame-icon emdash-frame-header-menu" />
+									<div class="skeleton-line emdash-frame-button emdash-frame-view-site" />
+									<div class="skeleton-line emdash-frame-button emdash-frame-theme" />
+									<div class="skeleton-line emdash-frame-button emdash-frame-user" />
+								</div>
+							</div>
+						</div>
+					) : (
+						<div class="emdash-standalone">
+							<span class="sr-only" role="status">
+								{bootLabels.loading}
+							</span>
+							<div class="emdash-standalone-column" aria-hidden="true">
+								<div class="emdash-standalone-heading">
+									<div class="skeleton-line emdash-standalone-logo" />
+									<div class="skeleton-line emdash-standalone-title" />
+								</div>
+								<div class="emdash-standalone-card">
+									<div class="skeleton-line emdash-standalone-control" />
+									<div class="skeleton-line emdash-standalone-text" />
+									<div class="skeleton-line emdash-standalone-text" />
+									<div class="skeleton-line emdash-standalone-control" />
+								</div>
 							</div>
 						</div>
 					)
