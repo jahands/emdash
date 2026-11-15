@@ -507,11 +507,25 @@ export class AdminPage {
 	}
 
 	/**
+	 * The translations sidebar, once it lists the entry's locales. Opening an
+	 * entry keeps the previous screen up while the editor loads, and the panel
+	 * fills in after the entry's translations arrive.
+	 */
+	private async translationsSidebar() {
+		const sidebar = this.page.locator("div:has(> h3:text-is('Translations'))");
+		await sidebar
+			.locator("span.text-xs.font-semibold.uppercase")
+			.first()
+			.waitFor({ timeout: 15000 });
+		return sidebar;
+	}
+
+	/**
 	 * Get available translation locales from the translations sidebar.
 	 * Returns an array of locale codes shown in the sidebar.
 	 */
 	async getTranslationSidebarLocales(): Promise<string[]> {
-		const sidebar = this.page.locator("div:has(> h3:text-is('Translations'))");
+		const sidebar = await this.translationsSidebar();
 		const localeCodes = sidebar.locator("span.text-xs.font-semibold.uppercase");
 		return localeCodes.allTextContents();
 	}
@@ -521,7 +535,7 @@ export class AdminPage {
 	 */
 	async clickTranslate(locale: string): Promise<void> {
 		// Find the translation row for this locale (the div containing the locale code)
-		const sidebar = this.page.locator("div:has(> h3:text-is('Translations'))");
+		const sidebar = await this.translationsSidebar();
 		const localeRow = sidebar.locator(`div:has(> div > span.uppercase:text-is("${locale}"))`);
 		await localeRow.getByRole("button", { name: "Translate" }).click();
 	}
@@ -530,7 +544,7 @@ export class AdminPage {
 	 * Click "Edit" link for an existing translation in the sidebar.
 	 */
 	async clickEditTranslation(locale: string): Promise<void> {
-		const sidebar = this.page.locator("div:has(> h3:text-is('Translations'))");
+		const sidebar = await this.translationsSidebar();
 		const localeRow = sidebar.locator(`div:has(> div > span.uppercase:text-is("${locale}"))`);
 		await localeRow.getByRole("button", { name: "Edit" }).click();
 	}
@@ -539,7 +553,7 @@ export class AdminPage {
 	 * Check if a "Translate" button exists for a locale in the translations sidebar.
 	 */
 	async hasTranslateButton(locale: string): Promise<boolean> {
-		const sidebar = this.page.locator("div:has(> h3:text-is('Translations'))");
+		const sidebar = await this.translationsSidebar();
 		const localeRow = sidebar.locator(`div:has(> div > span.uppercase:text-is("${locale}"))`);
 		return localeRow
 			.getByRole("button", { name: "Translate" })
@@ -551,7 +565,7 @@ export class AdminPage {
 	 * Check if an "Edit" link exists for a locale in the translations sidebar.
 	 */
 	async hasEditTranslationLink(locale: string): Promise<boolean> {
-		const sidebar = this.page.locator("div:has(> h3:text-is('Translations'))");
+		const sidebar = await this.translationsSidebar();
 		const localeRow = sidebar.locator(`div:has(> div > span.uppercase:text-is("${locale}"))`);
 		return localeRow
 			.getByRole("button", { name: "Edit" })

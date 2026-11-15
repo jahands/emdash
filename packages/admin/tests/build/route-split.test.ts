@@ -55,7 +55,7 @@ const modules = [...new Set(Object.values(ADMIN_ROUTE_MODULES).flat())] as Admin
 
 describe("admin build: route splitting", () => {
 	it("boots without the editor", async () => {
-		expect(editorPackages(await staticPackageImports("app.js"))).toEqual([]);
+		expect(editorPackages(await staticPackageImports("internal/app.js"))).toEqual([]);
 	});
 
 	it.each(modules.filter((module) => !ADMIN_EDITOR_MODULES.has(module)))(
