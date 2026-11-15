@@ -351,8 +351,18 @@ async function listColumnNames(
 	ctx: DialectTestContext,
 	tableName: keyof Database,
 ): Promise<Set<string>> {
+	// Kysely's Postgres introspection lists every schema, and parallel tests
+	// each create the same tables in their own schema.
+	const schema =
+		ctx.dialect === "postgres"
+			? (await sql<{ schema: string }>`SELECT current_schema() AS schema`.execute(ctx.db)).rows[0]
+					?.schema
+			: undefined;
 	const tables = await ctx.db.introspection.getTables();
-	const table = tables.find((candidate) => candidate.name === tableName);
+	const table = tables.find(
+		(candidate) =>
+			candidate.name === tableName && (schema === undefined || candidate.schema === schema),
+	);
 	return new Set(table?.columns.map((column) => column.name) ?? []);
 }
 

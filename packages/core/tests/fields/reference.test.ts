@@ -133,8 +133,17 @@ describeEachDialect("reference field is storage-less in the registry", (dialect)
 			],
 		);
 
+		// Kysely's Postgres introspection lists every schema, and parallel tests
+		// each create the same tables in their own schema.
+		const schema =
+			ctx.dialect === "postgres"
+				? (await sql<{ schema: string }>`SELECT current_schema() AS schema`.execute(ctx.db)).rows[0]
+						?.schema
+				: undefined;
 		const table = (await ctx.db.introspection.getTables()).find(
-			(candidate) => candidate.name === "ec_seeded_posts",
+			(candidate) =>
+				candidate.name === "ec_seeded_posts" &&
+				(schema === undefined || candidate.schema === schema),
 		);
 		expect(table?.columns.map((column) => column.name)).toContain("title");
 		expect(table?.columns.map((column) => column.name)).not.toContain("related");
