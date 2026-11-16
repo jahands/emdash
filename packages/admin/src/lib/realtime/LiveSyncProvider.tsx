@@ -5,7 +5,8 @@
  * are skipped, since its own mutations already invalidate what they change.
  *
  * A screen can also hold its queries with `useLiveQueries`, so a change doesn't refetch them
- * under unsaved edits.
+ * under unsaved edits. `useAnnouncePresence` tells the hub where the tab is, and `usePresence`
+ * reads who else is at a topic or under it.
  */
 
 import {
@@ -17,7 +18,10 @@ import {
 } from "@tanstack/react-query";
 import * as React from "react";
 
-import { openLiveConnection } from "./connection.js";
+import { useCurrentUser } from "../api/current-user.js";
+import { assignAuthorColors, authorColorOf, type AuthorColor } from "../author-colors.js";
+import { openLiveConnection, type LivePlace, type PresenceActivity } from "./connection.js";
+import { PresenceStore, type PresenceAt } from "./presence.js";
 import { TAB_ID } from "./tab-id.js";
 
 /**
@@ -46,9 +50,16 @@ interface LiveRegistry {
 	readonly registrations: Set<LiveRegistration>;
 	add(registration: LiveRegistration): () => void;
 	onChange: (() => void) | null;
+	/** Where mounted screens say the tab is. The last one mounted wins. */
+	readonly places: LivePlace[];
+	announce(place: LivePlace): () => void;
+	onPlace: (() => void) | null;
+	readonly presence: PresenceStore;
 }
 
 const LiveRegistryContext = React.createContext<LiveRegistry | null>(null);
+/** Whether the host runs the hub, so screens can keep room for who is here. */
+const LiveEnabledContext = React.createContext(false);
 
 export function LiveSyncProvider({
 	enabled,
@@ -64,7 +75,11 @@ export function LiveSyncProvider({
 		() => (enabled ? startLiveSync(queryClient, registry) : undefined),
 		[enabled, queryClient, registry],
 	);
-	return <LiveRegistryContext.Provider value={registry}>{children}</LiveRegistryContext.Provider>;
+	return (
+		<LiveEnabledContext.Provider value={enabled}>
+			<LiveRegistryContext.Provider value={registry}>{children}</LiveRegistryContext.Provider>
+		</LiveEnabledContext.Provider>
+	);
 }
 
 function createRegistry(): LiveRegistry {
@@ -79,8 +94,98 @@ function createRegistry(): LiveRegistry {
 			};
 		},
 		onChange: null,
+		places: [],
+		announce(place) {
+			registry.places.push(place);
+			registry.onPlace?.();
+			return () => {
+				registry.places.splice(registry.places.indexOf(place), 1);
+				registry.onPlace?.();
+			};
+		},
+		onPlace: null,
+		presence: new PresenceStore(),
 	};
 	return registry;
+}
+
+/** Whether the tab gets live updates and presence from the hub. */
+export function useLiveEnabled(): boolean {
+	return React.useContext(LiveEnabledContext);
+}
+
+/** Tells others the tab is at `topic` while mounted. Null announces nothing. */
+export function useAnnouncePresence(topic: string | null, activity: PresenceActivity): void {
+	const registry = React.useContext(LiveRegistryContext);
+	React.useEffect(() => {
+		if (!registry || topic === null) return;
+		return registry.announce({ topic, activity });
+	}, [registry, topic, activity]);
+}
+
+/** Someone else at a place: other users only, once each per place, editing over viewing. */
+export interface PresentPerson {
+	readonly id: string;
+	readonly name: string;
+	readonly color: AuthorColor;
+	readonly activity: PresenceActivity;
+	/** Where they are: the topic asked about, or one under it. */
+	readonly topic: string;
+}
+
+const NO_PEOPLE: readonly PresentPerson[] = Object.freeze([]);
+
+/** Who else is at `topic` or under it. Subscribes the tab to `topic` while mounted. */
+export function usePresence(topic: string | null): readonly PresentPerson[] {
+	const registry = React.useContext(LiveRegistryContext);
+	const self = useCurrentUser().data?.id ?? null;
+	React.useEffect(() => {
+		if (!registry || topic === null) return;
+		return registry.add({
+			topics: [topic],
+			queryKeys: NO_QUERY_KEYS,
+			held: () => false,
+			arrived: () => {},
+		});
+	}, [registry, topic]);
+	const tabs = React.useSyncExternalStore(
+		registry?.presence.subscribe ?? subscribeToNothing,
+		registry?.presence.snapshot ?? noTabs,
+	);
+	return React.useMemo(
+		() => (topic === null ? NO_PEOPLE : peopleAt(tabs, topic, self)),
+		[tabs, topic, self],
+	);
+}
+
+const NO_QUERY_KEYS: readonly QueryKey[] = [];
+const subscribeToNothing = () => () => {};
+const NO_TABS: readonly PresenceAt[] = Object.freeze([]);
+const noTabs = () => NO_TABS;
+
+function peopleAt(
+	tabs: readonly PresenceAt[],
+	topic: string,
+	self: string | null,
+): readonly PresentPerson[] {
+	const prefix = `${topic}/`;
+	const found = new Map<string, PresenceAt>();
+	for (const tab of tabs) {
+		if (tab.topic !== topic && !tab.topic.startsWith(prefix)) continue;
+		if (tab.clientId === TAB_ID || tab.userId === self) continue;
+		const key = `${tab.topic}\n${tab.userId}`;
+		const known = found.get(key);
+		if (!known || (known.activity === "viewing" && tab.activity === "editing")) found.set(key, tab);
+	}
+	if (found.size === 0) return NO_PEOPLE;
+	const colors = assignAuthorColors([self, ...Array.from(found.values(), (tab) => tab.userId)]);
+	return Array.from(found.values(), (tab) => ({
+		id: tab.userId,
+		name: tab.name,
+		color: authorColorOf(colors, tab.userId),
+		activity: tab.activity,
+		topic: tab.topic,
+	}));
 }
 
 /**
@@ -150,6 +255,7 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	let lastFlush = Number.NEGATIVE_INFINITY;
 	let flushTimer: number | undefined;
 	let topicsTimer: number | undefined;
+	let placeTimer: number | undefined;
 	let sentTopics = "";
 
 	const mark = (arrival: Arrival, matches: (topics: readonly string[]) => boolean) => {
@@ -182,6 +288,9 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		},
 		resync() {
 			mark("gap", () => true);
+		},
+		presence(places, all) {
+			registry.presence.apply(places, all);
 		},
 	});
 
@@ -247,12 +356,25 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	registry.onChange = scheduleTopics;
 	sendTopics();
 
+	// A screen that swaps its activity remounts its announcement; one frame goes out once it settles.
+	const sendPlace = () => {
+		placeTimer = undefined;
+		connection.setPlace(registry.places.at(-1) ?? null);
+	};
+	registry.onPlace = () => {
+		placeTimer ??= window.setTimeout(sendPlace, TOPICS_DELAY_MS);
+	};
+	sendPlace();
+
 	return () => {
 		unsubscribe();
 		registry.onChange = null;
+		registry.onPlace = null;
 		window.clearTimeout(flushTimer);
 		window.clearTimeout(topicsTimer);
+		window.clearTimeout(placeTimer);
 		connection.close();
+		registry.presence.apply([], true);
 	};
 }
 

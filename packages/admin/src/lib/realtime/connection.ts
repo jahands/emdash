@@ -1,8 +1,9 @@
 /**
  * The tab's one socket to the site's realtime hub. It gets a ticket from the server, tells the
- * hub which topics the tab shows, and reports the changes the hub sends. It stays open for five
- * minutes in a hidden tab, because a hibernated socket costs nothing and every reconnect makes
- * the tab refetch, and reconnects with jitter so a deploy doesn't bring every tab back at once.
+ * hub which topics the tab shows and where the tab is, and reports the changes and rosters the
+ * hub sends. It stays open for five minutes in a hidden tab, because a hibernated socket costs
+ * nothing and every reconnect makes the tab refetch, and reconnects with jitter so a deploy
+ * doesn't bring every tab back at once.
  */
 
 import { API_BASE, apiFetch } from "../api/client.js";
@@ -15,15 +16,43 @@ export interface LiveChange {
 	origin?: string;
 }
 
+export type PresenceActivity = "viewing" | "editing";
+
+/** A tab at a place, as the hub stamps it from the tab's ticket. */
+export interface LivePresenceEntry {
+	userId: string;
+	name: string;
+	clientId: string;
+	activity: PresenceActivity;
+}
+
+export interface LivePresencePlace {
+	topic: string;
+	/** Empty when no one is there anymore. */
+	people: LivePresenceEntry[];
+}
+
+export interface LivePlace {
+	topic: string;
+	activity: PresenceActivity;
+}
+
 export interface LiveConnectionEvents {
 	changes(changes: LiveChange[]): void;
 	/** The socket opened again after a gap, in which changes may have been missed. */
 	resync(): void;
+	/**
+	 * Rosters under the tab's topics. With `all`, every place that has anyone, so a place left
+	 * out is empty; the tab also gets an empty `all` when its socket closes.
+	 */
+	presence(places: LivePresencePlace[], all: boolean): void;
 }
 
 export interface LiveConnection {
 	/** The topics the tab shows. Replaces the previous set. */
 	setTopics(topics: readonly string[]): void;
+	/** Where the tab is, or null for nowhere others are shown. Kept across reconnects. */
+	setPlace(place: LivePlace | null): void;
 	close(): void;
 }
 
@@ -46,6 +75,7 @@ type Target = { url: string; ticket: string };
 
 export function openLiveConnection(events: LiveConnectionEvents): LiveConnection {
 	let topics: readonly string[] = [];
+	let place: LivePlace | null = null;
 	let socket: WebSocket | null = null;
 	let connecting = false;
 	let stopped = false;
@@ -61,6 +91,14 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	function sendTopics(): void {
 		if (socket?.readyState === WebSocket.OPEN) {
 			socket.send(JSON.stringify({ t: "topics", topics }));
+		}
+	}
+
+	function sendPlace(): void {
+		if (socket?.readyState === WebSocket.OPEN) {
+			socket.send(
+				JSON.stringify({ t: "here", topic: place?.topic ?? null, activity: place?.activity }),
+			);
 		}
 	}
 
@@ -88,6 +126,7 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			opened = true;
 			attempt = 0;
 			sendTopics();
+			if (place) sendPlace();
 			pingTimer = window.setInterval(() => {
 				if (ws.readyState === WebSocket.OPEN) ws.send("ping");
 			}, PING_MS);
@@ -97,12 +136,15 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		ws.addEventListener("message", (event) => {
 			if (typeof event.data !== "string" || event.data === "pong") return;
 			failures = 0;
-			const changes = readChanges(event.data);
-			if (changes.length > 0) events.changes(changes);
+			const frame = readFrame(event.data);
+			if (frame?.t === "changes" && frame.changes.length > 0) events.changes(frame.changes);
+			else if (frame?.t === "presence") events.presence(frame.places, frame.all);
 		});
 		ws.addEventListener("close", (event) => {
 			if (socket === ws) socket = null;
 			window.clearInterval(pingTimer);
+			// Rosters stop reaching a closed socket, so what the tab knows would go stale.
+			if (opened) events.presence([], true);
 			if (stopped || paused) return;
 			if (!opened || event.code === BUSY) failures++;
 			else failures = 0;
@@ -171,6 +213,11 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			topics = next;
 			sendTopics();
 		},
+		setPlace(next) {
+			if (next?.topic === place?.topic && next?.activity === place?.activity) return;
+			place = next;
+			sendPlace();
+		},
 		close: stop,
 	};
 }
@@ -199,16 +246,44 @@ function socketUrl({ url, ticket }: Target): string {
 	return address.href;
 }
 
-function readChanges(text: string): LiveChange[] {
+type Frame =
+	| { t: "changes"; changes: LiveChange[] }
+	| { t: "presence"; places: LivePresencePlace[]; all: boolean };
+
+function readFrame(text: string): Frame | null {
 	let frame: unknown;
 	try {
 		frame = JSON.parse(text);
 	} catch {
-		return [];
+		return null;
 	}
-	if (!isRecord(frame) || frame.t !== "changes" || !Array.isArray(frame.changes)) return [];
-	return frame.changes.filter(
-		(change): change is LiveChange => isRecord(change) && typeof change.topic === "string",
+	if (!isRecord(frame)) return null;
+	if (frame.t === "changes" && Array.isArray(frame.changes)) {
+		const changes = frame.changes.filter(
+			(change): change is LiveChange => isRecord(change) && typeof change.topic === "string",
+		);
+		return { t: "changes", changes };
+	}
+	if (frame.t === "presence" && Array.isArray(frame.places)) {
+		const places = frame.places.filter(
+			(entry): entry is LivePresencePlace =>
+				isRecord(entry) &&
+				typeof entry.topic === "string" &&
+				Array.isArray(entry.people) &&
+				entry.people.every(isPresenceEntry),
+		);
+		return { t: "presence", places, all: frame.all === true };
+	}
+	return null;
+}
+
+function isPresenceEntry(value: unknown): value is LivePresenceEntry {
+	return (
+		isRecord(value) &&
+		typeof value.userId === "string" &&
+		typeof value.name === "string" &&
+		typeof value.clientId === "string" &&
+		(value.activity === "viewing" || value.activity === "editing")
 	);
 }
 

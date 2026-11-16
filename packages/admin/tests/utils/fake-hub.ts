@@ -1,5 +1,12 @@
 import { expect, vi } from "vitest";
 
+export interface PresenceEntry {
+	userId: string;
+	name: string;
+	clientId: string;
+	activity: "viewing" | "editing";
+}
+
 /** A realtime hub socket the test plays the server's side of. Install it with `vi.stubGlobal`. */
 export class FakeSocket extends EventTarget {
 	static readonly OPEN = 1;
@@ -38,6 +45,20 @@ export class FakeSocket extends EventTarget {
 		if (this.readyState === 3) return;
 		this.readyState = 3;
 		this.dispatchEvent(new CloseEvent("close", { code }));
+	}
+
+	/** Sends rosters, as the hub does when someone moves; with `all`, everyone under the tab's topics. */
+	presence(places: Array<{ topic: string; people: PresenceEntry[] }>, all = false) {
+		this.push(all ? { t: "presence", places, all } : { t: "presence", places });
+	}
+
+	/** The place the tab last said it is at, or undefined before it said any. */
+	here(): { topic: string | null; activity?: string } | undefined {
+		for (const data of this.sent.toReversed()) {
+			const frame = JSON.parse(data) as { t: string; topic: string | null; activity?: string };
+			if (frame.t === "here") return { topic: frame.topic, activity: frame.activity };
+		}
+		return undefined;
 	}
 
 	/** The topics the last frame subscribed to. */
