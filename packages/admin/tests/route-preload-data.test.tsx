@@ -19,7 +19,10 @@ const MANIFEST: AdminManifest = {
 		},
 	},
 	plugins: {},
-	taxonomies: [{ name: "category", label: "Categories", hierarchical: true, collections: [] }],
+	taxonomies: [
+		{ name: "category", label: "Categories", hierarchical: true, collections: [] },
+		{ name: "tag", label: "Tags", hierarchical: false, collections: [] },
+	],
 };
 
 const POST = {
@@ -52,6 +55,10 @@ const RESPONSES: Array<[path: string, data: unknown]> = [
 			terms: [{ id: "term_1", name: "news", slug: "news", label: "Preloaded term", children: [] }],
 		},
 	],
+	[
+		"/_emdash/api/taxonomies/tag/terms",
+		{ terms: [{ id: "term_2", name: "tips", slug: "tips", label: "Preloaded tag", children: [] }] },
+	],
 	["/_emdash/api/taxonomies", { taxonomies: MANIFEST.taxonomies }],
 ];
 
@@ -78,6 +85,20 @@ function mockApi() {
 	}) as typeof fetch;
 }
 
+function renderAdmin() {
+	return render(
+		<AdminApp
+			locale="en"
+			messages={{}}
+			initialData={{
+				manifest: MANIFEST,
+				currentUser: { id: "user_1", email: "admin@example.com", role: 50 },
+				commentCounts: { pending: 0, approved: 0, spam: 0, trash: 0 },
+			}}
+		/>,
+	);
+}
+
 describe("hovering a sidebar link", () => {
 	const initialUrl = window.location.href;
 
@@ -89,17 +110,7 @@ describe("hovering a sidebar link", () => {
 	it("loads the screen's data, so the screen opens with it and does not request it again", async () => {
 		mockApi();
 		window.history.replaceState(null, "", "/_emdash/admin/");
-		const screen = await render(
-			<AdminApp
-				locale="en"
-				messages={{}}
-				initialData={{
-					manifest: MANIFEST,
-					currentUser: { id: "user_1", email: "admin@example.com", role: 50 },
-					commentCounts: { pending: 0, approved: 0, spam: 0, trash: 0 },
-				}}
-			/>,
-		);
+		const screen = await renderAdmin();
 		await expect.element(screen.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
 		const screens = [
@@ -126,5 +137,25 @@ describe("hovering a sidebar link", () => {
 			// A second request would mean the screen's query missed the prefetched entry.
 			for (const path of data) expect(requestCount(path), `${link}: ${path}`).toBe(1);
 		}
+	});
+
+	it("navigates in place and preloads when the link carries the URL's locale", async () => {
+		mockApi();
+		window.history.replaceState(null, "", "/_emdash/admin/?locale=en");
+		const screen = await renderAdmin();
+		await expect.element(screen.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+		const marker = Symbol("same document");
+		Object.assign(window, { [marker]: true });
+
+		const anchor = screen.getByRole("link", { name: "Tags", exact: true });
+		await expect.element(anchor).toHaveAttribute("href", expect.stringContaining("locale=en"));
+		await anchor.hover();
+		await expect.poll(() => requestCount("/_emdash/api/taxonomies/tag/terms")).toBe(1);
+		await anchor.click();
+		await expect.element(screen.getByText("Preloaded tag")).toBeVisible();
+
+		expect(window.location.search).toBe("?locale=en");
+		// A full page load would have replaced the window object and lost the marker.
+		expect(marker in window).toBe(true);
 	});
 });

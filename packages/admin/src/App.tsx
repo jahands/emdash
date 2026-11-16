@@ -59,27 +59,12 @@ export function normalizeAdminHref(href: string): string {
 	return href;
 }
 
-function getAnchorHref(destination: string, routerDestination: string): string {
-	if (routerDestination.startsWith("/") && !routerDestination.startsWith("//")) {
-		if (
-			routerDestination === "/" ||
-			routerDestination.startsWith("/?") ||
-			routerDestination.startsWith("/#")
-		) {
-			return `${ADMIN_BASEPATH}${routerDestination.slice(1)}`;
-		}
-		return `${ADMIN_BASEPATH}${routerDestination}`;
-	}
-	return destination;
-}
-
 const KumoRouterLink = React.forwardRef<HTMLAnchorElement, LinkComponentProps>(
 	({ href, to, target, download, children, ...props }, ref) => {
 		const destination = href ?? to ?? "";
-		const hasSearchOrHash = destination.includes("?") || destination.includes("#");
 		const routerDestination = normalizeAdminHref(destination);
 		const isRouterPath = routerDestination.startsWith("/") && !routerDestination.startsWith("//");
-		const shouldUseAnchor = !isRouterPath || hasSearchOrHash || target || download != null;
+		const shouldUseAnchor = !isRouterPath || target || download != null;
 		const linkProps = props as LinkComponentProps & {
 			"aria-current"?: React.AriaAttributes["aria-current"];
 			"data-active"?: boolean | string;
@@ -88,24 +73,25 @@ const KumoRouterLink = React.forwardRef<HTMLAnchorElement, LinkComponentProps>(
 			linkProps["aria-current"] ?? (linkProps["data-active"] ? "page" : undefined);
 
 		if (shouldUseAnchor) {
-			const anchorHref =
-				hasSearchOrHash && !target && download == null
-					? getAnchorHref(destination, routerDestination)
-					: destination;
 			return (
-				<a ref={ref} href={anchorHref} target={target} download={download} {...props}>
+				<a ref={ref} href={destination} target={target} download={download} {...props}>
 					{children}
 				</a>
 			);
 		}
 
+		// A query string or hash goes to the router as its own props, so the link still navigates
+		// in place and preloads on intent.
+		const url = new URL(routerDestination, "http://admin.invalid");
 		return (
 			<Link
 				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Kumo provides runtime hrefs; TanStack requires literal route types.
 				{...(props as Omit<LinkProps, "to" | "children">)}
 				ref={ref}
 				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Kumo provides runtime hrefs; TanStack requires literal route types.
-				to={routerDestination as "/"}
+				to={url.pathname as "/"}
+				search={url.search ? Object.fromEntries(url.searchParams) : undefined}
+				hash={url.hash ? url.hash.slice(1) : undefined}
 				aria-current={ariaCurrent}
 			>
 				{children}
