@@ -19,7 +19,6 @@ import * as React from "react";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import { UserList, UserDetail, InviteUserModal, useRolesConfig } from "../components/users";
 import {
-	fetchUsers,
 	fetchUser,
 	updateUser,
 	sendRecoveryLink,
@@ -30,6 +29,7 @@ import {
 	type UpdateUserInput,
 } from "../lib/api";
 import { useSingleFlight } from "../lib/dialog-form.js";
+import { usersQueryOptions } from "../lib/route-queries.js";
 
 /**
  * Debounce hook for search input
@@ -69,15 +69,7 @@ export function UsersPage() {
 	const { data: manifest } = useQuery({ queryKey: ["manifest"], queryFn: fetchManifest });
 
 	const usersQuery = useInfiniteQuery({
-		queryKey: ["users", debouncedSearch, roleFilter],
-		queryFn: ({ pageParam }) =>
-			fetchUsers({
-				search: debouncedSearch || undefined,
-				role: roleFilter,
-				cursor: pageParam,
-			}),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		...usersQueryOptions({ search: debouncedSearch, role: roleFilter }),
 		placeholderData: keepPreviousData,
 	});
 

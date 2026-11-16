@@ -209,7 +209,7 @@ export function AdminApp({
 									<PluginAdminProvider pluginAdmins={pluginAdmins}>
 										<QueryClientProvider client={queryClient}>
 											<LinkProvider component={KumoRouterLink}>
-												<RouterProvider router={router} />
+												<RouterProvider router={router} context={{ pluginAdmins }} />
 											</LinkProvider>
 										</QueryClientProvider>
 									</PluginAdminProvider>

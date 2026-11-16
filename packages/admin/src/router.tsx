@@ -58,14 +58,11 @@ import {
 	apiFetch,
 	parseApiResponse,
 	fetchManifest,
-	fetchContentList,
-	fetchContentAuthors,
 	fetchContent,
 	createContent,
 	updateContent,
 	deleteContent,
 	fetchTranslations,
-	fetchMediaList,
 	updateMedia,
 	uploadMedia,
 	createRelation,
@@ -75,7 +72,6 @@ import {
 	updateRelation,
 	type CreateRelationInput,
 	type UpdateRelationInput,
-	fetchBlockTypes,
 	fetchCollection,
 	createCollection,
 	updateCollection,
@@ -85,7 +81,6 @@ import {
 	deleteField,
 	reorderFields,
 	reorderCollections,
-	fetchOrphanedTables,
 	registerOrphanedTable,
 	fetchUsers,
 	fetchBylines,
@@ -103,7 +98,6 @@ import {
 	discardDraft,
 	fetchRevision,
 	fetchMediaFolder,
-	fetchMediaFolders,
 	createMediaFolder,
 	renameMediaFolder,
 	deleteMediaFolder,
@@ -129,13 +123,13 @@ import {
 } from "./lib/api";
 import { useAdminLayout } from "./lib/api/admin-layout.js";
 import {
-	fetchComments,
 	fetchCommentCounts,
 	updateCommentStatus,
 	deleteComment,
 	bulkCommentAction,
 	type CommentStatus,
 } from "./lib/api/comments";
+import { currentUserQueryKey } from "./lib/api/current-user.js";
 import { saveRecoveryRevision, type RecoveryInput } from "./lib/api/rooms.js";
 import { runBulkAction } from "./lib/bulk";
 import { parseCalendarSearch } from "./lib/calendar";
@@ -149,10 +143,10 @@ import {
 	type RoomEditing,
 	type RoomEvent,
 } from "./lib/co-editing/types.js";
-import { useContentListFields } from "./lib/content-list-fields";
+import { contentListFields, useContentListFields } from "./lib/content-list-fields";
 import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/content-permissions";
 import { describeContentValidationError } from "./lib/content-validation-errors";
-import { usePluginPage } from "./lib/plugin-context";
+import { usePluginPage, type PluginAdmins } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
 import {
 	autosavedDraftKey,
@@ -161,9 +155,32 @@ import {
 } from "./lib/revision-list-cache.js";
 import { lazyRouteModule, routeLoadsEditor, withRouteModules } from "./lib/route-module.js";
 import { setScreenIdle } from "./lib/route-prefetch.js";
+import {
+	blockTypesQueryOptions,
+	bylineFieldsQueryOptions,
+	bylinesQueryOptions,
+	commentsQueryOptions,
+	contentAuthorsQueryOptions,
+	contentListQuery,
+	dashboardStatsQueryOptions,
+	MEDIA_PAGE_SIZE,
+	mediaFoldersQueryOptions,
+	mediaListQueryOptions,
+	menusQueryOptions,
+	orphanedTablesQueryOptions,
+	pluginsQueryOptions,
+	redirectsQueryOptions,
+	schemaCollectionsQueryOptions,
+	sectionsQueryOptions,
+	taxonomyDefQueryOptions,
+	taxonomyTermsQueryOptions,
+	usersQueryOptions,
+	widgetAreasQueryOptions,
+	widgetComponentsQueryOptions,
+} from "./lib/route-queries.js";
 import { translationsLoadState } from "./lib/translations-load-state.js";
 import { sanitizeRedirectUrl } from "./lib/url";
-import { usePagedQuery } from "./lib/use-paged-query";
+import { defaultPageSize, pagedQueryOptions, usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
 import { useDateLocaleReady } from "./locales/date-locale.js";
 
@@ -245,6 +262,25 @@ const WordPressImport = lazyRouteModule("components/WordPressImport", "WordPress
 // Router context type
 interface RouterContext {
 	queryClient: QueryClient;
+	/** The content list requests different fields when a plugin adds a column to it. */
+	pluginAdmins?: PluginAdmins;
+}
+
+/*
+ * When the router preloads a route on hover, focus or touch of a link, its
+ * loader prefetches the queries the screen renders first, so the screen
+ * usually opens with its data. Loaders never hold up a navigation, and do
+ * nothing on one: the screen requests what is missing as it mounts.
+ */
+
+/** Calls `load` with the manifest, which the admin's frame loads before it shows a link. */
+function withCachedManifest(queryClient: QueryClient, load: (manifest: AdminManifest) => void) {
+	const manifest = queryClient.getQueryData<AdminManifest>(["manifest"]);
+	if (manifest) load(manifest);
+}
+
+function cachedUserIsAdmin(queryClient: QueryClient): boolean {
+	return (queryClient.getQueryData<CurrentUser>(currentUserQueryKey)?.role ?? 0) >= ROLE_ADMIN;
 }
 
 interface ContentUpdateChanges {
@@ -646,6 +682,10 @@ const dashboardRoute = createRoute({
 	path: "/",
 	component: withRouteModules(DashboardPage, Dashboard),
 	staticData: { pageTitle: msg`Dashboard` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		void queryClient.prefetchQuery(dashboardStatsQueryOptions());
+	},
 });
 
 function DashboardPage() {
@@ -676,7 +716,50 @@ const contentListRoute = createRoute({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
 	}),
 	staticData: { pageTitle: msg`Content` },
+	loaderDeps: ({ search }) => ({ locale: search.locale }),
+	loader: ({
+		preload,
+		context: { queryClient, pluginAdmins = {} },
+		params: { collection },
+		deps,
+	}) => {
+		if (!preload) return;
+		withCachedManifest(queryClient, (manifest) => {
+			if (!manifest.collections[collection]) return;
+			const list = contentListQuery(collection, {
+				locale: contentListLocale(manifest, deps.locale),
+				sort: defaultContentListSort(manifest, collection),
+				search: "",
+				status: "all",
+				author: "",
+				date: undefined,
+				byline: undefined,
+				fields: contentListFields(collection, manifest, pluginAdmins),
+			});
+			void queryClient.prefetchQuery(
+				pagedQueryOptions(list, 1, defaultPageSize(CONTENT_LIST_PAGE_SIZES)),
+			);
+			void queryClient.prefetchQuery(contentAuthorsQueryOptions(collection));
+		});
+	},
 });
+
+/** The locale a content list shows: the requested one, else the default. */
+function contentListLocale(manifest: AdminManifest | undefined, requested: string | undefined) {
+	const i18n = manifest?.i18n;
+	return i18n ? (requested ?? i18n.defaultLocale) : undefined;
+}
+
+/** The collection's date field, else last-updated, newest first. */
+function defaultContentListSort(
+	manifest: AdminManifest | undefined,
+	collection: string,
+): ContentListSort {
+	return {
+		field: manifest?.collections[collection]?.dateField ?? "updatedAt",
+		direction: "desc",
+	};
+}
 
 function ContentListPage() {
 	const { t } = useLingui();
@@ -693,20 +776,14 @@ function ContentListPage() {
 	const { data: currentUser } = useCurrentUser();
 
 	const i18n = manifest?.i18n;
-
-	// Default to defaultLocale when i18n is enabled and no locale specified
-	const activeLocale = i18n ? (localeParam ?? i18n.defaultLocale) : undefined;
+	const activeLocale = contentListLocale(manifest, localeParam);
 
 	// Controlled sort state — passed to the list, and included in the query
 	// key so changing direction invalidates the current cursor chain.
-	// Default sorts by the collection's dateField, else last-updated.
 	// `sortOverride` is the user's explicit choice (null until they click a
 	// column), keeping the default reactive as the manifest loads and per-collection.
 	const [sortOverride, setSortOverride] = React.useState<ContentListSort | null>(null);
-	const sort: ContentListSort = sortOverride ?? {
-		field: manifest?.collections[collection]?.dateField ?? "updatedAt",
-		direction: "desc",
-	};
+	const sort: ContentListSort = sortOverride ?? defaultContentListSort(manifest, collection);
 	React.useEffect(() => setSortOverride(null), [collection]);
 
 	// Server-side search term (debounced inside ContentList). Part of the query
@@ -743,45 +820,23 @@ function ContentListPage() {
 		};
 	}, [dateFilter]);
 
-	// Authors are collection-wide (the endpoint doesn't scope by locale), so the
-	// query key omits locale to avoid refetching/cache-fragmenting on locale
-	// switches, and the selection stays valid across locales.
 	const { data: authors } = useQuery({
-		queryKey: ["content", collection, "authors"],
-		queryFn: () => fetchContentAuthors(collection),
+		...contentAuthorsQueryOptions(collection),
 		enabled: !!manifest,
 	});
 
 	const listFields = useContentListFields(collection, manifest);
 	const contentList = usePagedQuery({
-		scope: ["content", collection],
-		queryKey: [
-			{
-				locale: activeLocale,
-				sort,
-				search: searchTerm,
-				status: statusFilter,
-				author: authorFilter,
-				date: dateApiParams,
-				byline: bylineApiParams,
-				fields: listFields,
-			},
-		],
-		queryFn: ({ page, perPage }) =>
-			fetchContentList(collection, {
-				fields: listFields,
-				locale: activeLocale,
-				page,
-				limit: perPage,
-				orderBy: sort.field,
-				order: sort.direction,
-				search: searchTerm || undefined,
-				status: statusFilter === "all" ? undefined : statusFilter,
-				authorId: authorFilter || undefined,
-				...dateApiParams,
-				...bylineApiParams,
-				trashTotal: true,
-			}),
+		...contentListQuery(collection, {
+			locale: activeLocale,
+			sort,
+			search: searchTerm,
+			status: statusFilter,
+			author: authorFilter,
+			date: dateApiParams,
+			byline: bylineApiParams,
+			fields: listFields,
+		}),
 		pageSizes: CONTENT_LIST_PAGE_SIZES,
 		enabled: !!manifest,
 	});
@@ -2767,6 +2822,20 @@ const mediaRoute = createRoute({
 				? search.folder
 				: undefined,
 	}),
+	loaderDeps: ({ search }) => ({ folder: search.folder }),
+	loader: ({ preload, context: { queryClient }, deps: { folder } }) => {
+		if (!preload) return;
+		void queryClient.prefetchQuery(
+			mediaListQueryOptions({
+				search: "",
+				mimeFilter: undefined,
+				folder,
+				page: 1,
+				perPage: MEDIA_PAGE_SIZE,
+			}),
+		);
+		if (folder === undefined) void queryClient.prefetchInfiniteQuery(mediaFoldersQueryOptions(""));
+	},
 });
 
 function MediaPage() {
@@ -2780,10 +2849,9 @@ function MediaPage() {
 	const [search, setSearch] = React.useState("");
 	const [mimeFilter, setMimeFilter] = React.useState<string | string[] | undefined>(undefined);
 	const [page, setPage] = React.useState(1);
-	const [perPage, setPerPage] = React.useState(35);
+	const [perPage, setPerPage] = React.useState(MEDIA_PAGE_SIZE);
 	const [retainedTotalCount, setRetainedTotalCount] = React.useState(0);
 	const [activeProvider, setActiveProvider] = React.useState("local");
-	const mimeKey = Array.isArray(mimeFilter) ? mimeFilter.join(",") : (mimeFilter ?? "");
 	const currentFolderQuery = useQuery({
 		queryKey: ["media-folder", folder],
 		queryFn: () => fetchMediaFolder(folder!),
@@ -2818,15 +2886,7 @@ function MediaPage() {
 		mimeFilter === undefined &&
 		(folder === undefined || search !== "");
 	const folderListQuery = useInfiniteQuery({
-		queryKey: ["media-folders", "page", { search }],
-		queryFn: ({ pageParam }) =>
-			fetchMediaFolders({
-				limit: 100,
-				cursor: pageParam,
-				search: search || undefined,
-			}),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		...mediaFoldersQueryOptions(search),
 		enabled: folderListEnabled,
 		placeholderData: keepPreviousData,
 	});
@@ -2836,18 +2896,7 @@ function MediaPage() {
 	);
 
 	const { data, isLoading, isFetching, error } = useQuery({
-		queryKey: [
-			"media",
-			{ search, mime: mimeKey, folder: folder ?? "main", page: requestedPage, perPage },
-		],
-		queryFn: () =>
-			fetchMediaList({
-				page: requestedPage,
-				limit: perPage,
-				search: search || undefined,
-				mimeType: mimeFilter,
-				folderId: search ? undefined : (folder ?? null),
-			}),
+		...mediaListQueryOptions({ search, mimeFilter, folder, page: requestedPage, perPage }),
 		placeholderData: keepPreviousData,
 	});
 
@@ -3060,6 +3109,12 @@ const commentsRoute = createRoute({
 	path: "/comments",
 	component: withRouteModules(CommentsPage, CommentInbox),
 	staticData: { pageTitle: msg`Comments` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		void queryClient.prefetchInfiniteQuery(
+			commentsQueryOptions({ status: "pending", collection: "", search: "" }),
+		);
+	},
 });
 
 // Admin role level from @emdash-cms/auth
@@ -3103,19 +3158,13 @@ function CommentsPage() {
 		isLoading,
 		fetchNextPage,
 		hasNextPage,
-	} = useInfiniteQuery({
-		queryKey: ["comments", activeStatus, collectionFilter, debouncedSearch],
-		queryFn: ({ pageParam }) =>
-			fetchComments({
-				status: activeStatus,
-				collection: collectionFilter || undefined,
-				search: debouncedSearch || undefined,
-				cursor: pageParam,
-				limit: 50,
-			}),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
-	});
+	} = useInfiniteQuery(
+		commentsQueryOptions({
+			status: activeStatus,
+			collection: collectionFilter,
+			search: debouncedSearch,
+		}),
+	);
 
 	// The admin page embeds these for moderators, so the tabs show them without a request.
 	const { data: counts } = useQuery({
@@ -3407,6 +3456,10 @@ const pluginManagerRoute = createRoute({
 	path: "/plugins-manager",
 	component: withRouteModules(PluginManagerPage, PluginManager),
 	staticData: { pageTitle: msg`Plugins` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		void queryClient.prefetchQuery(pluginsQueryOptions());
+	},
 });
 
 function PluginManagerPage() {
@@ -3548,6 +3601,12 @@ const menuListRoute = createRoute({
 	path: "/menus",
 	component: MenuList,
 	staticData: { pageTitle: msg`Menus` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		withCachedManifest(queryClient, (manifest) => {
+			void queryClient.prefetchQuery(menusQueryOptions(manifest.i18n?.defaultLocale));
+		});
+	},
 });
 
 const menuEditorRoute = createRoute({
@@ -3568,6 +3627,15 @@ const taxonomyRoute = createRoute({
 	path: "/taxonomies/$taxonomy",
 	component: withRouteModules(TaxonomyPage, TaxonomyManager),
 	staticData: { pageTitle: msg`Taxonomies` },
+	loader: ({ preload, context: { queryClient }, params: { taxonomy } }) => {
+		if (!preload) return;
+		void queryClient.prefetchQuery(taxonomyDefQueryOptions(taxonomy));
+		withCachedManifest(queryClient, (manifest) => {
+			void queryClient.prefetchQuery(
+				taxonomyTermsQueryOptions(taxonomy, manifest.i18n?.defaultLocale),
+			);
+		});
+	},
 });
 
 function TaxonomyPage() {
@@ -3582,6 +3650,11 @@ const widgetsRoute = createRoute({
 	path: "/widgets",
 	component: Widgets,
 	staticData: { pageTitle: msg`Widgets` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		void queryClient.prefetchQuery(widgetAreasQueryOptions());
+		void queryClient.prefetchQuery(widgetComponentsQueryOptions());
+	},
 });
 
 // Sections routes
@@ -3590,6 +3663,12 @@ const redirectsRoute = createRoute({
 	path: "/redirects",
 	component: Redirects,
 	staticData: { pageTitle: msg`Redirects` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		void queryClient.prefetchInfiniteQuery(
+			redirectsQueryOptions({ search: "", enabled: undefined, auto: undefined, group: undefined }),
+		);
+	},
 });
 
 const sectionsListRoute = createRoute({
@@ -3597,6 +3676,10 @@ const sectionsListRoute = createRoute({
 	path: "/sections",
 	component: Sections,
 	staticData: { pageTitle: msg`Sections` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		void queryClient.prefetchQuery(sectionsQueryOptions({ source: null, search: "" }));
+	},
 });
 
 const sectionEditRoute = createRoute({
@@ -3619,6 +3702,11 @@ const usersRoute = createRoute({
 		UsersPage,
 	),
 	staticData: { pageTitle: msg`Users` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		if (!cachedUserIsAdmin(queryClient)) return;
+		void queryClient.prefetchInfiniteQuery(usersQueryOptions({ search: "", role: undefined }));
+	},
 });
 
 // Bylines route
@@ -3642,6 +3730,14 @@ const bylinesRoute = createRoute({
 	component: BylinesPage,
 	staticData: { pageTitle: msg`Bylines` },
 	validateSearch: parseBylinesLocaleSearch,
+	loaderDeps: ({ search }) => ({ locale: search.locale }),
+	loader: ({ preload, context: { queryClient }, deps }) => {
+		if (!preload) return;
+		withCachedManifest(queryClient, (manifest) => {
+			const locale = deps.locale ?? manifest.i18n?.defaultLocale;
+			void queryClient.prefetchQuery(bylinesQueryOptions({ search: "", guest: "all", locale }));
+		});
+	},
 });
 
 // Byline schema management route (Discussion #1174, Phase 5).
@@ -3652,6 +3748,10 @@ const bylineSchemaRoute = createRoute({
 	path: "/byline-schema",
 	component: BylineSchemaPage,
 	staticData: { pageTitle: msg`Byline Schema`, heading: msg`Byline schema` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		if (cachedUserIsAdmin(queryClient)) void queryClient.prefetchQuery(bylineFieldsQueryOptions());
+	},
 });
 
 // Content Types routes
@@ -3660,6 +3760,12 @@ const contentTypesListRoute = createRoute({
 	path: "/content-types",
 	component: withRouteModules(ContentTypesListPage, ContentTypeList, BlockTypeList),
 	staticData: { pageTitle: msg`Content Types` },
+	loader: ({ preload, context: { queryClient } }) => {
+		if (!preload) return;
+		void queryClient.prefetchQuery(schemaCollectionsQueryOptions());
+		void queryClient.prefetchQuery(orphanedTablesQueryOptions());
+		void queryClient.prefetchQuery(blockTypesQueryOptions());
+	},
 });
 
 function ContentTypesListPage() {
@@ -3672,27 +3778,18 @@ function ContentTypesListPage() {
 		data: collections,
 		isLoading: collectionsLoading,
 		error: collectionsError,
-	} = useQuery({
-		queryKey: ["schema", "collections"],
-		queryFn: fetchCollections,
-	});
+	} = useQuery(schemaCollectionsQueryOptions());
 
 	const {
 		data: orphanedTables,
 		isLoading: orphansLoading,
 		error: orphansError,
-	} = useQuery({
-		queryKey: ["schema", "orphans"],
-		queryFn: fetchOrphanedTables,
-	});
+	} = useQuery(orphanedTablesQueryOptions());
 	const {
 		data: blockTypes,
 		isLoading: blockTypesLoading,
 		error: blockTypesError,
-	} = useQuery({
-		queryKey: ["schema", "block-types"],
-		queryFn: fetchBlockTypes,
-	});
+	} = useQuery(blockTypesQueryOptions());
 
 	const deleteMutation = useMutation({
 		mutationFn: (slug: string) => deleteCollection(slug, true),
@@ -4149,6 +4246,8 @@ export function createAdminRouter(queryClient: QueryClient) {
 		context: { queryClient },
 		basepath: "/_emdash/admin",
 		defaultPreload: "intent",
+		// Loaders only prefetch queries, so React Query decides when their data is stale.
+		defaultPreloadStaleTime: 0,
 		defaultPendingComponent: RoutePending,
 		defaultPendingMs: 150,
 		defaultPendingMinMs: 300,

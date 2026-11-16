@@ -40,7 +40,6 @@ import {
 	createBylineField,
 	deleteBylineField,
 	getBylineFieldUsage,
-	listBylineFields,
 	reorderBylineFields,
 	updateBylineField,
 	type BylineFieldDefinition,
@@ -48,6 +47,7 @@ import {
 	type UpdateBylineFieldInput,
 } from "../lib/api/byline-fields.js";
 import { useCurrentUser } from "../lib/api/current-user.js";
+import { bylineFieldsQueryOptions } from "../lib/route-queries.js";
 import { cn } from "../lib/utils.js";
 
 // Mirror of `packages/auth/src/rbac.ts:Role.ADMIN`. Inline here for the
@@ -59,7 +59,7 @@ const ROLE_ADMIN = 50;
 // byline form's field-defs cache in the same session. The "usage"
 // subkeys below stay under a `byline-schema` prefix — they're a
 // per-field impact lookup, not the field list itself.
-const QUERY_KEY = ["byline-fields"] as const;
+const QUERY_KEY = bylineFieldsQueryOptions().queryKey;
 
 export function BylineSchemaPage() {
 	const { t } = useLingui();
@@ -72,8 +72,7 @@ export function BylineSchemaPage() {
 	const [deletingField, setDeletingField] = React.useState<BylineFieldDefinition | null>(null);
 
 	const fieldsQuery = useQuery({
-		queryKey: QUERY_KEY,
-		queryFn: listBylineFields,
+		...bylineFieldsQueryOptions(),
 		// Only fetch when the user actually has permission. Skipping the
 		// query for non-admins avoids a 403 in the console.
 		enabled: !!currentUser && currentUser.role >= ROLE_ADMIN,

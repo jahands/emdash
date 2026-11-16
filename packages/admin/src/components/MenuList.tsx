@@ -13,7 +13,7 @@ import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tansta
 import { useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 
-import { fetchMenus, createMenu, deleteMenu, type CreateMenuInput } from "../lib/api";
+import { createMenu, deleteMenu, type CreateMenuInput } from "../lib/api";
 import { ApiResponseError, fetchManifest } from "../lib/api/client.js";
 import {
 	guardUnsavedInput,
@@ -21,6 +21,7 @@ import {
 	useSingleFlight,
 	useTakenValue,
 } from "../lib/dialog-form.js";
+import { menusQueryOptions } from "../lib/route-queries.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -85,8 +86,7 @@ export function MenuList() {
 		isRefetching: menusRefetching,
 		isPlaceholderData: menusPlaceholder,
 	} = useQuery({
-		queryKey: ["menus", activeLocale],
-		queryFn: () => fetchMenus({ locale: activeLocale }),
+		...menusQueryOptions(activeLocale),
 		placeholderData: keepPreviousData,
 	});
 

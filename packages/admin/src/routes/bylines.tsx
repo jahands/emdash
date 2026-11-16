@@ -35,6 +35,7 @@ import {
 import { fetchManifest } from "../lib/api/client.js";
 import { useCurrentUser } from "../lib/api/current-user.js";
 import { useDebouncedValue } from "../lib/hooks.js";
+import { bylinesQueryOptions } from "../lib/route-queries.js";
 import { translationsLoadState } from "../lib/translations-load-state.js";
 
 const BYLINE_NAME_SEPARATOR = /\s+/;
@@ -137,14 +138,7 @@ export function BylinesPage() {
 	};
 
 	const { data, isPending, isPlaceholderData, error, refetch } = useQuery({
-		queryKey: ["bylines", debouncedSearch, guestFilter, activeLocale ?? null],
-		queryFn: () =>
-			fetchBylines({
-				search: debouncedSearch || undefined,
-				isGuest: guestFilter === "all" ? undefined : guestFilter === "guest",
-				locale: activeLocale,
-				limit: 50,
-			}),
+		...bylinesQueryOptions({ search: debouncedSearch, guest: guestFilter, locale: activeLocale }),
 		// Keep the previous results on screen while a new search/filter query
 		// loads. Without this, changing the query key drops `data` to
 		// `undefined` and the rows give way to placeholders on every settled

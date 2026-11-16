@@ -43,9 +43,7 @@ import type {
 	UpdateTermInput,
 } from "../lib/api/taxonomies.js";
 import {
-	fetchTaxonomyDef,
 	fetchTermTranslations,
-	fetchTerms,
 	createTaxonomy,
 	createTerm,
 	createTermTranslation,
@@ -61,6 +59,7 @@ import {
 	useTakenValue,
 } from "../lib/dialog-form.js";
 import { inlineLabel } from "../lib/inline-label.js";
+import { taxonomyDefQueryOptions, taxonomyTermsQueryOptions } from "../lib/route-queries.js";
 import { resolveTaxonomyDefinitions } from "../lib/taxonomy-definitions.js";
 import { translationsLoadState } from "../lib/translations-load-state.js";
 import { slugify, slugifyIdentifier } from "../lib/utils";
@@ -1083,23 +1082,19 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 	// hierarchical, which collections use it"). Label translations exist per
 	// locale but are not required for the page to render.
 	const { data: taxonomyDef, isPending: defPending } = useQuery({
-		queryKey: ["taxonomy-def", taxonomyName],
-		queryFn: () => fetchTaxonomyDef(taxonomyName),
+		...taxonomyDefQueryOptions(taxonomyName),
 		// The manifest's collection list can name deleted collections, which the
 		// definition endpoint drops, so this only stands in until it answers.
 		placeholderData: () => manifestTaxonomyDef(manifest, taxonomyName),
 	});
 
-	// The count mode belongs in the key: the editor's taxonomy picker reads the
-	// same endpoint without counts, and this page renders them.
-	const termsQueryKey = ["taxonomy-terms", taxonomyName, activeLocale, { includeCounts: true }];
+	const termsQuery = taxonomyTermsQueryOptions(taxonomyName, activeLocale);
 	const {
 		data: terms = [],
 		isLoading: termsLoading,
 		isPlaceholderData: termsFromOtherLocale,
 	} = useQuery({
-		queryKey: termsQueryKey,
-		queryFn: () => fetchTerms(taxonomyName, { locale: activeLocale }),
+		...termsQuery,
 		// Another locale's terms can stand in while a locale switch loads; another
 		// taxonomy's cannot.
 		placeholderData: (previous, previousQuery) =>
@@ -1185,7 +1180,7 @@ export function TaxonomyManager({ taxonomyName, onDeleted }: TaxonomyManagerProp
 			index === from ? displaced : index === to ? moving : sibling,
 		);
 		const reordered = reorderWithinSlots(siblings, movable, permuted);
-		queryClient.setQueryData(termsQueryKey, (current: TaxonomyTerm[] | undefined) =>
+		queryClient.setQueryData(termsQuery.queryKey, (current: TaxonomyTerm[] | undefined) =>
 			current ? replaceSiblingGroup(current, parentId, reordered) : current,
 		);
 		reorderMutation.mutate({ parentId, ids: permuted.map(termGroup) });

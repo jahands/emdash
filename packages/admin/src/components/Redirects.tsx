@@ -35,7 +35,6 @@ import {
 	createRedirect,
 	deleteRedirect,
 	fetch404Summary,
-	fetchRedirects,
 	updateRedirect,
 } from "../lib/api/redirects.js";
 import type {
@@ -51,6 +50,7 @@ import {
 	useSingleFlight,
 	useTakenValue,
 } from "../lib/dialog-form.js";
+import { REDIRECT_LIST_KEY, redirectsQueryOptions } from "../lib/route-queries.js";
 import { cn, formatDate } from "../lib/utils.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { ArrowNext } from "./ArrowIcons.js";
@@ -70,8 +70,6 @@ import {
 import { DialogError, getMutationError } from "./DialogError.js";
 import { PageHeader } from "./PageHeader.js";
 import { TableToolbarSearch } from "./TableToolbar.js";
-
-const REDIRECT_LIST_KEY = ["redirects", "list"] as const;
 
 /**
  * Refetches the redirects after a change, with each list back on its first page. The page
@@ -603,18 +601,12 @@ export function Redirects() {
 		!!debouncedSearch || enabledFilter !== undefined || autoFilter !== undefined || !!groupFilter;
 
 	const redirectsQuery = useInfiniteQuery({
-		queryKey: [...REDIRECT_LIST_KEY, debouncedSearch, enabledFilter, autoFilter, groupFilter],
-		queryFn: ({ pageParam }) =>
-			fetchRedirects({
-				search: debouncedSearch || undefined,
-				group: groupFilter,
-				enabled: enabledFilter,
-				auto: autoFilter,
-				cursor: pageParam,
-				limit: 100,
-			}),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		...redirectsQueryOptions({
+			search: debouncedSearch,
+			enabled: enabledFilter,
+			auto: autoFilter,
+			group: groupFilter,
+		}),
 		placeholderData: keepPreviousData,
 	});
 

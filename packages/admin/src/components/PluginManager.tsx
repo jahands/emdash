@@ -35,7 +35,6 @@ import { Link } from "@tanstack/react-router";
 import * as React from "react";
 
 import {
-	fetchPlugins,
 	enablePlugin,
 	disablePlugin,
 	setPluginMcpEnabled,
@@ -63,6 +62,7 @@ import {
 	type RegistryRecordVerificationSummary,
 } from "../lib/api/registry.js";
 import { useConfirmPress } from "../lib/dialog-form.js";
+import { pluginsQueryOptions } from "../lib/route-queries.js";
 import { safeIconUrl } from "../lib/url.js";
 import { cn, formatDate } from "../lib/utils.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
@@ -114,14 +114,7 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 	const hasRegistry = !!manifest?.registry;
 	const canInstallFromRegistry = hasRegistry && manifest?.sandboxEnabled === true;
 
-	const {
-		data: plugins,
-		isLoading,
-		error,
-	} = useQuery({
-		queryKey: ["plugins"],
-		queryFn: fetchPlugins,
-	});
+	const { data: plugins, isLoading, error } = useQuery(pluginsQueryOptions());
 
 	const {
 		data: updates,

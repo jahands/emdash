@@ -47,8 +47,6 @@ import * as React from "react";
 
 import {
 	fetchManifest,
-	fetchWidgetAreas,
-	fetchWidgetComponents,
 	fetchMenus,
 	createWidgetArea,
 	createWidget,
@@ -71,6 +69,7 @@ import {
 	useTakenValue,
 } from "../lib/dialog-form.js";
 import { getPluginBlocks } from "../lib/pluginBlocks";
+import { widgetAreasQueryOptions, widgetComponentsQueryOptions } from "../lib/route-queries.js";
 import { CaretNext } from "./ArrowIcons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DialogError, getMutationError } from "./DialogError.js";
@@ -242,15 +241,11 @@ export function Widgets() {
 		});
 	}, []);
 
-	const { data: areas = [], isLoading } = useQuery({
-		queryKey: ["widget-areas"],
-		queryFn: fetchWidgetAreas,
-	});
+	const { data: areas = [], isLoading } = useQuery(widgetAreasQueryOptions());
 
-	const { data: components = [], isPending: componentsPending } = useQuery({
-		queryKey: ["widget-components"],
-		queryFn: fetchWidgetComponents,
-	});
+	const { data: components = [], isPending: componentsPending } = useQuery(
+		widgetComponentsQueryOptions(),
+	);
 
 	const { data: manifest } = useQuery({
 		queryKey: ["manifest"],

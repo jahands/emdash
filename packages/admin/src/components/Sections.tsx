@@ -35,7 +35,6 @@ import { useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 
 import {
-	fetchSections,
 	createSection,
 	deleteSection,
 	type CreateSectionInput,
@@ -49,6 +48,7 @@ import {
 	useSingleFlight,
 	useTakenValue,
 } from "../lib/dialog-form.js";
+import { sectionsQueryOptions } from "../lib/route-queries.js";
 import { slugify, slugifyIdentifier } from "../lib/utils";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
@@ -135,12 +135,7 @@ export function Sections() {
 		isPlaceholderData: sectionsPlaceholder,
 		refetch: refetchSections,
 	} = useQuery({
-		queryKey: ["sections", { source: selectedSource, search: searchQuery }],
-		queryFn: () =>
-			fetchSections({
-				source: selectedSource || undefined,
-				search: searchQuery || undefined,
-			}),
+		...sectionsQueryOptions({ source: selectedSource, search: searchQuery }),
 		placeholderData: keepPreviousData,
 	});
 	const sections = sectionsData?.items ?? [];

@@ -9,9 +9,10 @@ import * as React from "react";
 import type { AdminManifest } from "../lib/api";
 import { useCurrentUser } from "../lib/api/current-user.js";
 import type { CollectionStats, DashboardStats, RecentItem } from "../lib/api/dashboard";
-import { dismissScheduledPolicyRejection, fetchDashboardStats } from "../lib/api/dashboard";
+import { dismissScheduledPolicyRejection } from "../lib/api/dashboard";
 import { fetchTransferCapabilities, TRANSFER_CAPABILITIES_QUERY_KEY } from "../lib/api/transfer.js";
 import { usePluginWidget } from "../lib/plugin-context";
+import { dashboardStatsQueryOptions } from "../lib/route-queries.js";
 import { cn, formatRelativeTime } from "../lib/utils.js";
 import { ArrowNext } from "./ArrowIcons";
 import {
@@ -57,8 +58,7 @@ export function Dashboard({ manifest }: DashboardProps) {
 	const { t } = useLingui();
 	const { data: user } = useCurrentUser();
 	const { data: stats, isError } = useQuery({
-		queryKey: ["dashboard-stats"],
-		queryFn: fetchDashboardStats,
+		...dashboardStatsQueryOptions(),
 		refetchOnWindowFocus: true,
 	});
 	// Requested with the stats, though its notice waits for them to show.
