@@ -23,12 +23,12 @@ function props(overrides: Partial<EditorActionsProps> = {}): EditorActionsProps 
 }
 
 describe("EditorActions save status", () => {
-	it("reports automatic saves as Saving and Saved, keeping one look throughout", async () => {
+	it("keeps one look through an automatic save, and says Saving only when it's slow", async () => {
 		const automatic = props({ savesAutomatically: true });
 		const screen = await render(<EditorActions {...automatic} />);
-		const shown = async () => {
-			// Lets the label and color transitions finish.
-			await new Promise((resolve) => setTimeout(resolve, 300));
+		const shown = async (wait = 300) => {
+			// The longer wait outlasts the delay before a slow save shows Saving.
+			await new Promise((resolve) => setTimeout(resolve, wait));
 			const button = screen.container.querySelector("[data-save-button-labels]")!.closest("button")!;
 			const style = getComputedStyle(button);
 			return {
@@ -40,14 +40,21 @@ describe("EditorActions save status", () => {
 
 		const clean = await shown();
 		await screen.rerender(<EditorActions {...automatic} isDirty />);
-		const waiting = await shown();
-		await screen.rerender(<EditorActions {...automatic} isDirty isAutosaving />);
-		const sending = await shown();
+		const edited = await shown();
+		await screen.rerender(<EditorActions {...automatic} isAutosaving />);
+		const sending = await shown(50);
+		const slow = await shown(500);
 		await screen.rerender(<EditorActions {...automatic} />);
 		const saved = await shown();
-		const states = [clean, waiting, sending, saved];
+		const states = [clean, edited, sending, slow, saved];
 
-		expect(states.map((state) => state.label)).toEqual(["Saved", "Saving...", "Saving...", "Saved"]);
+		expect(states.map((state) => state.label)).toEqual([
+			"Saved",
+			"Save",
+			"Save",
+			"Saving...",
+			"Saved",
+		]);
 		expect(new Set(states.map((state) => state.look)).size).toBe(1);
 		expect(states.some((state) => state.hidden)).toBe(false);
 	});

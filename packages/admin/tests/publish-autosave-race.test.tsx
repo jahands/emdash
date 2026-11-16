@@ -585,7 +585,7 @@ describe("ContentEditPage publish and autosave ordering", () => {
 		await expect
 			.element(screen.getByRole("button", { name: "Save", exact: true }))
 			.not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Saved", exact: true }).query()).toBeNull();
+		await expect.element(screen.getByRole("button", { name: "Saved", exact: true })).toBeDisabled();
 
 		const removeSchedule = screen.getByRole("button", { name: "Remove schedule" });
 		await expect.element(removeSchedule).toBeInTheDocument();

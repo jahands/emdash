@@ -18,6 +18,7 @@ import {
 	CaretDown,
 	Eye,
 	EyeSlash,
+	GitDiff,
 	Trash,
 	Upload,
 	X,
@@ -193,6 +194,7 @@ function PublishingVersionRelationship({
 	locale,
 	onDiscardDraft,
 	discardDisabled,
+	onViewDraftChanges,
 }: {
 	publishingState: ContentPublishingState;
 	isNew?: boolean;
@@ -201,8 +203,31 @@ function PublishingVersionRelationship({
 	locale: string;
 	onDiscardDraft?: () => Promise<unknown> | void;
 	discardDisabled?: boolean;
+	/** Shows the draft compared with the live version. */
+	onViewDraftChanges?: (opener: HTMLElement) => void;
 }) {
 	const { t } = useLingui();
+	const viewChangesButton = onViewDraftChanges ? (
+		<Button
+			type="button"
+			variant="ghost"
+			size="sm"
+			icon={<GitDiff />}
+			onClick={(event) => onViewDraftChanges(event.currentTarget)}
+		>
+			{t`View changes`}
+		</Button>
+	) : null;
+	const discardButton = onDiscardDraft ? (
+		<DiscardDraftDialog onDiscard={onDiscardDraft} triggerSize="sm" disabled={discardDisabled} />
+	) : null;
+	const draftActions =
+		viewChangesButton || discardButton ? (
+			<div className="flex flex-wrap items-center">
+				{viewChangesButton}
+				{discardButton}
+			</div>
+		) : undefined;
 	const formattedSchedule = scheduledAt
 		? formatPublishingInstantWithZone(scheduledAt, locale)
 		: null;
@@ -281,13 +306,9 @@ function PublishingVersionRelationship({
 							</ReservedText>
 						}
 						action={
-							onDiscardDraft ? (
+							draftActions ? (
 								<div className={hasChanges ? undefined : "invisible"} inert={!hasChanges}>
-									<DiscardDraftDialog
-										onDiscard={onDiscardDraft}
-										triggerSize="sm"
-										disabled={discardDisabled}
-									/>
+									{draftActions}
 								</div>
 							) : undefined
 						}
@@ -309,15 +330,7 @@ function PublishingVersionRelationship({
 						iconState="scheduled"
 						title={t`Draft changes`}
 						description={scheduledSummary ?? t`A publication time has not been selected`}
-						action={
-							onDiscardDraft ? (
-								<DiscardDraftDialog
-									onDiscard={onDiscardDraft}
-									triggerSize="sm"
-									disabled={discardDisabled}
-								/>
-							) : undefined
-						}
+						action={draftActions}
 					/>
 				</>
 			);
@@ -840,16 +853,19 @@ export function EditorActions({
 	// When edits save on their own the button stays, as their status. Otherwise it shows only with
 	// something to save.
 	const showSave = sync !== undefined || savesAutomatically || isDirty || busy;
+	// Kept as a status, the button is disabled once there's nothing to save, which drops its focus
+	// just as hiding it would.
+	const saveSettled = !showSave || (savesAutomatically && sync === undefined && !isDirty && !busy);
 	const saveHadFocus = React.useRef(false);
 	const saveRef = React.useRef<HTMLButtonElement>(null);
 	React.useLayoutEffect(() => {
-		if (!showSave && saveHadFocus.current) {
+		if (saveSettled && saveHadFocus.current) {
 			saveHadFocus.current = false;
 			const active = document.activeElement;
 			if (!active || active === document.body || saveRef.current?.contains(active))
 				onSaveControlRemoved?.();
 		}
-	}, [showSave, onSaveControlRemoved]);
+	}, [saveSettled, onSaveControlRemoved]);
 	const saveVariant =
 		(!isDirty && !busy) || sync || savesAutomatically ? "ghost" : isNew ? "primary" : "secondary";
 	const saveButton = (
@@ -1189,6 +1205,11 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 											locale={lingui.locale}
 											onDiscardDraft={canDiscard ? onDiscardDraft : undefined}
 											discardDisabled={viewingRevision}
+											onViewDraftChanges={
+												revisionView
+													? (opener) => revisionView.viewDraftChanges({ opener })
+													: undefined
+											}
 										/>
 									) : null}
 

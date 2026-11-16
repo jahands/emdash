@@ -1,7 +1,7 @@
 import { Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Check, CloudSlash, CloudWarning, FloppyDisk } from "@phosphor-icons/react";
-import { forwardRef, isValidElement } from "react";
+import { forwardRef, isValidElement, useEffect, useState } from "react";
 import type { ComponentProps } from "react";
 
 import { cn } from "../lib/utils";
@@ -10,6 +10,9 @@ import { Spinner } from "./Spinner.js";
 
 type SyncKind = SyncProblem["kind"];
 type SaveState = "save" | "saving" | "saved" | SyncKind;
+
+/** How long an automatic save runs before the button says so, so a quick one doesn't flash "Saving...". */
+const SLOW_AUTOMATIC_SAVE_MS = 400;
 
 export interface SaveButtonProps extends Omit<ComponentProps<typeof Button>, "children" | "shape"> {
 	isDirty: boolean;
@@ -20,8 +23,8 @@ export interface SaveButtonProps extends Omit<ComponentProps<typeof Button>, "ch
 	/** Replaces the "Save" label, e.g. "Save draft". */
 	saveLabel?: string;
 	/**
-	 * Edits save without a click, so unsaved edits show as "Saving..." and the button keeps one
-	 * look throughout, instead of asking for a save after every edit.
+	 * Edits save without a click. The button then keeps one look in every state and shows
+	 * "Saving..." only for a slow save, since it changes on every edit.
 	 */
 	automatic?: boolean;
 	/**
@@ -63,11 +66,20 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 		"not-kept": t`Not saved`,
 	};
 	const isBusy = isSaving || Boolean(loading);
+	const [slowSave, setSlowSave] = useState(false);
+	useEffect(() => {
+		if (!automatic || !isBusy) {
+			setSlowSave(false);
+			return;
+		}
+		const timer = setTimeout(() => setSlowSave(true), SLOW_AUTOMATIC_SAVE_MS);
+		return () => clearTimeout(timer);
+	}, [automatic, isBusy]);
 	const activeState: SaveState = sync
 		? sync
-		: isBusy || (automatic && isDirty)
+		: isBusy && (!automatic || slowSave)
 			? "saving"
-			: isDirty
+			: isDirty || isBusy
 				? "save"
 				: "saved";
 	const activeLabel = labels[activeState];
