@@ -677,6 +677,7 @@ function PluginWidgets({ manifest }: { manifest: AdminManifest }) {
 		pluginId: string;
 		title?: string;
 		size?: "full" | "half" | "third";
+		refreshOn?: string[];
 	}> = [];
 
 	for (const [pluginId, plugin] of Object.entries(manifest.plugins || {})) {
@@ -689,6 +690,7 @@ function PluginWidgets({ manifest }: { manifest: AdminManifest }) {
 					pluginId,
 					title: widget.title,
 					size: widget.size,
+					refreshOn: widget.refreshOn,
 				});
 			}
 		}
@@ -710,7 +712,7 @@ function PluginWidgets({ manifest }: { manifest: AdminManifest }) {
 function PluginWidgetCard({
 	widget,
 }: {
-	widget: { id: string; pluginId: string; title?: string; size?: string };
+	widget: { id: string; pluginId: string; title?: string; size?: string; refreshOn?: string[] };
 }) {
 	const { i18n } = useLingui();
 	const WidgetComponent = usePluginWidget(widget.pluginId, widget.id);
@@ -728,7 +730,11 @@ function PluginWidgetCard({
 					{WidgetComponent ? (
 						<WidgetComponent />
 					) : (
-						<SandboxedPluginWidget pluginId={widget.pluginId} widgetId={widget.id} />
+						<SandboxedPluginWidget
+							pluginId={widget.pluginId}
+							widgetId={widget.id}
+							refreshOn={widget.refreshOn}
+						/>
 					)}
 				</DashboardCardInset>
 			</LayerCard.Primary>

@@ -2,17 +2,20 @@
  * SandboxedPluginWidget
  *
  * Renders a plugin's dashboard widget using Block Kit. Sends a page_load
- * interaction with page="widget:<widgetId>" to the plugin's admin route.
+ * interaction with page="widget:<widgetId>" to the plugin's admin route, and
+ * again when one of the plugin's `refreshOn` channels changes.
  */
 
 import { SkeletonLine } from "@cloudflare/kumo";
 import { BlockRenderer } from "@emdash-cms/blocks";
 import type { Block, BlockInteraction, BlockResponse } from "@emdash-cms/blocks";
 import { useLingui } from "@lingui/react/macro";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiFetch, API_BASE } from "../lib/api/client.js";
 import { resolvePluginLinkTarget } from "../lib/plugin-links.js";
+import { useLiveTopic } from "../lib/realtime/LiveSyncProvider.js";
+import { pluginTopic } from "../lib/realtime/plugin-topic.js";
 import { cn } from "../lib/utils.js";
 
 const PLACEHOLDER_WIDTHS = [80, 60, 70];
@@ -20,9 +23,15 @@ const PLACEHOLDER_WIDTHS = [80, 60, 70];
 interface SandboxedPluginWidgetProps {
 	pluginId: string;
 	widgetId: string;
+	/** The plugin's realtime channels whose changes reload the widget. */
+	refreshOn?: readonly string[];
 }
 
-export function SandboxedPluginWidget({ pluginId, widgetId }: SandboxedPluginWidgetProps) {
+export function SandboxedPluginWidget({
+	pluginId,
+	widgetId,
+	refreshOn,
+}: SandboxedPluginWidgetProps) {
 	const { t } = useLingui();
 	const [blocks, setBlocks] = useState<Block[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -79,6 +88,14 @@ export function SandboxedPluginWidget({ pluginId, widgetId }: SandboxedPluginWid
 			requestGeneration.current++;
 		};
 	}, [page, sendInteraction]);
+
+	const refreshKey = refreshOn?.join("\n") ?? "";
+	const liveTopics = useMemo(
+		() =>
+			refreshKey ? refreshKey.split("\n").map((channel) => pluginTopic(pluginId, channel)) : [],
+		[pluginId, refreshKey],
+	);
+	useLiveTopic(liveTopics, () => void sendInteraction({ type: "page_load", page }));
 
 	const handleAction = useCallback(
 		(interaction: BlockInteraction) => {

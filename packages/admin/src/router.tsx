@@ -4200,13 +4200,17 @@ function PluginPage() {
 
 	// Get plugin page component from context (trusted plugins with React)
 	const PluginComponent = usePluginPage(pluginId, pagePath);
+	const { data: manifest } = useQuery({ queryKey: ["manifest"], queryFn: fetchManifest });
 
 	if (PluginComponent) {
 		return <PluginComponent />;
 	}
 
 	// No React component — fall back to Block Kit rendering
-	return <SandboxedPluginPage pluginId={pluginId} page={pagePath} />;
+	const refreshOn = manifest?.plugins[pluginId]?.adminPages?.find(
+		(page) => page.path === pagePath,
+	)?.refreshOn;
+	return <SandboxedPluginPage pluginId={pluginId} page={pagePath} refreshOn={refreshOn} />;
 }
 
 // Catch-all 404 route

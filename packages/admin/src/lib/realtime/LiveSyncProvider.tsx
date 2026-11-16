@@ -114,6 +114,28 @@ export function useLiveEnabled(): boolean {
 	return React.useContext(LiveEnabledContext);
 }
 
+/**
+ * Calls `onChange` when one of `topics`, or a topic under it, changes in another tab or through any
+ * other writer, and after a reconnect that may have missed a change. Subscribes the tab to `topics`
+ * while mounted. Calls are throttled with the tab's other live refetches.
+ */
+export function useLiveTopic(topics: string | readonly string[], onChange: () => void): void {
+	const registry = React.useContext(LiveRegistryContext);
+	const onChangeRef = React.useRef(onChange);
+	onChangeRef.current = onChange;
+	const topicsKey = (typeof topics === "string" ? [topics] : topics).join("\n");
+	React.useEffect(() => {
+		if (!registry || !topicsKey) return;
+		return registry.add({
+			topics: topicsKey.split("\n"),
+			queryKeys: NO_QUERY_KEYS,
+			// Held with no queries, so the provider reports each change instead of refetching.
+			held: () => true,
+			arrived: () => onChangeRef.current(),
+		});
+	}, [registry, topicsKey]);
+}
+
 /** Tells others the tab is at `topic` while mounted. Null announces nothing. */
 export function useAnnouncePresence(topic: string | null, activity: PresenceActivity): void {
 	const registry = React.useContext(LiveRegistryContext);

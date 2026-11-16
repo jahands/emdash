@@ -2,7 +2,8 @@
  * SandboxedPluginPage
  *
  * Renders a plugin's admin page using Block Kit. Sends page_load/block_action/form_submit
- * interactions to the plugin's admin route and renders the returned blocks.
+ * interactions to the plugin's admin route and renders the returned blocks. A change to one of the
+ * plugin's `refreshOn` channels loads the page again.
  */
 
 import { SkeletonLine } from "@cloudflare/kumo";
@@ -10,10 +11,12 @@ import { BlockRenderer } from "@emdash-cms/blocks";
 import type { Block, BlockInteraction, BlockResponse } from "@emdash-cms/blocks";
 import { useLingui } from "@lingui/react/macro";
 import { WarningCircle } from "@phosphor-icons/react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { apiFetch, API_BASE } from "../lib/api/client.js";
 import { resolvePluginLinkTarget } from "../lib/plugin-links.js";
+import { useLiveTopic } from "../lib/realtime/LiveSyncProvider.js";
+import { pluginTopic } from "../lib/realtime/plugin-topic.js";
 
 // Fixed, so the outline keeps its shape if the page remounts while loading.
 const PAGE_LINE_WIDTHS = [90, 75, 82, 60];
@@ -21,9 +24,11 @@ const PAGE_LINE_WIDTHS = [90, 75, 82, 60];
 interface SandboxedPluginPageProps {
 	pluginId: string;
 	page: string;
+	/** The plugin's realtime channels whose changes reload the page. */
+	refreshOn?: readonly string[];
 }
 
-export function SandboxedPluginPage({ pluginId, page }: SandboxedPluginPageProps) {
+export function SandboxedPluginPage({ pluginId, page, refreshOn }: SandboxedPluginPageProps) {
 	const { t } = useLingui();
 	const [blocks, setBlocks] = useState<Block[]>([]);
 	const [loading, setLoading] = useState(true);
@@ -98,6 +103,14 @@ export function SandboxedPluginPage({ pluginId, page }: SandboxedPluginPageProps
 			if (toastTimer.current) clearTimeout(toastTimer.current);
 		};
 	}, [sendInteraction, page]);
+
+	const refreshKey = refreshOn?.join("\n") ?? "";
+	const liveTopics = useMemo(
+		() =>
+			refreshKey ? refreshKey.split("\n").map((channel) => pluginTopic(pluginId, channel)) : [],
+		[pluginId, refreshKey],
+	);
+	useLiveTopic(liveTopics, () => void sendInteraction({ type: "page_load", page }));
 
 	// Handle block actions
 	const handleAction = useCallback(

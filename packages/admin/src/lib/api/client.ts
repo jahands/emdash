@@ -233,11 +233,15 @@ export interface AdminManifest {
 				label?: string;
 				icon?: string;
 				group?: string;
+				/** The plugin's realtime channels whose changes reload the Block Kit page. */
+				refreshOn?: string[];
 			}>;
 			dashboardWidgets?: Array<{
 				id: string;
 				title?: string;
 				size?: "full" | "half" | "third";
+				/** The plugin's realtime channels whose changes reload the Block Kit widget. */
+				refreshOn?: string[];
 			}>;
 			editorPanels?: Array<{
 				id: string;
