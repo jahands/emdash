@@ -284,6 +284,7 @@ export class CloudflareSandboxRunner implements SandboxRunner {
 						taxonomyWrite: this.options.taxonomyWrite,
 						commentModerate: this.commentModerate,
 						i18nConfig: getI18nConfig(),
+						realtimeChannels: manifest.realtime?.channels,
 					},
 				),
 		);

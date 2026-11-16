@@ -103,6 +103,7 @@ export function generatePluginWrapper(manifest: PluginManifest, options: Wrapper
 	const hasContentRestore = capabilities.includes("content:restore");
 	const hasSchemaRead = capabilities.includes("schema:read");
 	const hasBylinesRead = capabilities.includes("bylines:read");
+	const hasRealtimePublish = capabilities.includes("realtime:publish");
 	const hasRevisionRead = capabilities.includes("content:revisions:read");
 	const httpWireRuntimeSource = generatePluginHttpWireRuntimeSource();
 
@@ -635,6 +636,10 @@ function createContext(originHook, invocationId) {
 		list: () => bridgeCall("cron/list", {}),
 	};
 
+	const realtime = ${hasRealtimePublish} ? {
+		publish: (channel, change) => bridgeCall("realtime/publish", { channel, change, invocationId }).then(() => undefined),
+	} : undefined;
+
 	return {
 		plugin: {
 			id: ${JSON.stringify(manifest.id)},
@@ -657,6 +662,7 @@ function createContext(originHook, invocationId) {
 		comments,
 		email,
 		cron,
+		realtime,
 	};
 }
 

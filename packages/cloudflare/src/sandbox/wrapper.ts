@@ -64,6 +64,7 @@ export function generatePluginWrapper(manifest: PluginManifest, options?: Wrappe
 	const hasContentRestore = capabilities.includes("content:restore");
 	const hasSchemaRead = capabilities.includes("schema:read");
 	const hasBylinesRead = capabilities.includes("bylines:read");
+	const hasRealtimePublish = capabilities.includes("realtime:publish");
 	const hasRevisionRead = capabilities.includes("content:revisions:read");
 	const httpWireRuntimeSource = generatePluginHttpWireRuntimeSource();
 
@@ -365,6 +366,13 @@ function createContext(env, originHook, invocationId, runtimeBridge) {
 		cancel: (name) => bridge.cronCancel(name),
 		list: () => bridge.cronList()
 	};
+
+	// The per-invocation bridge counts publishes and holds them for the request's transaction.
+	const realtime = ${hasRealtimePublish} ? {
+		publish: (channel, change) => runtimeBridge
+			? runtimeBridge.realtimePublish(channel, change)
+			: Promise.reject(new Error("Realtime publishing needs the host's runtime bridge"))
+	} : undefined;
 	
 	return {
 		plugin: {
@@ -387,7 +395,8 @@ function createContext(env, originHook, invocationId, runtimeBridge) {
 		users,
 		comments,
 		email,
-		cron
+		cron,
+		realtime
 	};
 }
 
