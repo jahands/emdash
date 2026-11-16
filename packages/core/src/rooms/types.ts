@@ -27,6 +27,16 @@ export function roomId(entry: EntryRef): string {
 	return `${entry.collection}:${entry.id}`;
 }
 
+/** The realtime hub's name in the room namespace. Room IDs start with a collection slug, so none is this. */
+export const HUB_NAME = "_realtime";
+
+const REALTIME_PATH = /\/_emdash\/api\/realtime$/;
+
+/** Whether a path is the hub's socket and ticket route, `/_emdash/api/realtime` under any base path. */
+export function isRealtimePath(pathname: string): boolean {
+	return REALTIME_PATH.test(pathname);
+}
+
 const ROOM_PATH = /\/_emdash\/api\/content\/([^/]+)\/([^/]+)\/room$/;
 
 /**

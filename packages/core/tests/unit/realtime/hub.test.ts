@@ -7,9 +7,9 @@ import {
 	type HubSocket,
 	type HubSocketState,
 } from "../../../src/realtime/hub.js";
-import { HUB_NAME } from "../../../src/realtime/path.js";
 import { CONNECTION_LIFETIME_MS } from "../../../src/rooms/limits.js";
 import type { RoomTokenClaims } from "../../../src/rooms/token.js";
+import { HUB_NAME } from "../../../src/rooms/types.js";
 import { CLOSE_CODES } from "../../../src/rooms/types.js";
 
 class FakeSocket implements HubSocket {

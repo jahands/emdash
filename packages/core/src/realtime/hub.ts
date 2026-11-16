@@ -11,7 +11,7 @@ import type { RoleLevel } from "@emdash-cms/auth";
 import { CONNECTION_LIFETIME_MS } from "../rooms/limits.js";
 import type { RoomTokenClaims } from "../rooms/token.js";
 import { CLOSE_CODES } from "../rooms/types.js";
-import { HUB_NAME } from "./path.js";
+import { HUB_NAME } from "../rooms/types.js";
 import type { Change, ChangeOp } from "./publish.js";
 import { maySubscribe, parseTopic, topicAndAncestors } from "./topics.js";
 

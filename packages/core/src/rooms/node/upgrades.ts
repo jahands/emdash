@@ -11,9 +11,9 @@ import type { Duplex } from "node:stream";
 
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
-import { HUB_NAME, isRealtimePath } from "../../realtime/path.js";
 import { MAX_UPDATE_BYTES } from "../limits.js";
 import type { RoomTokenClaims } from "../token.js";
+import { HUB_NAME, isRealtimePath } from "../types.js";
 import { CLOSE_CODES, roomIdFromPath, type RoomConnection } from "../types.js";
 import type { AcceptedConnection, AcceptedHubConnection, HubConnection } from "./registry.js";
 

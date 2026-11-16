@@ -7,9 +7,9 @@ import { encodeBase64urlNoPadding } from "@oslojs/encoding";
 import type { Kysely } from "kysely";
 
 import type { Database } from "../../database/types.js";
-import { HUB_NAME } from "../../realtime/path.js";
 import { resolveRoomTokenSecret } from "../../rooms/token-secret.js";
 import { signRoomToken } from "../../rooms/token.js";
+import { HUB_NAME } from "../../rooms/types.js";
 import { ROOM_TOKEN_BYTES } from "../../rooms/types.js";
 import { ErrorCode } from "../errors.js";
 import type { ApiResult } from "../types.js";

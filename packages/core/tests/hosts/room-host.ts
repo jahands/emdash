@@ -6,11 +6,11 @@ import type { Kysely } from "kysely";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 
 import type { Database } from "../../src/database/types.js";
-import { HUB_NAME } from "../../src/realtime/path.js";
 import { RoomRegistry } from "../../src/rooms/node/registry.js";
 import { watchServers } from "../../src/rooms/node/upgrades.js";
 import { resolveRoomTokenSecret } from "../../src/rooms/token-secret.js";
 import { signRoomToken } from "../../src/rooms/token.js";
+import { HUB_NAME } from "../../src/rooms/types.js";
 import { roomId } from "../../src/rooms/types.js";
 import { FakeSite } from "../unit/rooms/fake-site.js";
 import { BUILD, ENTRY, FINGERPRINT, TITLE } from "../unit/rooms/test-room.js";
