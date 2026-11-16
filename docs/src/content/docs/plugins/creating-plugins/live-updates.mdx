@@ -1,0 +1,149 @@
+---
+title: Live updates
+description: Refresh a plugin's admin pages, widgets, and queries in open tabs when the plugin's data changes.
+---
+
+import { Aside } from "@astrojs/starlight/components";
+
+A plugin can tell open admin tabs that its own data changed. Tabs showing that data reload it within a few seconds: Block Kit pages and widgets that list the channel in `refreshOn`, and native React pages that subscribe to it. This works for sandboxed and native plugins.
+
+Live updates run on sites with [co-editing](/reference/configuration/#coediting) turned on. Elsewhere, publishing does nothing and screens refresh when the user returns to the tab or reloads it.
+
+## Declare a channel
+
+A channel names one kind of change the plugin publishes, such as new form submissions. Declare each channel with the permission a user needs to receive it, and add the `realtime:publish` capability.
+
+For a sandboxed plugin, declare channels in the manifest:
+
+```jsonc title="emdash-plugin.jsonc"
+{
+	"slug": "forms",
+	// ...identity + profile...
+	"capabilities": ["realtime:publish"],
+	"realtime": {
+		"channels": {
+			"submissions": { "permission": "content:read_drafts" }
+		}
+	}
+}
+```
+
+For a native plugin, declare the same object in `definePlugin()`:
+
+```ts title="src/index.ts"
+export default definePlugin({
+	id: "forms",
+	version: "1.0.0",
+	capabilities: ["realtime:publish"],
+	realtime: {
+		channels: {
+			submissions: { permission: "content:read_drafts" },
+		},
+	},
+});
+```
+
+A channel name starts with a lowercase letter, followed by up to 63 lowercase letters, digits, `-`, or `_`. A plugin declares at most 32 channels. The permission is one of EmDash's permissions, the same strings route `permission` uses. A user whose role lacks it never receives the channel's changes, and their tab cannot subscribe to it.
+
+## Publish a change
+
+Call `ctx.realtime.publish()` from a hook or route after the plugin's data changes. The following route stores a submission and tells open tabs about it:
+
+```ts title="src/plugin.ts"
+routes: {
+	submit: {
+		handler: async (routeCtx, ctx) => {
+			const id = crypto.randomUUID();
+			await ctx.storage.submissions.put(id, { createdAt: new Date().toISOString() });
+			await ctx.realtime.publish("submissions", { ids: [id], op: "create" });
+			return { id };
+		},
+	},
+},
+```
+
+`publish(channel, change)` takes:
+
+- `channel`: a declared channel name, or `name/key` for one thing in the channel, such as `submissions/42`. A change to `submissions/42` also reaches tabs watching `submissions`.
+- `change` (optional): `ids`, the IDs that changed (each 1 to 128 characters), and `op`, one of `"create"`, `"update"`, or `"delete"`.
+
+A change carries no data. Tabs that receive it fetch fresh data through the plugin's routes, which check access as usual.
+
+`ctx.realtime` is `undefined` without the `realtime:publish` capability. Publishing to a channel the plugin doesn't declare throws an error. One hook or route invocation can publish 20 changes; EmDash drops the rest and logs a warning. A change published inside a database transaction goes out after the transaction commits, and not at all if it fails. The tab whose request made the change doesn't receive it, since that tab already shows the result.
+
+## Refresh Block Kit pages and widgets
+
+Add `refreshOn` to a page or widget to load it again when one of the listed channels changes. The following manifest refreshes a widget on new submissions:
+
+```jsonc title="emdash-plugin.jsonc"
+{
+	"admin": {
+		"widgets": [
+			{ "id": "recent", "title": "Recent submissions", "refreshOn": ["submissions"] }
+		]
+	}
+}
+```
+
+The admin sends the plugin's `admin` route a fresh `page_load` interaction, as on first load. A page that a block action changed returns to its `page_load` state. Each name in `refreshOn` must be declared in `realtime.channels`.
+
+## Refresh native React pages
+
+Native plugin pages import live-update hooks from `@emdash-cms/admin`. Build a channel's topic with `pluginTopic(pluginId, channel)`, or `pluginTopic(pluginId, channel, key)` for one thing in it.
+
+`useLiveTopic(topic, onChange)` calls `onChange` when the topic, or something in it, changes. The following page reloads its list on new submissions:
+
+```tsx title="src/admin.tsx"
+import { pluginTopic, useLiveTopic } from "@emdash-cms/admin";
+import { apiFetch, parseApiResponse } from "emdash/plugin-utils";
+import * as React from "react";
+
+function SubmissionsPage() {
+	const [submissions, setSubmissions] = React.useState<Submission[]>([]);
+	const load = React.useCallback(async () => {
+		const response = await apiFetch("/_emdash/api/plugins/forms/submissions");
+		setSubmissions(await parseApiResponse<Submission[]>(response));
+	}, []);
+
+	React.useEffect(() => void load(), [load]);
+	useLiveTopic(pluginTopic("forms", "submissions"), () => void load());
+
+	return <SubmissionList items={submissions} />;
+}
+```
+
+A page that uses TanStack Query can opt a query in instead. Import `useQuery` from `@emdash-cms/admin` so the query shares the admin's cache, and list the topics in `meta.live`:
+
+```tsx title="src/admin.tsx"
+import { pluginTopic, useQuery } from "@emdash-cms/admin";
+
+const submissions = useQuery({
+	queryKey: ["forms", "submissions"],
+	queryFn: fetchSubmissions,
+	meta: { live: [pluginTopic("forms", "submissions")] },
+});
+```
+
+<Aside>
+	Changes reach a page only while the tab's user has the channel's permission. Tabs also refetch
+	after reconnecting, since they may have missed a change.
+</Aside>
+
+### Show who else is here
+
+`useAnnouncePresence(topic, activity)` tells other tabs that this tab is at a topic, with `activity` set to `"viewing"` or `"editing"`. `usePresence(topic)` returns the other people at the topic or under it, each with `id`, `name`, `color`, `activity`, and `topic`. Both work for plugin channels the user has the permission for.
+
+```tsx title="src/admin.tsx"
+import { pluginTopic, useAnnouncePresence, usePresence } from "@emdash-cms/admin";
+
+function SubmissionEditor({ id }: { id: string }) {
+	const topic = pluginTopic("forms", "submissions", id);
+	useAnnouncePresence(topic, "editing");
+	const others = usePresence(topic);
+	// ...render the editor and `others`
+}
+```
+
+## Test publishing
+
+`createPluginRuntimeTestHost()` from the [plugin test host](/plugins/creating-plugins/testing/) records published changes. `host.inspect.realtime()` returns them, each with its full topic (`plugin/{pluginId}/{channel}`), `ids`, and `op`.

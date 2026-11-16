@@ -156,6 +156,7 @@ export default defineConfig({
 								{ label: "Storage", slug: "plugins/creating-plugins/storage" },
 								{ label: "Settings", slug: "plugins/creating-plugins/settings" },
 								{ label: "Block Kit", slug: "plugins/creating-plugins/block-kit" },
+								{ label: "Live Updates", slug: "plugins/creating-plugins/live-updates" },
 								{
 									label: "Capabilities & Security",
 									slug: "plugins/creating-plugins/capabilities",

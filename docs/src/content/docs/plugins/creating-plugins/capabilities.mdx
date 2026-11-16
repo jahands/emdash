@@ -54,6 +54,7 @@ Declare only what the plugin actually needs. The registry shows these capabiliti
 | `hooks.email-transport:register`    | Allows registering the exclusive `email:deliver` hook (transport providers)       |
 | `hooks.email-events:register`       | Allows registering `email:beforeSend` / `email:afterSend` hooks                   |
 | `hooks.page-fragments:register`     | Allows registering the `page:fragments` hook (native plugins only)                |
+| `realtime:publish`                  | `ctx.realtime.publish()` on the plugin's declared [live-update channels](/plugins/creating-plugins/live-updates/) |
 
 The following rules affect which capabilities a plugin needs:
 
