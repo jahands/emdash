@@ -24,11 +24,15 @@ function ticket(userId: string, overrides: { roomId?: string; role?: number } = 
 		nonce: crypto.randomUUID(),
 		expiresAt: Date.now() + 30_000,
 		role: "role" in overrides ? overrides.role : Role.EDITOR,
+		name: userId.toUpperCase(),
+		clientId: `tab-${userId}`,
 	});
 }
 
+type Frame = { t: string; places?: Array<{ topic: string; people: Array<{ name: string }> }> };
+
 class HubClient {
-	readonly frames: unknown[] = [];
+	readonly frames: Frame[] = [];
 	readonly texts: string[] = [];
 	closed: { code: number } | null = null;
 
@@ -61,6 +65,28 @@ class HubClient {
 
 	close(): void {
 		this.ws.close(1000, "done");
+	}
+
+	changes(): Frame[] {
+		return this.frames.filter((frame) => frame.t === "changes");
+	}
+
+	/** Who this tab knows is at each place. */
+	roster(): Record<string, string[]> {
+		const known = new Map<string, string[]>();
+		for (const frame of this.frames) {
+			if (frame.t !== "presence") continue;
+			if ("all" in frame) known.clear();
+			for (const { topic, people } of frame.places ?? []) {
+				if (people.length === 0) known.delete(topic);
+				else
+					known.set(
+						topic,
+						people.map((person) => person.name),
+					);
+			}
+		}
+		return Object.fromEntries(known);
 	}
 }
 
@@ -97,15 +123,37 @@ describe("EmDashRoom as the realtime hub", () => {
 		]);
 
 		await vi.waitFor(() =>
-			expect(ana.frames).toEqual([
+			expect(ana.changes()).toEqual([
 				{ t: "changes", changes: [{ topic: "content/posts/01A", op: "update", origin: "tab-1" }] },
 			]),
 		);
 		await vi.waitFor(() =>
-			expect(ben.frames).toEqual([{ t: "changes", changes: [{ topic: "menus", ids: ["m1"] }] }]),
+			expect(ben.changes()).toEqual([{ t: "changes", changes: [{ topic: "menus", ids: ["m1"] }] }]),
 		);
 		ana.close();
 		ben.close();
+	});
+
+	it("rebuilds rosters from socket attachments, and takes a tab off when it closes after a wake", async () => {
+		const stub = hub();
+		const ana = await HubClient.open(stub, await ticket("ana"));
+		const ben = await HubClient.open(stub, await ticket("ben"));
+		ben.send({ t: "topics", topics: ["menus"] });
+		ana.send({ t: "here", topic: "menus/main", activity: "editing" });
+		await vi.waitFor(() => expect(ben.roster()).toEqual({ "menus/main": ["ANA"] }));
+
+		await evictDurableObject(stub);
+		const cy = await HubClient.open(stub, await ticket("cy"));
+		cy.send({ t: "topics", topics: ["menus/main"] });
+		await vi.waitFor(() => expect(cy.roster()).toEqual({ "menus/main": ["ANA"] }));
+
+		await evictDurableObject(stub);
+		ana.close();
+
+		await vi.waitFor(() => expect(ben.roster()).toEqual({}));
+		await vi.waitFor(() => expect(cy.roster()).toEqual({}));
+		ben.close();
+		cy.close();
 	});
 
 	it("answers pings with the runtime's auto-response", async () => {

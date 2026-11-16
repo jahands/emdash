@@ -1,8 +1,8 @@
 /**
- * The realtime hub's half of `EmDashRoom`, for the object named `HUB_NAME`. Each socket's state
- * lives in its attachment and its user in a tag, so a hub that hibernated rebuilds from its
- * sockets on the first event that needs them. Pings get their pong from the runtime without
- * waking the object.
+ * The realtime hub's half of `EmDashRoom`, for the object named `HUB_NAME`. Each socket's state,
+ * its place included, lives in its attachment and its user in a tag, so a hub that hibernated
+ * rebuilds its subscriptions and rosters from its sockets on the first event that needs them.
+ * Pings get their pong from the runtime without waking the object.
  */
 
 import { CLOSE_CODES, readRoomToken } from "emdash/internal/co-editing";
@@ -25,6 +25,8 @@ export class HubObject {
 	#sockets: Map<WebSocket, HubSocket> | null = null;
 	/** When each socket last sent a frame the hub handled, since this wake. */
 	readonly #messagedAt = new WeakMap<WebSocket, number>();
+	/** Sockets already taken off their rosters, for a close that also reports an error. */
+	readonly #left = new WeakSet<WebSocket>();
 
 	constructor(ctx: DurableObjectState) {
 		this.#ctx = ctx;
@@ -70,18 +72,32 @@ export class HubObject {
 		loaded.hub.receive(socket, message);
 	}
 
-	webSocketClose(ws: WebSocket, code: number): void {
-		this.#sockets?.delete(ws);
+	async webSocketClose(ws: WebSocket, code: number): Promise<void> {
 		try {
 			// 1005 and 1006 report a close without a code, and can't be sent.
 			ws.close(code === 1005 || code === 1006 ? 1000 : code);
 		} catch {
 			// Already closed.
 		}
+		await this.#leave(ws);
 	}
 
-	webSocketError(ws: WebSocket): void {
-		this.#sockets?.delete(ws);
+	async webSocketError(ws: WebSocket): Promise<void> {
+		await this.#leave(ws);
+	}
+
+	/** Takes a socket the other side closed off its place's roster. */
+	async #leave(ws: WebSocket): Promise<void> {
+		if (this.#left.has(ws)) return;
+		this.#left.add(ws);
+		const loaded = await this.#load();
+		if (!loaded) return;
+		const sockets = this.#all(loaded.engine);
+		// After a wake the closing socket may not be listed; its attachment still holds its place.
+		// The hub's own closes clear it, so they aren't taken off twice.
+		const state = sockets.get(ws)?.state ?? loaded.engine.readHubSocketState(attachmentOf(ws));
+		sockets.delete(ws);
+		if (state) loaded.hub.left(state);
 	}
 
 	/** The hub engine, imported and built on first use. Null with co-editing off. */
@@ -111,8 +127,9 @@ export class HubObject {
 			const attachment: unknown = ws.deserializeAttachment();
 			// A closing socket's attachment is already cleared.
 			if (attachment === null) continue;
-			if (engine?.isHubSocketState(attachment)) {
-				sockets.set(ws, this.#socket(ws, attachment, sockets));
+			const state = engine?.readHubSocketState(attachment);
+			if (state) {
+				sockets.set(ws, this.#socket(ws, state, sockets));
 			} else {
 				// Written by hub code this version can't read; a new ticket gets a fresh state.
 				closeSocket(ws, CLOSE_CODES.rejoin, "Join again");
@@ -149,6 +166,14 @@ export class HubObject {
 				return Math.max(pinged, messagedAt.get(ws) ?? 0, current.connectedAt);
 			},
 		};
+	}
+}
+
+function attachmentOf(ws: WebSocket): unknown {
+	try {
+		return ws.deserializeAttachment();
+	} catch {
+		return null;
 	}
 }
 
