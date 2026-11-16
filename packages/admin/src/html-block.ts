@@ -158,9 +158,13 @@ const FRAME_SCRIPT = `(() => {
 		const height = Math.max(root.getBoundingClientRect().height, overflow);
 		parent.postMessage({ type, height: Math.ceil(height + innerHeight - root.clientHeight) }, "*");
 	};
+	// Measured only once the markup is parsed: a report from a half-parsed body would
+	// shrink the frame before the rest of the block arrives.
 	const observer = new ResizeObserver(report);
-	observer.observe(root);
-	addEventListener("DOMContentLoaded", () => observer.observe(document.body));
+	addEventListener("DOMContentLoaded", () => {
+		observer.observe(root);
+		observer.observe(document.body);
+	});
 	addEventListener("message", (event) => {
 		if (event.source === parent && event.data?.type === type) report();
 	});
