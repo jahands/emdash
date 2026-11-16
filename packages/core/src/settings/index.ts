@@ -26,6 +26,7 @@ import {
 } from "../plugins/settings.js";
 import type { VersionedValue } from "../plugins/types.js";
 import type { CacheHint } from "../query.js";
+import { publishChange } from "../realtime/publish.js";
 import { peekRequestCache, requestCached } from "../request-cache.js";
 import { getRequestContext } from "../request-context.js";
 import { bumpRunningExportWriteEpochs } from "../transfer/fence.js";
@@ -561,6 +562,7 @@ export async function setSiteSettings(
 				if (Object.keys(next).length === 0) await transactionOptions.delete(optionName);
 				else await transactionOptions.set(optionName, next);
 			}
+			publishChange("settings", { op: "update" });
 
 			// A running export detects writes to tables without updated_at via
 			// the operation's write_epoch. Record that bump in the same

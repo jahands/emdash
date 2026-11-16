@@ -8,6 +8,7 @@ import {
 import { ulid } from "ulidx";
 
 import { normalizeFocalPoint, type FocalPointUpdate } from "../../media/focal-point.js";
+import { publishChange, type ChangeOp } from "../../realtime/publish.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import { settleAll } from "../../utils/settle.js";
 import { jsonTextValues } from "../json-recordset.js";
@@ -137,6 +138,12 @@ const UPLOAD_ATTEMPT_CLEANUP_BATCH_SIZE = 100;
 /**
  * Media repository for database operations
  */
+/** Pending uploads aren't in the library, so only a ready item's change is published. */
+function mediaChanged(item: MediaItem, op: ChangeOp = "update"): MediaItem {
+	if (item.status === "ready") publishChange(`media/${item.id}`, { op });
+	return item;
+}
+
 export class MediaRepository {
 	constructor(private db: Kysely<Database>) {}
 
@@ -170,7 +177,7 @@ export class MediaRepository {
 
 		await this.db.insertInto("media").values(row).execute();
 
-		return this.rowToItem(row);
+		return mediaChanged(this.rowToItem(row), "create");
 	}
 
 	/**
@@ -381,7 +388,7 @@ export class MediaRepository {
 
 		const row = await query.returningAll().executeTakeFirst();
 
-		return row ? this.rowToItem(row) : null;
+		return row ? mediaChanged(this.rowToItem(row), "create") : null;
 	}
 
 	/**
@@ -618,6 +625,7 @@ export class MediaRepository {
 
 		if (Object.keys(updates).length > 0) {
 			await this.db.updateTable("media").set(updates).where("id", "=", id).execute();
+			mediaChanged(existing);
 		}
 
 		return this.findById(id);
@@ -646,7 +654,7 @@ export class MediaRepository {
 			.where("status", "=", "ready")
 			.returningAll()
 			.executeTakeFirst();
-		return row ? this.rowToItem(row) : null;
+		return row ? mediaChanged(this.rowToItem(row)) : null;
 	}
 
 	async replaceReadyFile(
@@ -672,7 +680,7 @@ export class MediaRepository {
 			.returningAll()
 			.executeTakeFirst();
 
-		return row ? this.rowToItem(row) : null;
+		return row ? mediaChanged(this.rowToItem(row)) : null;
 	}
 
 	/**
@@ -682,10 +690,11 @@ export class MediaRepository {
 		const deleted = await this.db
 			.deleteFrom("media")
 			.where("id", "=", id)
-			.returning("storage_key")
+			.returning(["storage_key", "status"])
 			.executeTakeFirst();
-		if (deleted) return deleted.storage_key;
-		return null;
+		if (!deleted) return null;
+		if (deleted.status === "ready") publishChange(`media/${id}`, { op: "delete" });
+		return deleted.storage_key;
 	}
 
 	async isStorageKeyReferenced(storageKey: string): Promise<boolean> {

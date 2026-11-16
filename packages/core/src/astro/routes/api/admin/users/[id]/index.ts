@@ -139,6 +139,8 @@ export const PUT: APIRoute = async ({ params, request, locals }) => {
 			// Closes the user's live updates sockets, so their next ticket carries the new role.
 			if (role !== undefined && role !== targetUser.role) {
 				publishChange(`users/${id}`, { op: "update" });
+			} else {
+				publishChange("users", { ids: [id], op: "update" });
 			}
 			return false;
 		});

@@ -21,6 +21,7 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../../database/types.js";
+import { publishChange } from "../../realtime/publish.js";
 import {
 	BylineSchemaError,
 	BylineSchemaRegistry,
@@ -87,6 +88,7 @@ export async function handleBylineFieldCreate(
 ): Promise<ApiResult<BylineFieldDefinition>> {
 	try {
 		const field = await new BylineSchemaRegistry(db).createField(input);
+		publishChange("schema", { op: "update" });
 		return { success: true, data: field };
 	} catch (error) {
 		if (error instanceof BylineSchemaError) {
@@ -129,6 +131,7 @@ export async function handleBylineFieldUpdate(
 ): Promise<ApiResult<BylineFieldDefinition>> {
 	try {
 		const field = await new BylineSchemaRegistry(db).updateField(slug, input);
+		publishChange("schema", { op: "update" });
 		return { success: true, data: field };
 	} catch (error) {
 		if (error instanceof BylineSchemaError) {
@@ -148,6 +151,7 @@ export async function handleBylineFieldDelete(
 ): Promise<ApiResult<{ deleted: true }>> {
 	try {
 		await new BylineSchemaRegistry(db).deleteField(slug);
+		publishChange("schema", { op: "update" });
 		return { success: true, data: { deleted: true } };
 	} catch (error) {
 		if (error instanceof BylineSchemaError) {
@@ -198,6 +202,7 @@ export async function handleBylineFieldReorder(
 		const registry = new BylineSchemaRegistry(db);
 		await registry.reorderFields(slugs);
 		const items = await registry.listFields();
+		publishChange("schema", { op: "update" });
 		return { success: true, data: { items } };
 	} catch (error) {
 		if (error instanceof BylineSchemaError) {

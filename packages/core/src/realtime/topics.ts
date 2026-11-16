@@ -28,6 +28,7 @@ const NAMESPACES: Record<string, Namespace> = {
 	redirects: { permission: "redirects:read", minKeys: 0, maxKeys: 0 },
 	bylines: { permission: "bylines:read", minKeys: 0, maxKeys: 0 },
 	sections: { permission: "sections:read", minKeys: 0, maxKeys: 0 },
+	plugins: { permission: "plugins:read", minKeys: 0, maxKeys: 0 },
 };
 
 const MAX_SEGMENT_LENGTH = 128;

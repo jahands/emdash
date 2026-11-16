@@ -8,6 +8,7 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../database/types.js";
+import { publishChange } from "../realtime/publish.js";
 
 export type PluginStatus = "active" | "inactive";
 export type PluginSource = "config" | "marketplace" | "registry";
@@ -204,6 +205,7 @@ export class PluginStateRepository {
 				})
 				.execute();
 		}
+		publishChange("plugins", { ids: [pluginId], op: existing ? "update" : "create" });
 
 		return (await this.get(pluginId))!;
 	}
@@ -267,7 +269,9 @@ export class PluginStateRepository {
 			.where("source", "=", state.source)
 			.executeTakeFirst();
 
-		return (result.numUpdatedRows ?? 0n) > 0n;
+		const restored = (result.numUpdatedRows ?? 0n) > 0n;
+		if (restored) publishChange("plugins", { ids: [state.pluginId], op: "update" });
+		return restored;
 	}
 
 	/**
@@ -293,7 +297,9 @@ export class PluginStateRepository {
 			.where("plugin_id", "=", pluginId)
 			.executeTakeFirst();
 
-		return (result.numDeletedRows ?? 0) > 0;
+		const deleted = (result.numDeletedRows ?? 0) > 0;
+		if (deleted) publishChange("plugins", { ids: [pluginId], op: "delete" });
+		return deleted;
 	}
 }
 

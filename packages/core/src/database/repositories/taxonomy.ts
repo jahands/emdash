@@ -4,6 +4,7 @@ import { ulid } from "ulidx";
 import { getLocaleCandidates, getLocaleChainRank, getLocaleRank } from "../../i18n/config.js";
 import { localeMatches, localeOrder } from "../../i18n/query.js";
 import { invalidateTaxonomyObjectCache } from "../../object-cache/index.js";
+import { publishChange } from "../../realtime/publish.js";
 import { hasRoomNotifier, notifyEntryGroups } from "../../rooms/notifications.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import { slugify } from "../../utils/slugify.js";
@@ -220,6 +221,7 @@ export class TaxonomyRepository {
 		});
 
 		invalidateTaxonomyObjectCache();
+		publishChange(`taxonomies/${input.name}`, { ids: [id], op: "create" });
 
 		const taxonomy = await this.findById(id);
 		if (!taxonomy) throw new Error("Failed to create taxonomy");
@@ -487,6 +489,7 @@ export class TaxonomyRepository {
 				}
 			});
 			invalidateTaxonomyObjectCache();
+			publishChange(`taxonomies/${existing.name}`, { ids: [id], op: "update" });
 		}
 
 		return this.findById(id);
@@ -641,6 +644,9 @@ export class TaxonomyRepository {
 
 		const result = await this.db.deleteFrom("taxonomies").where("id", "=", id).executeTakeFirst();
 		invalidateTaxonomyObjectCache();
+		if ((result.numDeletedRows ?? 0n) > 0n) {
+			publishChange(`taxonomies/${term.name}`, { ids: [id], op: "delete" });
+		}
 		const groupsByCollection = new Map<string, string[]>();
 		for (const { collection, entry_id } of unassigned) {
 			const groups = groupsByCollection.get(collection);

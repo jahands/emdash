@@ -11,12 +11,13 @@ describe("parseTopic", () => {
 		"menus",
 		"menus/main",
 		"users/01USER",
+		"plugins",
 	])("reads %s", (topic) => {
 		expect(parseTopic(topic)).not.toBeNull();
 	});
 
 	it.each([
-		["an unknown namespace", "plugins/forms"],
+		["an unknown namespace", "plugin/forms"],
 		["a namespace that needs a key", "content"],
 		["too many keys", "content/posts/1/2"],
 		["a collection that isn't a slug", "content/Posts"],
@@ -45,5 +46,7 @@ describe("maySubscribe", () => {
 		expect(maySubscribe(Role.EDITOR, "comments")).toBe(true);
 		expect(maySubscribe(Role.EDITOR, "users/01USER")).toBe(false);
 		expect(maySubscribe(Role.ADMIN, "users/01USER")).toBe(true);
+		expect(maySubscribe(Role.AUTHOR, "plugins")).toBe(false);
+		expect(maySubscribe(Role.EDITOR, "plugins")).toBe(true);
 	});
 });

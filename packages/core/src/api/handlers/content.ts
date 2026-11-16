@@ -55,6 +55,7 @@ import {
 	scheduledPolicyRejectionKey,
 	type ScheduledPolicyRejection,
 } from "../../plugins/content-policy.js";
+import { publishChange } from "../../realtime/publish.js";
 import { publishRedirectChanges } from "../../redirects/artifacts.js";
 import { invalidateRedirectCache } from "../../redirects/cache.js";
 import { peekRequestCache, requestCached, setRequestCacheEntry } from "../../request-cache.js";
@@ -1209,7 +1210,10 @@ async function removeShadowingAutoRedirect(
 		.where("auto", "=", 1)
 		.executeTakeFirst();
 	const removed = BigInt(result.numDeletedRows ?? 0n) > 0n;
-	if (removed) invalidateRedirectCache();
+	if (removed) {
+		invalidateRedirectCache();
+		publishChange("redirects", { op: "delete" });
+	}
 	return removed;
 }
 

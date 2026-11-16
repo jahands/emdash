@@ -2,6 +2,7 @@ import type { Kysely } from "kysely";
 
 import type { Database } from "../../database/types.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
+import { publishChange } from "../../realtime/publish.js";
 import {
 	BlockTypeRegistry,
 	SchemaError,
@@ -28,6 +29,7 @@ function schemaError(error: SchemaError) {
 }
 
 async function invalidateConsumers(db: Kysely<Database>, slug: string): Promise<void> {
+	publishChange("schema", { op: "update" });
 	const collections = await new BlockTypeRegistry(db).listAffectedCollections(slug);
 	for (const collection of collections) {
 		invalidateCollectionCache(collection);
