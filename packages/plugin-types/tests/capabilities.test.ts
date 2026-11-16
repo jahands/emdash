@@ -157,6 +157,12 @@ describe("declaredAccess facet mapping", () => {
 			page: { fragments: {} },
 		});
 		expect(capabilitiesToDeclaredAccess(["users:read"], [])).toEqual({ users: { read: {} } });
+		expect(capabilitiesToDeclaredAccess(["realtime:publish"], [])).toEqual({
+			realtime: { publish: {} },
+		});
+		expect(declaredAccessToCapabilities({ realtime: { publish: {} } }).capabilities).toEqual([
+			"realtime:publish",
+		]);
 		expect(capabilitiesToDeclaredAccess(["taxonomies:read"], [])).toEqual({
 			taxonomies: { read: {} },
 		});

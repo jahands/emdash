@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { handleRealtimeTicket } from "../../../src/api/handlers/realtime.js";
 import type { Database } from "../../../src/database/types.js";
+import { Hub } from "../../../src/realtime/hub.js";
 import { MAX_USER_NAME_LENGTH } from "../../../src/rooms/limits.js";
 import { readRoomToken } from "../../../src/rooms/token.js";
 import { setupTestDatabase, teardownTestDatabase } from "../../utils/test-db.js";
@@ -46,5 +47,26 @@ describe("handleRealtimeTicket", () => {
 		expect(unnamed?.name).toBe("ana@example.com");
 		expect(unnamed?.clientId).toBeUndefined();
 		expect(long?.name).toBe("界".repeat(MAX_USER_NAME_LENGTH));
+	});
+
+	it("carries plugin channel permissions that the hub checks against the role", async () => {
+		const sign = async (role: number) => {
+			const result = await handleRealtimeTicket(db, {
+				user: { id: `user-${role}`, role, name: "Ana", email: "ana@example.com" },
+				clientId: "tab-1",
+				live: true,
+				basePath: "",
+				channels: { "forms/submissions": "settings:read", "forms/audit": "plugins:manage" },
+			});
+			if (!result.success || result.data.mode !== "live") throw new Error("No ticket");
+			return readRoomToken(result.data.ticket)!;
+		};
+		const hub = new Hub({ sockets: { all: () => [], ofUser: () => [] } });
+
+		const editor = hub.admit(await sign(Role.EDITOR));
+		const admin = hub.admit(await sign(Role.ADMIN));
+
+		expect(editor?.channels).toEqual(["forms/submissions"]);
+		expect(admin?.channels).toEqual(["forms/submissions", "forms/audit"]);
 	});
 });

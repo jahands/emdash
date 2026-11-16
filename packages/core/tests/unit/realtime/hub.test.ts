@@ -428,6 +428,81 @@ describe("Hub", () => {
 		});
 	});
 
+	describe("plugin channels", () => {
+		const channels = {
+			"forms/submissions": "settings:read",
+			"forms/audit": "plugins:manage",
+			"%40acme%2Fqueue/jobs": "content:read_drafts",
+			"forms/bogus": "not:a-permission",
+		};
+
+		it("lets a socket subscribe only to channels whose permission its role has", () => {
+			const { connect } = setup();
+
+			const editor = connect({ role: Role.EDITOR, channels }, [
+				"plugin/forms/submissions",
+				"plugin/forms/submissions/42",
+				"plugin/forms/audit",
+				"plugin/%40acme%2Fqueue/jobs",
+				"plugin/forms/bogus",
+				"plugin/forms/undeclared",
+			]);
+			const admin = connect({ userId: "bo", role: Role.ADMIN, channels }, ["plugin/forms/audit"]);
+			const author = connect({ userId: "cy", role: Role.AUTHOR, channels }, [
+				"plugin/forms/submissions",
+				"plugin/%40acme%2Fqueue/jobs",
+			]);
+
+			expect(editor.state.topics).toEqual([
+				"plugin/forms/submissions",
+				"plugin/forms/submissions/42",
+				"plugin/%40acme%2Fqueue/jobs",
+			]);
+			expect(admin.state.topics).toEqual(["plugin/forms/audit"]);
+			expect(author.state.topics).toEqual(["plugin/%40acme%2Fqueue/jobs"]);
+		});
+
+		it("refuses every plugin channel to a ticket that carries no permissions", () => {
+			const { connect } = setup();
+
+			const socket = connect({ role: Role.ADMIN }, ["plugin/forms/submissions"]);
+
+			expect(socket.state.topics).toEqual([]);
+		});
+
+		it("sends a plugin's change only to the sockets allowed its channel, bubbling to it", () => {
+			const { hub, connect } = setup();
+			const editor = connect({ role: Role.EDITOR, channels }, ["plugin/forms/submissions"]);
+			const author = connect({ userId: "cy", role: Role.AUTHOR, channels }, [
+				"plugin/forms/submissions",
+			]);
+
+			hub.publish([{ topic: "plugin/forms/submissions/42", op: "create" }]);
+
+			expect(editor.changes()).toEqual([
+				{ t: "changes", changes: [{ topic: "plugin/forms/submissions/42", op: "create" }] },
+			]);
+			expect(author.changes()).toEqual([]);
+		});
+
+		it("shows who is at a plugin channel only to sockets allowed it", () => {
+			const { connect, here } = setup();
+			const ana = connect({ role: Role.EDITOR, channels }, ["plugin/forms/submissions"]);
+			const author = connect({ userId: "cy", role: Role.AUTHOR, channels }, [
+				"plugin/forms/submissions",
+			]);
+			const bo = connect({ userId: "bo", role: Role.EDITOR, channels }, [
+				"plugin/forms/submissions",
+			]);
+
+			here(bo, "plugin/forms/submissions/42", "editing");
+			here(author, "plugin/forms/submissions/42", "editing");
+
+			expect(ana.roster()).toEqual({ "plugin/forms/submissions/42": ["Bo:editing"] });
+			expect(author.roster()).toEqual({});
+		});
+	});
+
 	describe("readHubSocketState", () => {
 		it("reads a state from before presence as one that can't announce", () => {
 			expect(
@@ -447,7 +522,23 @@ describe("Hub", () => {
 				name: "",
 				clientId: null,
 				here: null,
+				channels: [],
 			});
+		});
+
+		it("reads a state without plugin channels as one that has none", () => {
+			const state = readHubSocketState({
+				v: 2,
+				userId: "ana",
+				role: Role.EDITOR,
+				connectedAt: 1,
+				topics: [],
+				name: "Ana",
+				clientId: "tab-1",
+				here: null,
+			});
+
+			expect(state?.channels).toEqual([]);
 		});
 
 		it("refuses a state from a newer hub or one it can't read", () => {

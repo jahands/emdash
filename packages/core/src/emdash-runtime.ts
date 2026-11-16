@@ -143,6 +143,7 @@ import type {
 	PluginCapability,
 	PluginStorageConfig,
 	PluginMcpManifestConfig,
+	PluginRealtimeConfig,
 	PluginEditorAction,
 	PluginEditorPanel,
 	PublicPageContext,
@@ -333,6 +334,7 @@ import {
 	syncDeclaredStorageIndexes,
 	type StorageIndexSyncResult,
 } from "./plugins/storage-indexes.js";
+import { pluginChannelKey } from "./realtime/topics.js";
 import { getRegistryConfigInput, resolveManifestRegistryConfig } from "./registry/config.js";
 import { requestCached } from "./request-cache.js";
 import { getRequestContext, runOutsideRequestContext } from "./request-context.js";
@@ -428,14 +430,22 @@ export interface SandboxedPluginEntry {
 	storage: PluginStorageConfig;
 	/** Serialized MCP declarations emitted at plugin build time. */
 	mcp?: PluginMcpManifestConfig;
+	/** Channels the plugin publishes live updates on. */
+	realtime?: PluginRealtimeConfig;
 	/** Route declarations (name + public/permission/cacheControl), used for route auth decisions */
 	routes?: PluginManifest["routes"];
 	/** Hook declarations this plugin implements */
 	hooks?: PluginManifest["hooks"];
 	/** Admin pages */
-	adminPages?: Array<{ path: string; label?: string; icon?: string; group?: string }>;
+	adminPages?: Array<{
+		path: string;
+		label?: string;
+		icon?: string;
+		group?: string;
+		refreshOn?: string[];
+	}>;
 	/** Dashboard widgets */
-	adminWidgets?: Array<{ id: string; title?: string; size?: string }>;
+	adminWidgets?: Array<{ id: string; title?: string; size?: string; refreshOn?: string[] }>;
 	/** Saved-entry Block Kit panels. */
 	editorPanels?: PluginManifest["admin"]["editorPanels"];
 	/** Saved-entry host-rendered actions. */
@@ -3329,11 +3339,13 @@ export class EmDashRuntime {
 					label: page.label ?? page.path,
 					icon: page.icon,
 					group: page.group,
+					refreshOn: page.refreshOn,
 				}));
 				const adminWidgets: PluginDashboardWidget[] | undefined = entry.adminWidgets?.map(
 					(widget) => ({
 						id: widget.id,
 						title: widget.title,
+						refreshOn: widget.refreshOn,
 						size:
 							widget.size === "full" || widget.size === "half" || widget.size === "third"
 								? widget.size
@@ -3364,6 +3376,7 @@ export class EmDashRuntime {
 						editorActions: entry.editorActions,
 					},
 					mcp: entry.mcp,
+					realtime: entry.realtime,
 				};
 
 				const plugin = await sandboxRunner.load(manifest, entry.code);
@@ -3690,6 +3703,18 @@ export class EmDashRuntime {
 		return requestCached("emdash:manifest", () => this._buildManifest());
 	}
 
+	/** The permission each enabled plugin's realtime channel needs, by `pluginChannelKey`. */
+	getRealtimeChannels(): Record<string, string> {
+		const channels: Record<string, string> = {};
+		for (const plugin of this.allPipelinePlugins) {
+			if (!this.enabledPlugins.has(plugin.id)) continue;
+			for (const [name, channel] of Object.entries(plugin.realtime?.channels ?? {})) {
+				channels[pluginChannelKey(plugin.id, name)] = channel.permission;
+			}
+		}
+		return channels;
+	}
+
 	/**
 	 * Build the manifest from the database.
 	 *
@@ -3736,11 +3761,18 @@ export class EmDashRuntime {
 				enabled?: boolean;
 				sandboxed?: boolean;
 				adminMode?: "react" | "blocks" | "none";
-				adminPages?: Array<{ path: string; label?: string; icon?: string; group?: string }>;
+				adminPages?: Array<{
+					path: string;
+					label?: string;
+					icon?: string;
+					group?: string;
+					refreshOn?: string[];
+				}>;
 				dashboardWidgets?: Array<{
 					id: string;
 					title?: string;
 					size?: string;
+					refreshOn?: string[];
 				}>;
 				portableTextBlocks?: Array<{
 					type: string;

@@ -286,6 +286,7 @@ async function writeDescriptor(ctx: WriteDescriptorContext): Promise<DescriptorF
 		hooks: wireManifest.hooks,
 		routes: wireManifest.routes,
 		...(wireManifest.mcp ? { mcp: wireManifest.mcp } : {}),
+		...(wireManifest.realtime ? { realtime: wireManifest.realtime } : {}),
 		...(manifest.admin.pages.length > 0 ? { adminPages: manifest.admin.pages } : {}),
 		...(manifest.admin.widgets.length > 0 ? { adminWidgets: manifest.admin.widgets } : {}),
 		...(wireManifest.admin.settingsSchema

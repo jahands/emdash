@@ -10,12 +10,14 @@
  * authoring shape.
  */
 
+import { Permissions } from "@emdash-cms/auth";
 import {
 	isJsonPostRouteContract,
 	PLUGIN_CAPABILITIES,
 	type PluginRouteBodyMode,
 } from "@emdash-cms/plugin-types";
 
+import { isPluginChannelName } from "../realtime/topics.js";
 import { normalizePluginCapabilities, warnDeprecatedPluginCapabilities } from "./types.js";
 import type {
 	PluginDefinition,
@@ -138,6 +140,7 @@ function defineNativePlugin<TStorage extends PluginStorageConfig>(
 		routes = {},
 		mcp = { tools: {} },
 		admin = {},
+		realtime,
 	} = definition;
 
 	// Default to empty object if no storage declared.
@@ -206,6 +209,32 @@ function defineNativePlugin<TStorage extends PluginStorageConfig>(
 		}
 	}
 
+	const channels = realtime?.channels ?? {};
+	if (Object.keys(channels).length > 32) {
+		throw new Error(`Plugin "${id}" declares more than 32 realtime channels.`);
+	}
+	for (const [name, channel] of Object.entries(channels)) {
+		if (!isPluginChannelName(name)) {
+			throw new Error(
+				`Invalid realtime channel "${name}" in plugin "${id}". Use a lowercase letter, then up to 63 lowercase letters, digits, "-" or "_".`,
+			);
+		}
+		if (!Object.hasOwn(Permissions, channel?.permission)) {
+			throw new Error(
+				`Realtime channel "${name}" in plugin "${id}" needs a permission from the Permissions map.`,
+			);
+		}
+	}
+	for (const surface of [...(admin.pages ?? []), ...(admin.widgets ?? [])]) {
+		for (const channel of surface.refreshOn ?? []) {
+			if (!Object.hasOwn(channels, channel)) {
+				throw new Error(
+					`refreshOn in plugin "${id}" names "${channel}", which realtime.channels doesn't declare.`,
+				);
+			}
+		}
+	}
+
 	// Validate capabilities. Both current names and deprecated aliases are
 	// accepted; aliases are rewritten to current names below so the runtime only
 	// ever sees the canonical form.
@@ -234,6 +263,7 @@ function defineNativePlugin<TStorage extends PluginStorageConfig>(
 		routes,
 		mcp,
 		admin,
+		...(realtime ? { realtime } : {}),
 	};
 }
 

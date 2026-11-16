@@ -301,6 +301,7 @@ export function generatePluginsModule(descriptors: PluginDescriptor[]): string {
 					portableTextBlocks: descriptor.portableTextBlocks,
 					fieldWidgets: descriptor.fieldWidgets,
 					mcp: descriptor.mcp,
+					realtime: descriptor.realtime,
 				})})`,
 			);
 		} else {
@@ -758,6 +759,7 @@ export const sandboxedPlugins = [];
     allowedHosts: ${JSON.stringify(descriptor.allowedHosts ?? [])},
     storage: ${JSON.stringify(descriptor.storage ?? {})},
     mcp: ${JSON.stringify(descriptor.mcp)},
+    realtime: ${JSON.stringify(descriptor.realtime)},
     routes: ${JSON.stringify(descriptor.routes ?? [])},
     hooks: ${JSON.stringify(descriptor.hooks ?? [])},
     adminPages: ${JSON.stringify(descriptor.adminPages ?? [])},

@@ -35,11 +35,13 @@ export interface RealtimeTicketInput {
 	live: boolean;
 	/** The site's base path without a trailing slash. */
 	basePath: string;
+	/** The permission each plugin channel needs, by `pluginChannelKey`, which the hub checks. */
+	channels?: Record<string, string>;
 }
 
 /**
- * Signs a ticket for the hub's socket, bound to the user, their role and name, and the tab. Runs
- * no query of its own.
+ * Signs a ticket for the hub's socket, bound to the user, their role and name, the tab, and the
+ * permissions of plugin channels. Runs no query of its own.
  */
 export async function handleRealtimeTicket(
 	db: Kysely<Database>,
@@ -62,6 +64,8 @@ export async function handleRealtimeTicket(
 			role: user.role,
 			name: capUserName(user.name || user.email),
 			clientId: isClientId(input.clientId) ? input.clientId : undefined,
+			channels:
+				input.channels && Object.keys(input.channels).length > 0 ? input.channels : undefined,
 		});
 		return {
 			success: true,

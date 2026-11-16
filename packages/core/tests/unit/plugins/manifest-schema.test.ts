@@ -33,6 +33,49 @@ describe("pluginManifestSchema — content policy", () => {
 	});
 });
 
+describe("pluginManifestSchema — realtime", () => {
+	const realtime = { channels: { queue: { permission: "settings:read" } } };
+
+	it("keeps declared channels and the channels a page and widget refresh on", () => {
+		const result = pluginManifestSchema.safeParse({
+			...makeManifest({}),
+			declaredAccess: { realtime: { publish: {} } },
+			capabilities: ["realtime:publish"],
+			routes: ["admin"],
+			realtime,
+			admin: {
+				pages: [{ path: "/queue", label: "Queue", refreshOn: ["queue"] }],
+				widgets: [{ id: "queue", refreshOn: ["queue"] }],
+			},
+		});
+		expect(result.success).toBe(true);
+		if (!result.success) return;
+		expect(reconcileManifestAccess(result.data).capabilities).toContain("realtime:publish");
+		expect(result.data.realtime).toEqual(realtime);
+		expect(result.data.admin.pages?.[0]?.refreshOn).toEqual(["queue"]);
+		expect(result.data.admin.widgets?.[0]?.refreshOn).toEqual(["queue"]);
+	});
+
+	it.each([
+		["an unknown permission", { channels: { queue: { permission: "queue:read" } } }],
+		["a channel name with a capital", { channels: { Queue: { permission: "settings:read" } } }],
+	])("rejects %s", (_name, value) => {
+		expect(pluginManifestSchema.safeParse({ ...makeManifest({}), realtime: value }).success).toBe(
+			false,
+		);
+	});
+
+	it("rejects refreshOn naming a channel the plugin doesn't declare", () => {
+		const result = pluginManifestSchema.safeParse({
+			...makeManifest({}),
+			routes: ["admin"],
+			realtime,
+			admin: { widgets: [{ id: "queue", refreshOn: ["other"] }] },
+		});
+		expect(result.success).toBe(false);
+	});
+});
+
 describe("pluginManifestSchema — admin pages", () => {
 	it("keeps a page's sidebar group", () => {
 		const result = pluginManifestSchema.safeParse({

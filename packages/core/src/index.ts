@@ -336,6 +336,8 @@ export {
 	updatePluginMediaMetadata,
 	CronAccessImpl,
 } from "./plugins/index.js";
+export { createRealtimeAccess, MAX_PLUGIN_PUBLISHES } from "./realtime/plugin.js";
+export type { PluginChange, RealtimeAccess } from "./realtime/plugin.js";
 export type {
 	EncryptedPluginSetting,
 	PluginSecretRedactor,
@@ -418,6 +420,8 @@ export type {
 	PluginRouteDefinition,
 	RouteContext,
 	PluginAdminConfig,
+	PluginRealtimeChannel,
+	PluginRealtimeConfig,
 	PluginAdminPage,
 	PluginEditorPanel,
 	PluginEditorAction,

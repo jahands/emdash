@@ -114,6 +114,11 @@
 					"type": "ref",
 					"ref": "#usersAccess",
 					"description": "Access to site user records."
+				},
+				"realtime": {
+					"type": "ref",
+					"ref": "#realtimeAccess",
+					"description": "Live updates to open admin screens on the plugin's own declared channels."
 				}
 			}
 		},
@@ -434,6 +439,21 @@
 		"usersReadConstraints": {
 			"type": "object",
 			"description": "Constraint object for users.read. No constraint keys are normatively defined here."
+		},
+		"realtimeAccess": {
+			"type": "object",
+			"description": "Operations under realtime.",
+			"properties": {
+				"publish": {
+					"type": "ref",
+					"ref": "#realtimePublishConstraints",
+					"description": "Plugin may tell open admin screens that its own declared channels changed. Messages carry no data."
+				}
+			}
+		},
+		"realtimePublishConstraints": {
+			"type": "object",
+			"description": "Constraint object for realtime.publish. No constraint keys are normatively defined here."
 		}
 	}
 }

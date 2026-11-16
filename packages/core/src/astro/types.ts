@@ -112,11 +112,15 @@ export interface ManifestPlugin {
 		label?: string;
 		icon?: string;
 		group?: string;
+		/** The plugin's realtime channels whose changes reload the Block Kit page. */
+		refreshOn?: string[];
 	}>;
 	dashboardWidgets?: Array<{
 		id: string;
 		title?: string;
 		size?: string;
+		/** The plugin's realtime channels whose changes reload the Block Kit widget. */
+		refreshOn?: string[];
 	}>;
 	editorPanels?: import("../plugins/types.js").PluginEditorPanel[];
 	editorActions?: import("../plugins/types.js").PluginEditorAction[];
@@ -708,6 +712,9 @@ export interface EmDashHandlers {
 	// routes; logged-out requests don't need it. Per-request, deduplicated
 	// by `requestCached`.
 	getManifest: () => Promise<EmDashManifest>;
+
+	// The permission each enabled plugin's realtime channel needs, for hub tickets.
+	getRealtimeChannels: () => Record<string, string>;
 
 	// Co-editing rooms. Null where co-editing is off or the host can't run
 	// rooms, which gives every join single-editor mode.

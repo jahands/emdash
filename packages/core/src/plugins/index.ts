@@ -307,6 +307,8 @@ export type {
 	PluginEditorPanel,
 	PluginEditorAction,
 	PluginAdminExports,
+	PluginRealtimeChannel,
+	PluginRealtimeConfig,
 	FieldWidgetConfig,
 	PortableTextBlockConfig,
 	PortableTextBlockField,

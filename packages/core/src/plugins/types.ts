@@ -50,6 +50,7 @@ import type { z } from "astro/zod";
 // =============================================================================
 
 import type { ContentFieldFilters } from "../content-list-query.js";
+import type { RealtimeAccess } from "../realtime/plugin.js";
 import type { FieldType, FieldValidation, FieldWidgetOptions } from "../schema/types.js";
 
 export type {
@@ -1110,6 +1111,9 @@ export interface PluginContext<TStorage extends PluginStorageConfig = PluginStor
 
 	/** Email access - only if email:send capability and a provider is configured */
 	email?: EmailAccess;
+
+	/** Live updates to admin tabs - only if realtime:publish capability */
+	realtime?: RealtimeAccess;
 }
 
 // =============================================================================
@@ -1984,6 +1988,11 @@ export interface PluginAdminPage {
 	 * with that label in the Plugins section, across plugins.
 	 */
 	group?: string;
+	/**
+	 * Realtime channels of this plugin whose changes reload a Block Kit page. Native React pages
+	 * use `useLiveTopic` instead.
+	 */
+	refreshOn?: string[];
 }
 
 /**
@@ -1993,6 +2002,19 @@ export interface PluginDashboardWidget {
 	id: string;
 	size?: "full" | "half" | "third";
 	title?: string;
+	/** Realtime channels of this plugin whose changes reload a Block Kit widget. */
+	refreshOn?: string[];
+}
+
+/** A channel a plugin publishes live updates on. */
+export interface PluginRealtimeChannel {
+	/** Needed to receive the channel's changes, from the same permissions routes use. */
+	permission: Permission;
+}
+
+export interface PluginRealtimeConfig {
+	/** Channels by name: a lowercase letter, then up to 63 lowercase letters, digits, `-` or `_`. */
+	channels: Record<string, PluginRealtimeChannel>;
 }
 
 export interface PluginEditorPanel {
@@ -2187,6 +2209,9 @@ export interface PluginDefinition<TStorage extends PluginStorageConfig = PluginS
 
 	/** Admin UI configuration */
 	admin?: PluginAdminConfig;
+
+	/** Channels the plugin publishes live updates on, with `ctx.realtime`. */
+	realtime?: PluginRealtimeConfig;
 }
 
 /**
@@ -2204,6 +2229,7 @@ export interface ResolvedPlugin<TStorage extends PluginStorageConfig = PluginSto
 	routes: Record<string, PluginRoute>;
 	mcp?: PluginMcpConfig;
 	admin: PluginAdminConfig;
+	realtime?: PluginRealtimeConfig;
 }
 
 /**
@@ -2290,6 +2316,7 @@ export interface PluginManifest {
 	routes: Array<ManifestRouteEntry | string>;
 	mcp?: PluginMcpManifestConfig;
 	admin: PluginAdminConfig;
+	realtime?: PluginRealtimeConfig;
 }
 
 // Type-level guard: core's `PluginManifest` is intentionally a SUBTYPE of

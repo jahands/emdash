@@ -1114,6 +1114,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 					// demand. `requestCached` inside `getManifest` dedupes within
 					// a single request.
 					getManifest: runtime.getManifest.bind(runtime),
+					getRealtimeChannels: runtime.getRealtimeChannels.bind(runtime),
 
 					// Co-editing rooms, or null when this host can't run them
 					rooms: runtime.rooms,

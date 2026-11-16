@@ -19,6 +19,7 @@ import type {
 	PluginEditorAction,
 	PluginEditorPanel,
 	PluginMcpManifestConfig,
+	PluginRealtimeConfig,
 	PortableTextBlockConfig,
 	ResolvedPlugin,
 	SettingField,
@@ -151,6 +152,8 @@ export interface PluginDescriptor<TOptions extends object = object> {
 	storage?: Record<string, StorageCollectionDeclaration>;
 	/** Serialized MCP declarations emitted by the plugin build. */
 	mcp?: PluginMcpManifestConfig;
+	/** Channels the plugin publishes live updates on. */
+	realtime?: PluginRealtimeConfig;
 	/**
 	 * Route declarations for sandboxed config-declared plugins. Mirrors
 	 * definePlugin({ routes }) and drives route auth decisions; omitted routes

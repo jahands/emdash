@@ -119,6 +119,10 @@ export const CAPABILITY_DESCRIPTIONS: Readonly<
 		label: "Read user accounts",
 		description: "Read user records from your site.",
 	},
+	"realtime:publish": {
+		label: "Send live updates",
+		description: "Tell open admin screens that the plugin's own data changed, so they reload it.",
+	},
 };
 
 /**

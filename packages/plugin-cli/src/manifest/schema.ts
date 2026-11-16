@@ -389,6 +389,7 @@ const CURRENT_CAPABILITIES = new Set<string>([
 	"hooks.email-transport:register",
 	"hooks.email-events:register",
 	"hooks.page-fragments:register",
+	"realtime:publish",
 ]);
 
 /**
@@ -520,6 +521,59 @@ export const StorageSchema = z
 	});
 
 // ──────────────────────────────────────────────────────────────────────────
+// Realtime channels
+// ──────────────────────────────────────────────────────────────────────────
+
+const RealtimeChannelNameSchema = z
+	.string()
+	.regex(
+		/^[a-z][a-z0-9_-]{0,63}$/,
+		'realtime channel names must start with a lowercase letter, then up to 63 lowercase letters / digits / "-" / "_"',
+	);
+
+/**
+ * Channels the plugin publishes live updates on with `ctx.realtime.publish`
+ * (capability `realtime:publish`). Each needs a permission from EmDash's
+ * permissions, such as `content:read_drafts`; admin tabs whose user lacks it
+ * never receive the channel's changes.
+ */
+export const RealtimeSchema = z
+	.object({
+		channels: z
+			.record(
+				RealtimeChannelNameSchema,
+				z
+					.object({
+						permission: z
+							.string()
+							.regex(
+								/^[a-z_]+:[a-z_]+$/,
+								'realtime channel permission must be an EmDash permission such as "content:read_drafts"',
+							),
+					})
+					.strict(),
+			)
+			.refine((channels) => Object.keys(channels).length <= 32, {
+				message: "realtime.channels must have <= 32 entries",
+			}),
+	})
+	.strict()
+	.meta({
+		title: "Realtime channels",
+		description:
+			"Channels the plugin publishes live updates on, each with the permission a user needs to receive them.",
+	});
+
+const RefreshOnSchema = z
+	.array(RealtimeChannelNameSchema)
+	.max(16)
+	.meta({
+		description:
+			"Realtime channels, declared in `realtime.channels`, whose changes make open admin tabs reload this surface.",
+	})
+	.optional();
+
+// ──────────────────────────────────────────────────────────────────────────
 // Admin surface (pages + dashboard widgets)
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -553,6 +607,7 @@ export const AdminPageSchema = z
 			.min(1, "admin page group cannot be empty")
 			.max(100, "admin page group must be <= 100 characters")
 			.optional(),
+		refreshOn: RefreshOnSchema,
 	})
 	.strict()
 	.meta({
@@ -578,6 +633,7 @@ export const AdminWidgetSchema = z
 			),
 		title: z.string().min(1).max(128).optional(),
 		size: z.enum(["full", "half", "third"]).optional(),
+		refreshOn: RefreshOnSchema,
 	})
 	.strict()
 	.meta({
@@ -1091,6 +1147,10 @@ export const ManifestSchema = z
 		// names are probed from src/plugin.ts, not the manifest.
 		admin: AdminSchema.optional(),
 
+		// Live updates. Optional; publishing also needs the
+		// `realtime:publish` capability.
+		realtime: RealtimeSchema.optional(),
+
 		// Single-author form. Mutually exclusive with `authors`.
 		author: AuthorSchema.optional(),
 		// Multi-author form. Mutually exclusive with `author`. At least one
@@ -1149,6 +1209,18 @@ export const ManifestSchema = z
 			"manifest has both `security` and `securityContacts`. Use one form: `security: { ... }` for a single contact, or `securityContacts: [...]` for multiple.",
 		path: ["securityContacts"],
 	})
+	.refine(
+		(v) => {
+			const channels = v.realtime?.channels ?? {};
+			return [...(v.admin?.pages ?? []), ...(v.admin?.widgets ?? [])].every((surface) =>
+				(surface.refreshOn ?? []).every((channel) => Object.hasOwn(channels, channel)),
+			);
+		},
+		{
+			message: "every `refreshOn` channel must be declared in `realtime.channels`",
+			path: ["admin"],
+		},
+	)
 	.refine((v) => v.author !== undefined || v.authors !== undefined, {
 		message: "manifest must specify either `author: { ... }` or `authors: [...]`",
 		path: ["author"],

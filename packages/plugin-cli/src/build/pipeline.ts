@@ -279,6 +279,7 @@ export async function probeAndAssemble(ctx: ProbeAndAssembleContext): Promise<Re
 			editorPanels: entries.manifest.admin.editorPanels,
 			editorActions: entries.manifest.admin.editorActions,
 		},
+		...(entries.manifest.realtime ? { realtime: entries.manifest.realtime } : {}),
 	};
 
 	const probeOutDir = join(tmpDir, "plugin-probe");

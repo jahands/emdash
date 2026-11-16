@@ -102,6 +102,7 @@ const {
 			collectPageFragments: async () => [],
 			ensureSearchHealthy: async () => undefined,
 			getManifest: async () => ({}),
+			getRealtimeChannels: () => ({}),
 			getSandboxRunner: () => null,
 			isSandboxBypassed: () => false,
 			syncMarketplacePlugins: async () => undefined,

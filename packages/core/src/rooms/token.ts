@@ -8,8 +8,11 @@
 import { decodeBase64urlIgnorePadding, encodeBase64urlNoPadding } from "@oslojs/encoding";
 
 const DOMAIN = "emdash:room-token:v1:";
-/** Far longer than any token the join route signs, so a huge query string is refused unread. */
-const MAX_TOKEN_LENGTH = 2048;
+/**
+ * Far longer than any token the join route signs, plugin channel permissions included, so a huge
+ * query string is refused unread.
+ */
+const MAX_TOKEN_LENGTH = 8192;
 
 const encoder = new TextEncoder();
 const decoder = new TextDecoder();
@@ -27,6 +30,8 @@ export interface RoomTokenClaims {
 	name?: string;
 	/** The admin tab the hub ticket is for. */
 	clientId?: string;
+	/** The permission each plugin channel needs, by `pluginChannelKey`. Hub tickets carry it. */
+	channels?: Record<string, string>;
 }
 
 /** The token key for a site's preview secret, separate from the keys other tokens use. */
@@ -45,6 +50,7 @@ export async function signRoomToken(secret: string, claims: RoomTokenClaims): Pr
 				l: claims.role,
 				m: claims.name,
 				c: claims.clientId,
+				p: claims.channels,
 			}),
 		),
 	);
@@ -79,6 +85,13 @@ export function readRoomToken(token: string): RoomTokenClaims | null {
 	if (typeof m === "string") claims.name = m;
 	const c = "c" in parsed ? parsed.c : undefined;
 	if (typeof c === "string") claims.clientId = c;
+	const p = "p" in parsed ? parsed.p : undefined;
+	if (typeof p === "object" && p !== null && !Array.isArray(p)) {
+		const channels = Object.entries(p).filter(
+			(entry): entry is [string, string] => typeof entry[1] === "string",
+		);
+		claims.channels = Object.fromEntries(channels);
+	}
 	return claims;
 }
 

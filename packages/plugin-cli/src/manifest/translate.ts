@@ -12,6 +12,7 @@ import { isAbsolute, relative, resolve, sep } from "node:path";
 import type {
 	PluginAdminConfig,
 	PluginCapability,
+	PluginRealtimeManifestConfig,
 	PluginStorageConfig,
 } from "@emdash-cms/plugin-types";
 
@@ -39,8 +40,19 @@ import {
  * bundled `manifest.json` without re-asserting the shape.
  */
 export interface NormalisedAdmin {
-	pages: Array<{ path: string; label: string; icon?: string; group?: string }>;
-	widgets: Array<{ id: string; title?: string; size?: "full" | "half" | "third" }>;
+	pages: Array<{
+		path: string;
+		label: string;
+		icon?: string;
+		group?: string;
+		refreshOn?: string[];
+	}>;
+	widgets: Array<{
+		id: string;
+		title?: string;
+		size?: "full" | "half" | "third";
+		refreshOn?: string[];
+	}>;
 	settingsSchema?: PluginAdminConfig["settingsSchema"];
 	fieldWidgets?: PluginAdminConfig["fieldWidgets"];
 	editorPanels?: PluginAdminConfig["editorPanels"];
@@ -100,6 +112,9 @@ export interface NormalisedManifest {
 	 * bundle layer can pass it through without conditional handling.
 	 */
 	admin: NormalisedAdmin;
+
+	/** Channels the plugin publishes live updates on. */
+	realtime: PluginRealtimeManifestConfig | undefined;
 }
 
 /**
@@ -320,6 +335,7 @@ export function normaliseManifest(manifest: Manifest, packageVersion?: string): 
 			editorPanels: manifest.admin?.editorPanels,
 			editorActions: manifest.admin?.editorActions,
 		},
+		realtime: manifest.realtime,
 	};
 }
 

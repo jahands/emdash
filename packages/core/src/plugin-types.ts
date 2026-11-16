@@ -384,6 +384,7 @@ export type {
 	UninstallEvent,
 };
 
+export type { PluginChange, RealtimeAccess } from "./realtime/plugin.js";
 export type {
 	BylineAfterDeleteEvent,
 	BylineAfterSaveEvent,

@@ -33,6 +33,7 @@ export const POST: APIRoute = async ({ locals, request }) => {
 			// A playground session's database isn't the one other tabs' changes come from.
 			live: Boolean(emdash.rooms?.publish) && locals.__playgroundDb === undefined,
 			basePath: import.meta.env.BASE_URL.replace(TRAILING_SLASH_RE, ""),
+			channels: emdash.getRealtimeChannels(),
 		}),
 	);
 };

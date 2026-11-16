@@ -1,15 +1,19 @@
 /**
  * Realtime topics: `/`-separated paths naming what changed, such as `content/posts/01J…`. A change
  * reaches subscribers of its topic and of each ancestor that is itself a topic, so a change to an
- * entry reaches its collection's list. Shared code may import this module, so it stays free of
- * database and engine code.
+ * entry reaches its collection's list. Plugin channels are `plugin/{plugin}/{channel}[/{key}]`,
+ * with the plugin ID URI-encoded, since a scoped ID holds a `/`. Shared code may import this
+ * module, so it stays free of database and engine code.
  */
 
-import { hasPermission, type Permission, type RoleLevel } from "@emdash-cms/auth";
+import { hasPermission, Permissions, type Permission, type RoleLevel } from "@emdash-cms/auth";
 
 interface Namespace {
-	/** Needed to subscribe: the permission the namespace's list route checks. */
-	permission: Permission;
+	/**
+	 * Needed to subscribe: the permission the namespace's list route checks. Null for plugin
+	 * channels, whose permission each plugin declares.
+	 */
+	permission: Permission | null;
 	/** Segments after the namespace's own. */
 	minKeys: number;
 	maxKeys: number;
@@ -29,7 +33,10 @@ const NAMESPACES: Record<string, Namespace> = {
 	bylines: { permission: "bylines:read", minKeys: 0, maxKeys: 0 },
 	sections: { permission: "sections:read", minKeys: 0, maxKeys: 1 },
 	plugins: { permission: "plugins:read", minKeys: 0, maxKeys: 0 },
+	plugin: { permission: null, minKeys: 2, maxKeys: 3 },
 };
+
+const PLUGIN_CHANNEL = /^[a-z][a-z0-9_-]{0,63}$/;
 
 const MAX_SEGMENT_LENGTH = 128;
 const COLLECTION_SLUG = /^[a-z][a-z0-9_]*$/;
@@ -52,14 +59,54 @@ export function parseTopic(topic: string): Topic | null {
 		if (key.length > MAX_SEGMENT_LENGTH || !SEGMENT_CHARS.test(key)) return null;
 	}
 	if (namespace === "content" && !COLLECTION_SLUG.test(keys[0] ?? "")) return null;
+	if (namespace === "plugin" && !PLUGIN_CHANNEL.test(keys[1] ?? "")) return null;
 	return { namespace, keys };
 }
 
-/** Whether a user with `role` may subscribe to the topic. False for a string that isn't one. */
-export function maySubscribe(role: RoleLevel, topic: string): boolean {
+/**
+ * Whether a user with `role` may subscribe to the topic. A plugin channel needs its key from
+ * `grantedChannels` in `channels`. False for a string that isn't a topic.
+ */
+export function maySubscribe(
+	role: RoleLevel,
+	topic: string,
+	channels: readonly string[] = [],
+): boolean {
 	const parsed = parseTopic(topic);
 	if (!parsed) return false;
-	return hasPermission({ role }, NAMESPACES[parsed.namespace].permission);
+	const { permission } = NAMESPACES[parsed.namespace];
+	if (permission === null) return channels.includes(`${parsed.keys[0]}/${parsed.keys[1]}`);
+	return hasPermission({ role }, permission);
+}
+
+/** Whether `name` can name a plugin channel. */
+export function isPluginChannelName(name: string): boolean {
+	return PLUGIN_CHANNEL.test(name);
+}
+
+/** The key a plugin channel has in a ticket's permissions: `{plugin}/{channel}`. */
+export function pluginChannelKey(pluginId: string, channel: string): string {
+	return `${encodeURIComponent(pluginId)}/${channel}`;
+}
+
+/** `plugin/{plugin}/{channel}`, or with a key, the topic of one thing in the channel. */
+export function pluginTopic(pluginId: string, channel: string, key?: string): string {
+	const topic = `plugin/${pluginChannelKey(pluginId, channel)}`;
+	return key === undefined ? topic : `${topic}/${key}`;
+}
+
+/**
+ * The plugin channels, by `pluginChannelKey`, whose permission `role` has. A permission that
+ * isn't in the `Permissions` map grants nothing.
+ */
+export function grantedChannels(role: RoleLevel, permissions: Record<string, string>): string[] {
+	return Object.entries(permissions)
+		.filter(([, permission]) => isPermission(permission) && hasPermission({ role }, permission))
+		.map(([key]) => key);
+}
+
+function isPermission(value: string): value is Permission {
+	return Object.hasOwn(Permissions, value);
 }
 
 /** The topic and each of its ancestors that is a topic, nearest first. */

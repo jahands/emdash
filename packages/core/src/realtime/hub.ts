@@ -13,9 +13,11 @@ import type { RoomTokenClaims } from "../rooms/token.js";
 import { CLOSE_CODES } from "../rooms/types.js";
 import { HUB_NAME } from "../rooms/types.js";
 import type { Change, ChangeOp } from "./publish.js";
-import { maySubscribe, parseTopic, topicAndAncestors } from "./topics.js";
+import { grantedChannels, maySubscribe, parseTopic, topicAndAncestors } from "./topics.js";
 
 export const MAX_HUB_TOPICS = 32;
+/** Plugin channels a socket keeps from its ticket. */
+const MAX_HUB_CHANNELS = 64;
 /** What a Durable Object keeps per socket is 16 KiB serialized; this leaves room for its framing. */
 const MAX_STATE_BYTES = 15 * 1024;
 export const MAX_HUB_MESSAGE_BYTES = 16 * 1024;
@@ -52,6 +54,11 @@ export interface HubSocketState {
 	/** The tab, from the ticket. Null where the ticket has none, which can't announce either. */
 	clientId: string | null;
 	here: Place | null;
+	/**
+	 * The plugin channels, by `pluginChannelKey`, whose permission the role has. Absent from
+	 * attachments older code wrote, which read as none.
+	 */
+	channels: string[];
 }
 
 /** A tab in a roster. */
@@ -130,6 +137,7 @@ export class Hub {
 		this.#used.set(ticket.nonce, ticket.expiresAt);
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the ticket route signs the user's role level
 		const role = ticket.role as RoleLevel;
+		const channels = grantedChannels(role, ticket.channels ?? {}).slice(0, MAX_HUB_CHANNELS);
 		return {
 			v: 2,
 			userId: ticket.userId,
@@ -139,6 +147,7 @@ export class Hub {
 			name: capUserName(ticket.name ?? ""),
 			clientId: ticket.clientId && ticket.clientId.length <= 64 ? ticket.clientId : null,
 			here: null,
+			channels,
 		};
 	}
 
@@ -199,7 +208,7 @@ export class Hub {
 
 	#subscribe(socket: HubSocket, requested: string[], now: number): void {
 		const topics = [...new Set(requested)]
-			.filter((topic) => maySubscribe(socket.state.role, topic))
+			.filter((topic) => maySubscribe(socket.state.role, topic, socket.state.channels))
 			.slice(0, MAX_HUB_TOPICS);
 		while (topics.length > 0 && !fits({ ...socket.state, topics })) topics.pop();
 		socket.save({ ...socket.state, topics });
@@ -214,7 +223,7 @@ export class Hub {
 	#announce(socket: HubSocket, frame: { topic: string | null; activity: Activity }): void {
 		const { state } = socket;
 		if (!state.name || !state.clientId) return;
-		if (frame.topic !== null && !maySubscribe(state.role, frame.topic)) return;
+		if (frame.topic !== null && !maySubscribe(state.role, frame.topic, state.channels)) return;
 		const here = frame.topic === null ? null : { topic: frame.topic, activity: frame.activity };
 		if (here?.topic === state.here?.topic && here?.activity === state.here?.activity) return;
 		const next = { ...state, here };
@@ -277,7 +286,7 @@ export class Hub {
 function sees(state: HubSocketState, topic: string): boolean {
 	return (
 		topicAndAncestors(topic).some((reach) => state.topics.includes(reach)) &&
-		maySubscribe(state.role, topic)
+		maySubscribe(state.role, topic, state.channels)
 	);
 }
 
@@ -306,12 +315,25 @@ export function readHubSocketState(value: unknown): HubSocketState | null {
 	}
 	const { userId, role, connectedAt, topics } = state;
 	if (state.v === 1) {
-		return { v: 2, userId, role, connectedAt, topics, name: "", clientId: null, here: null };
+		return {
+			v: 2,
+			userId,
+			role,
+			connectedAt,
+			topics,
+			name: "",
+			clientId: null,
+			here: null,
+			channels: [],
+		};
 	}
 	if (typeof state.name !== "string") return null;
 	const clientId = typeof state.clientId === "string" ? state.clientId : null;
 	const here = isPlace(state.here) ? state.here : null;
-	return { v: 2, userId, role, connectedAt, topics, name: state.name, clientId, here };
+	const channels = Array.isArray(state.channels)
+		? state.channels.filter((channel): channel is string => typeof channel === "string")
+		: [];
+	return { v: 2, userId, role, connectedAt, topics, name: state.name, clientId, here, channels };
 }
 
 function isPlace(value: unknown): value is Place {
