@@ -470,6 +470,8 @@ See [MCP Server Reference](/reference/mcp-server/) for token creation and client
 
 On other hosts, and on a Cloudflare site without the binding, the editor uses single-editor mode, where opening an entry takes an [edit lock](/guides/working-with-content/#edit-locks). [Edit with other people](/guides/working-with-content/#edit-with-other-people) describes what editors see.
 
+Co-editing also turns on live updates in the admin. Content lists, the comments inbox and the menus list refresh within a few seconds when a change is made in another tab, by another person, or through the REST API, MCP or a plugin. Without live updates, they refresh when you return to the tab or reload it.
+
 Set the option to `true` to turn co-editing on:
 
 ```js

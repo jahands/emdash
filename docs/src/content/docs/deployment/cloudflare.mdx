@@ -158,6 +158,8 @@ After deployment, the admin dashboard shows **Scheduled publishing needs attenti
 - `EmDashRoom` and `EmDashRoomSite` exported from the Worker entry point, as shown in [Add the Worker entry point](#add-the-worker-entry-point). Rooms load and save entries through `EmDashRoomSite`, a named entrypoint that isn't reachable from the internet.
 - A `fetch` handler that forwards room connections. The default export of `@emdash-cms/cloudflare/worker` has one.
 
+The same binding runs [live updates](/reference/configuration/#coediting) for admin tabs, in one more `EmDashRoom` object per site, which stores nothing. `handleRoomUpgrade` forwards its connections on `/_emdash/api/realtime`.
+
 Without the `EMDASH_ROOMS` binding, the editor uses [single-editor mode](/guides/working-with-content/#single-editor-mode), with edit locks. That includes Worker Previews and named environments that don't list the binding. If the Worker doesn't forward room connections, they never open, and each browser session switches to single-editor mode after its first three connections fail.
 
 Under `astro dev`, rooms run in a local Durable Object.
