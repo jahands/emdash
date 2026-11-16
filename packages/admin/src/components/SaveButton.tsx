@@ -20,6 +20,11 @@ export interface SaveButtonProps extends Omit<ComponentProps<typeof Button>, "ch
 	/** Replaces the "Save" label, e.g. "Save draft". */
 	saveLabel?: string;
 	/**
+	 * Edits save without a click, so unsaved edits show as "Saving..." and the button keeps one
+	 * look throughout, instead of asking for a save after every edit.
+	 */
+	automatic?: boolean;
+	/**
 	 * A co-editing problem to show instead of the save state. The button then stays enabled, to
 	 * explain the problem. Set it, to a kind or null, wherever the button can show one, so the
 	 * button keeps one width across every state.
@@ -31,6 +36,7 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 	{
 		isDirty,
 		isSaving,
+		automatic = false,
 		announce = true,
 		labelClassName,
 		saveLabel: customSaveLabel,
@@ -57,7 +63,13 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 		"not-kept": t`Not saved`,
 	};
 	const isBusy = isSaving || Boolean(loading);
-	const activeState: SaveState = sync ? sync : isBusy ? "saving" : isDirty ? "save" : "saved";
+	const activeState: SaveState = sync
+		? sync
+		: isBusy || (automatic && isDirty)
+			? "saving"
+			: isDirty
+				? "save"
+				: "saved";
 	const activeLabel = labels[activeState];
 	const stateIds: SaveState[] =
 		sync === undefined
@@ -91,9 +103,15 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 			{...props}
 			ref={ref}
 			inert={inert}
-			className={cn("min-w-[100px] justify-center", className)}
+			className={cn(
+				"min-w-[100px] justify-center",
+				// Kumo dims a disabled button, and the button is disabled only while a save is in
+				// flight or done, so this keeps one look whether a save is waiting, in flight or done.
+				automatic && !sync && "text-kumo-subtle opacity-100",
+				className,
+			)}
 			disabled={sync ? disabled : disabled || !isDirty || isBusy}
-			variant={variant ?? ((isDirty || isBusy) && !sync ? "primary" : "secondary")}
+			variant={variant ?? ((isDirty || isBusy) && !sync && !automatic ? "primary" : "secondary")}
 			aria-label={ariaLabel ?? activeLabel}
 			aria-busy={isBusy}
 		>

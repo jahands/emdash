@@ -449,6 +449,8 @@ export interface EditorActionsProps {
 	onSaveControlRemoved?: () => void;
 	/** Autosave in flight — reported by the save button's busy state. */
 	isAutosaving?: boolean;
+	/** Edits save without the writer, so the save button shows their progress instead of asking. */
+	savesAutomatically?: boolean;
 	/** Preserve operation blocking independently of the visual feedback state. */
 	saveDisabled?: boolean;
 	/**
@@ -812,6 +814,7 @@ export function EditorActions({
 	showMobileSave = true,
 	onSaveControlRemoved,
 	isAutosaving,
+	savesAutomatically = false,
 	saveDisabled,
 	sync,
 	onCopyEdits,
@@ -834,8 +837,9 @@ export function EditorActions({
 	const { t } = useLingui();
 	const busy = isSaving || Boolean(isAutosaving);
 	const savesFirstDraft = isNew && supportsDrafts;
-	// In a room the button stays, as the room's status. Elsewhere it shows only with something to save.
-	const showSave = sync !== undefined || isDirty || busy;
+	// When edits save on their own the button stays, as their status. Otherwise it shows only with
+	// something to save.
+	const showSave = sync !== undefined || savesAutomatically || isDirty || busy;
 	const saveHadFocus = React.useRef(false);
 	const saveRef = React.useRef<HTMLButtonElement>(null);
 	React.useLayoutEffect(() => {
@@ -846,7 +850,8 @@ export function EditorActions({
 				onSaveControlRemoved?.();
 		}
 	}, [showSave, onSaveControlRemoved]);
-	const saveVariant = (!isDirty && !busy) || sync ? "ghost" : isNew ? "primary" : "secondary";
+	const saveVariant =
+		(!isDirty && !busy) || sync || savesAutomatically ? "ghost" : isNew ? "primary" : "secondary";
 	const saveButton = (
 		<SaveButton
 			ref={saveRef}
@@ -872,6 +877,7 @@ export function EditorActions({
 			labelClassName={savesFirstDraft ? undefined : "@max-2xl/editor-bar:hidden"}
 			isDirty={isDirty}
 			isSaving={busy}
+			automatic={savesAutomatically}
 			sync={sync === undefined ? undefined : (sync?.kind ?? null)}
 			disabled={sync ? undefined : saveDisabled}
 			saveLabel={savesFirstDraft ? t`Save draft` : undefined}

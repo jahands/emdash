@@ -1970,6 +1970,20 @@ export function ContentEditor({
 		},
 		[fields],
 	);
+	// Whether edits reach the server without the writer saving: the room saves them, or autosave
+	// will. When autosave can't send the current edits, the writer has to save, so this is false.
+	const savesAutomatically =
+		Boolean(roomSaveState) ||
+		(!isNew &&
+			Boolean(onAutosave) &&
+			Boolean(item?.id) &&
+			!readOnly &&
+			!hasUnsupportedPortableTextMarks &&
+			!hasSaveConflict &&
+			!hasAutosaveError &&
+			!autosaveHeldBy &&
+			currentSaveKey !== rejectedAutosaveState &&
+			!hasInvalidUrls(formData));
 	const firstBlockIssue = React.useCallback(
 		(data: Record<string, unknown>): FieldBlockIssue | null => {
 			for (const [name, field] of Object.entries(fields)) {
@@ -2703,6 +2717,7 @@ export function ContentEditor({
 						)}
 						isSaving={roomSaveState ? roomSaveState.saving : Boolean(saveFeedbackActive)}
 						isAutosaving={roomSaveState ? false : autosaveFeedbackActive}
+						savesAutomatically={savesAutomatically}
 						saveDisabled={isContentSaveBlocked}
 						sync={roomSync}
 						onCopyEdits={copyEdits}
