@@ -8,6 +8,8 @@ import { afterEach, beforeEach, expect, vi } from "vitest";
 import type { Database } from "../../src/database/types.js";
 import { RoomRegistry } from "../../src/rooms/node/registry.js";
 import { watchServers } from "../../src/rooms/node/upgrades.js";
+import { resolveRoomTokenSecret } from "../../src/rooms/token-secret.js";
+import { signRoomToken } from "../../src/rooms/token.js";
 import { roomId } from "../../src/rooms/types.js";
 import { FakeSite } from "../unit/rooms/fake-site.js";
 import { BUILD, ENTRY, FINGERPRINT, TITLE } from "../unit/rooms/test-room.js";
@@ -82,7 +84,12 @@ export function useRoomHost() {
 				authorId: entry.authorId,
 			});
 			if (typeof issued !== "object" || issued === null) throw new Error(`No token: ${issued}`);
-			return issued.token;
+			return signRoomToken(await resolveRoomTokenSecret(db), {
+				roomId: roomId(ENTRY),
+				userId,
+				nonce: issued.token,
+				expiresAt: Date.now() + 60_000,
+			});
 		},
 		roomUrl(port: number, token: string, base = ""): string {
 			return `ws://127.0.0.1:${port}${roomPath(base, ENTRY.collection, ENTRY.id, token)}`;

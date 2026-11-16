@@ -11,6 +11,7 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
 import { MAX_UPDATE_BYTES } from "../limits.js";
+import type { RoomTokenClaims } from "../token.js";
 import { CLOSE_CODES, roomIdFromPath, type RoomConnection } from "../types.js";
 import type { AcceptedConnection } from "./registry.js";
 
@@ -20,7 +21,14 @@ const NOT_FOUND = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length
 
 /** The registry that takes room sockets. */
 export interface UpgradeRegistry {
-	accept(roomId: string, token: string, connection: RoomConnection): AcceptedConnection | null;
+	/** The claims of a token signed for the room, or null. */
+	verify(roomId: string, token: string): Promise<RoomTokenClaims | null>;
+	accept(
+		roomId: string,
+		nonce: string,
+		connection: RoomConnection,
+		userId?: string,
+	): AcceptedConnection | null;
 }
 
 /** Node.js 22.21 and 24.9 onward decide upgrades through this own property of each server. */
@@ -118,8 +126,14 @@ function attach(server: UpgradeServer): void {
 	server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
 		const room = roomUpgrade(request);
 		if (room) {
-			const token = tokenOf(request.url ?? "");
-			sockets.handleUpgrade(request, socket, head, (ws) => connect(ws, room, token));
+			// The server stops handling the socket's errors once it emits the upgrade.
+			const onError = () => socket.destroy();
+			socket.on("error", onError);
+			void (async () => {
+				const claims = await verify(room, tokenOf(request.url ?? ""));
+				socket.off("error", onError);
+				sockets.handleUpgrade(request, socket, head, (ws) => connect(ws, room, claims));
+			})();
 			return;
 		}
 		// Without the callback, a server with an upgrade listener passes it every upgrade request.
@@ -149,7 +163,16 @@ function refuse(socket: Duplex): void {
 	socket.end(NOT_FOUND);
 }
 
-function connect(ws: WebSocket, room: string, token: string): void {
+async function verify(room: string, token: string): Promise<RoomTokenClaims | null> {
+	try {
+		return (await state().registry?.verify(room, token)) ?? null;
+	} catch (error) {
+		console.error(`${LOG} couldn't check a room token:`, error);
+		return null;
+	}
+}
+
+function connect(ws: WebSocket, room: string, claims: RoomTokenClaims | null): void {
 	// `ws` closes the socket after a protocol error; the close event below cleans up.
 	ws.on("error", () => {});
 	const connection: RoomConnection = {
@@ -163,9 +186,13 @@ function connect(ws: WebSocket, room: string, token: string): void {
 		connection.close(CLOSE_CODES.busy, "No rooms run here");
 		return;
 	}
+	if (!claims) {
+		connection.close(CLOSE_CODES.busy, "No valid token");
+		return;
+	}
 	let accepted: AcceptedConnection | null;
 	try {
-		accepted = registry.accept(room, token, connection);
+		accepted = registry.accept(room, claims.nonce, connection, claims.userId);
 	} catch (error) {
 		console.error(`${LOG} room ${room} couldn't take a socket:`, error);
 		connection.close(CLOSE_CODES.busy, "The room couldn't take the socket");

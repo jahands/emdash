@@ -8,6 +8,8 @@ import { POST as joinRoute } from "../../../src/astro/routes/api/content/[collec
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import { EntryLockRepository } from "../../../src/database/repositories/entry-locks.js";
 import type { EmDashRuntime } from "../../../src/emdash-runtime.js";
+import { resolveRoomTokenSecret } from "../../../src/rooms/token-secret.js";
+import { verifyRoomToken } from "../../../src/rooms/token.js";
 import type { Fingerprint, RoomHost, TokenClaims } from "../../../src/rooms/types.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 import { createTestRuntime } from "../../utils/mcp-runtime.js";
@@ -127,10 +129,21 @@ describeEachDialect("room join", (dialect) => {
 			data: {
 				mode: "room",
 				url: `/blog/_emdash/api/content/post/${entry.id}/room`,
-				token: "secret",
+				token: expect.any(String),
 				access: "edit",
 			},
 		});
+		const token = (result as { data: { token: string } }).data.token;
+		const secret = () => resolveRoomTokenSecret(ctx.db);
+		expect(await verifyRoomToken(token, `post:${entry.id}`, secret)).toMatchObject({
+			userId: EDITOR.id,
+			nonce: "secret",
+		});
+		expect(await verifyRoomToken(token, "post:other", secret)).toBeNull();
+		expect(await verifyRoomToken(token, `post:${entry.id}`, async () => "other")).toBeNull();
+		expect(
+			await verifyRoomToken(token, `post:${entry.id}`, secret, Date.now() + 61_000),
+		).toBeNull();
 		expect(rooms.issueToken).toHaveBeenCalledWith(`post:${entry.id}`, {
 			userId: EDITOR.id,
 			name: "Eddie",
@@ -351,7 +364,7 @@ describeEachDialect("room join", (dialect) => {
 
 		expect(result).toMatchObject({
 			success: true,
-			data: { mode: "room", token: "second", access: "view" },
+			data: { mode: "room", token: expect.any(String), access: "view" },
 		});
 		expect(rooms.issueToken).toHaveBeenCalledTimes(2);
 		expect(rooms.issueToken.mock.calls[0]?.[1]).toMatchObject({ access: "edit", status: "draft" });
@@ -423,7 +436,11 @@ describeEachDialect("room join route", (dialect) => {
 		const joined = await callRoute(fakeRooms({ token: "secret" }), entry.id, { fingerprint });
 		expect(joined.status).toBe(200);
 		expect(await joined.json()).toMatchObject({
-			data: { mode: "room", url: `/_emdash/api/content/post/${entry.id}/room`, token: "secret" },
+			data: {
+				mode: "room",
+				url: `/_emdash/api/content/post/${entry.id}/room`,
+				token: expect.any(String),
+			},
 		});
 
 		const outdated = await callRoute(fakeRooms(), entry.id, {

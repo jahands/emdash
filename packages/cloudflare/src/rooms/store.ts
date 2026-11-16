@@ -36,12 +36,7 @@ export class DurableObjectRoomStore implements RoomStore {
 	}> {
 		if (!this.#hasTables()) return { record: null, updates: [], updatedAt: null };
 		const sql = this.#storage.sql;
-		const recordRows = sql
-			.exec<{ record: string | null; updated_at: number }>(
-				"SELECT record, updated_at FROM _emdash_rooms WHERE room_id = ? ORDER BY part",
-				this.#roomId,
-			)
-			.toArray();
+		const recordRows = this.#recordRows();
 		const parts = new Map<number, unknown[]>();
 		for (const row of sql.exec<{ seq: number; data: ArrayBuffer }>(
 			"SELECT seq, data FROM _emdash_room_updates WHERE room_id = ? ORDER BY seq, part",
@@ -114,6 +109,24 @@ export class DurableObjectRoomStore implements RoomStore {
 	}
 
 	async release(): Promise<void> {}
+
+	/** The stored record without the updates, for the alarm. */
+	readRecord(): RoomRecord | null {
+		if (!this.#hasTables()) return null;
+		const rows = this.#recordRows();
+		const head = rows[0];
+		if (!head || head.record === null) return null;
+		return JSON.parse(rows.map((row) => row.record ?? "").join(""));
+	}
+
+	#recordRows(): Array<{ record: string | null; updated_at: number }> {
+		return this.#storage.sql
+			.exec<{ record: string | null; updated_at: number }>(
+				"SELECT record, updated_at FROM _emdash_rooms WHERE room_id = ? ORDER BY part",
+				this.#roomId,
+			)
+			.toArray();
+	}
 
 	/** Whether storage holds a room record or updates, for the alarm. */
 	holdsState(): boolean {

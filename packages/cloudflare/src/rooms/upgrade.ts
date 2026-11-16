@@ -1,4 +1,4 @@
-import { CLOSE_CODES, isRoomToken, parseRoomId, roomIdFromPath } from "emdash/internal/co-editing";
+import { CLOSE_CODES, roomIdFromPath, verifyRoomToken } from "emdash/internal/co-editing";
 
 import { roomsBinding } from "./binding.js";
 
@@ -15,10 +15,34 @@ export function handleRoomUpgrade(request: Request, env: unknown): Promise<Respo
 	if (token === null) return null;
 	const roomId = roomIdFromPath(url.pathname);
 	const rooms = roomsBinding(env);
-	if (!roomId || !parseRoomId(roomId) || !rooms) return null;
-	// Any name creates its Durable Object, so a token no room could have issued stops here.
-	if (!isRoomToken(token)) return Promise.resolve(refuseSocket());
+	if (!roomId || !rooms) return null;
+	return forward(request, rooms, roomId, token);
+}
+
+async function forward(
+	request: Request,
+	rooms: NonNullable<ReturnType<typeof roomsBinding>>,
+	roomId: string,
+	token: string,
+): Promise<Response> {
+	// Any name creates its Durable Object, so only a token signed for this room reaches one.
+	let verified = false;
+	try {
+		verified = (await verifyRoomToken(token, roomId, tokenSecret)) !== null;
+	} catch (error) {
+		console.error("[co-editing] couldn't check a room token:", error);
+	}
+	if (!verified) return refuseSocket();
 	return rooms.getByName(roomId).fetch(request);
+}
+
+async function tokenSecret(): Promise<string> {
+	// Loaded on first use, as the room's site loads them.
+	const [{ withEmDashRuntime }, { resolveRoomTokenSecret }] = await Promise.all([
+		import("emdash/middleware"),
+		import("emdash/internal/co-editing/site"),
+	]);
+	return withEmDashRuntime((runtime) => resolveRoomTokenSecret(runtime.db));
 }
 
 /** Closes the socket with `busy`, as a room does for a token it doesn't hold. */

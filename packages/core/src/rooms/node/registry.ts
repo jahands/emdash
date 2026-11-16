@@ -10,6 +10,8 @@ import { isClaimedElsewhere, KyselyRoomStore, listExpiredRooms } from "../kysely
 import { CLAIM_RENEWAL_MS, SERVER_WAIT_MS } from "../limits.js";
 import { clearRoomNotifier, setRoomNotifier } from "../notifications.js";
 import { Room } from "../room.js";
+import { resolveRoomTokenSecret } from "../token-secret.js";
+import { verifyRoomToken, type RoomTokenClaims } from "../token.js";
 import {
 	CLOSE_CODES,
 	parseRoomId,
@@ -140,17 +142,27 @@ export class RoomRegistry implements RuntimeRoomHost {
 		await this.#rooms.get(roomId)?.forgetTokens(userId);
 	}
 
+	verify(roomId: string, token: string): Promise<RoomTokenClaims | null> {
+		return verifyRoomToken(token, roomId, () => resolveRoomTokenSecret(this.#db));
+	}
+
 	/**
-	 * Hands a socket with a token to its room. Closes it with `busy`, and returns null, while
-	 * shutting down, when this process has no room for it, or when the token isn't valid.
+	 * Hands a socket with a verified token's nonce to its room. Closes it with `busy`, and returns
+	 * null, while shutting down, when this process has no room for it, or when the room didn't
+	 * issue the nonce to `userId`.
 	 */
-	accept(roomId: string, token: string, connection: RoomConnection): AcceptedConnection | null {
+	accept(
+		roomId: string,
+		nonce: string,
+		connection: RoomConnection,
+		userId?: string,
+	): AcceptedConnection | null {
 		const room = this.#shuttingDown ? undefined : this.#rooms.get(roomId);
 		if (!room) {
 			connection.close(CLOSE_CODES.busy, "The room isn't in this process");
 			return null;
 		}
-		if (!room.connect(connection, token)) return null;
+		if (!room.connect(connection, nonce, userId)) return null;
 		return {
 			receive: (message) => room.receive(connection, message),
 			disconnect: () => room.disconnect(connection),

@@ -35,32 +35,34 @@ const ROOM_PATH = /\/_emdash\/api\/content\/([^/]+)\/([^/]+)\/room$/;
 export function roomIdFromPath(pathname: string): string | null {
 	const match = ROOM_PATH.exec(pathname);
 	if (!match) return null;
+	let id: string;
 	try {
-		return roomId({
+		id = roomId({
 			collection: decodeURIComponent(match[1] ?? ""),
 			id: decodeURIComponent(match[2] ?? ""),
 		});
 	} catch {
 		return null;
 	}
+	return parseRoomId(id) ? id : null;
 }
 
-/** The entry a room ID names, or null when it isn't one. */
+const COLLECTION_SLUG = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * The entry a room ID names, or null when it isn't one. The collection must be a collection slug,
+ * so names other objects in the room namespace use, such as `_realtime`, never parse as rooms.
+ */
 export function parseRoomId(id: string): EntryRef | null {
 	const colon = id.indexOf(":");
 	if (colon <= 0 || colon === id.length - 1) return null;
-	return { collection: id.slice(0, colon), id: id.slice(colon + 1) };
+	const collection = id.slice(0, colon);
+	if (!COLLECTION_SLUG.test(collection)) return null;
+	return { collection, id: id.slice(colon + 1) };
 }
 
-/** A room token's random bytes. The token is their base64url encoding, without padding. */
+/** A room token's random bytes, base64url-encoded without padding as the signed token's nonce. */
 export const ROOM_TOKEN_BYTES = 32;
-const ROOM_TOKEN_LENGTH = Math.ceil((ROOM_TOKEN_BYTES * 4) / 3);
-const BASE64URL = /^[\w-]*$/;
-
-/** Whether a string has the shape of a token a room issues. */
-export function isRoomToken(token: string): boolean {
-	return token.length === ROOM_TOKEN_LENGTH && BASE64URL.test(token);
-}
 
 /** An EmDash build and its editor schema: the admin manifest's `version`, `commit` and `hash`. */
 export interface Fingerprint {
@@ -251,6 +253,11 @@ export interface RoomRecord {
 	/** The entry's status and author when the room last loaded it. */
 	status: string;
 	authorId: string | null;
+	/**
+	 * The entry's fields and plugin block types when the room last loaded it, so a room that
+	 * outlived its memory resumes without the site. Records stored before it existed lack it.
+	 */
+	schema?: Pick<LoadedEntry, "fields" | "pluginTypes">;
 }
 
 /** A socket, from the host. */

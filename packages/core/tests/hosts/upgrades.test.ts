@@ -2,6 +2,7 @@ import { decodeMessage } from "@emdash-cms/admin/internal/co-editing";
 import { describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 
+import { readRoomToken } from "../../src/rooms/token.js";
 import { CLOSE_CODES } from "../../src/rooms/types.js";
 import { get, openSocket, rawUpgrade, roomPath, serve } from "./helpers.js";
 import { useRoomHost } from "./room-host.js";
@@ -50,6 +51,15 @@ describe("room upgrades from the site's server", () => {
 		const socket = await openSocket(host.roomUrl(port, "forged"));
 
 		expect(socket.status).toBe(101);
+		expect((await socket.closed).code).toBe(CLOSE_CODES.busy);
+	});
+
+	it("closes with busy for a nonce the room issued but no one signed", async () => {
+		const { port } = await host.attached();
+		const nonce = readRoomToken(await host.token())?.nonce ?? "";
+
+		const socket = await openSocket(host.roomUrl(port, nonce));
+
 		expect((await socket.closed).code).toBe(CLOSE_CODES.busy);
 	});
 

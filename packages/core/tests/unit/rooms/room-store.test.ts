@@ -2,7 +2,7 @@ import { readField, encodeSyncStep1 } from "@emdash-cms/admin/internal/co-editin
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 
-import { CLOSE_CODES, parseRoomId, roomId } from "../../../src/rooms/types.js";
+import { CLOSE_CODES, parseRoomId, roomId, roomIdFromPath } from "../../../src/rooms/types.js";
 import { advance, BODY, settle, TestRoom, TITLE, useRoomTimers } from "./test-room.js";
 
 beforeEach(useRoomTimers);
@@ -284,5 +284,16 @@ describe("room IDs", () => {
 			id: "a:b",
 		});
 		for (const id of ["posts", ":01ENTRY", "posts:", ""]) expect(parseRoomId(id)).toBeNull();
+	});
+
+	it("refuses a room ID whose collection isn't a collection slug", () => {
+		for (const id of ["_realtime:content/posts", "Posts:01", "1posts:01", "po-sts:01"]) {
+			expect(parseRoomId(id)).toBeNull();
+		}
+	});
+
+	it("finds no room in an upgrade path whose collection isn't a collection slug", () => {
+		expect(roomIdFromPath("/_emdash/api/content/posts/01ENTRY/room")).toBe("posts:01ENTRY");
+		expect(roomIdFromPath("/_emdash/api/content/_realtime/content%2Fposts/room")).toBeNull();
 	});
 });

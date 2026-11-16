@@ -28,6 +28,8 @@ import {
 	type SaveResult,
 } from "./types.js";
 
+export { resolveRoomTokenSecret } from "./token-secret.js";
+
 /** Runs a function with the site's runtime, outside any request. */
 export type RunWithRuntime = <T>(fn: (runtime: EmDashRuntime) => Promise<T>) => Promise<T>;
 

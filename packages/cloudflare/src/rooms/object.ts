@@ -10,12 +10,14 @@ import {
 	COMMIT,
 	MAX_UPDATE_BYTES,
 	parseRoomId,
+	readRoomToken,
 	ROOM_STATE_LIFETIME_MS,
 	RoomSaveError,
 	VERSION,
 	type ConnectionInfo,
 	type OutsideValue,
 	type RoomConnection,
+	type RoomRecord,
 	type TokenClaims,
 } from "emdash/internal/co-editing";
 import type { Room, RoomOptions } from "emdash/internal/co-editing/room";
@@ -118,7 +120,8 @@ export class EmDashRoom extends DurableObject {
 		if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
 			return new Response(null, { status: 400 });
 		}
-		const token = new URL(request.url).searchParams.get("token") ?? "";
+		// The Worker verified the token before forwarding the upgrade.
+		const token = readRoomToken(new URL(request.url).searchParams.get("token") ?? "");
 		const { 0: client, 1: server } = new WebSocketPair();
 		this.ctx.acceptWebSocket(server);
 		// Tokens live only in the room's memory, so an instance that hasn't loaded its room holds none.
@@ -127,7 +130,7 @@ export class EmDashRoom extends DurableObject {
 			return new Response(null, { status: 101, webSocket: client });
 		}
 		const socket = this.#socket(server, null, Date.now());
-		const info = this.#room.connect(socket.connection, token);
+		const info = this.#room.connect(socket.connection, token?.nonce ?? "", token?.userId);
 		if (info) {
 			socket.info = info;
 			try {
@@ -175,8 +178,12 @@ export class EmDashRoom extends DurableObject {
 
 	override async alarm(): Promise<void> {
 		try {
-			// Stored room state waits for co-editing to be on again.
-			if (!loadRoomEngine) return;
+			if (!loadRoomEngine) {
+				// Unsaved edits wait for co-editing to be on again, for a recovery revision.
+				const record = this.#store.readRecord();
+				if (record && isSaved(record)) await this.#store.drop();
+				return;
+			}
 			await this.#closeSilent();
 			await (await this.#loadRoom()).expire();
 		} finally {
@@ -282,6 +289,11 @@ export class EmDashRoom extends DurableObject {
 		});
 		return this.#loading;
 	}
+}
+
+/** Whether the site has every edit: no user has updates past the checkpoint, and no field waits. */
+function isSaved(record: RoomRecord): boolean {
+	return record.editors.length === 0 && !Object.values(record.mergeBase.document).includes(null);
 }
 
 /** A message's size as sent, which is UTF-8 for text. */

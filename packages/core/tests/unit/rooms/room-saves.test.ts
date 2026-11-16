@@ -342,6 +342,64 @@ describe("save results", () => {
 		expect(test.site.current.data.title).toBe("Offline");
 	});
 
+	it("saves again with backoff while the site can't be reached, with no further update", async () => {
+		const test = new TestRoom();
+		const ana = await test.join("ana");
+		test.site.forced = ["reject", "reject", "reject"];
+		ana.setField("title", "Offline");
+		await advance(2000);
+		expect(test.site.saves).toHaveLength(1);
+		await advance(2000);
+		expect(test.site.saves).toHaveLength(2);
+		await advance(3900);
+		expect(test.site.saves).toHaveLength(2);
+		await advance(100);
+		expect(test.site.saves).toHaveLength(3);
+		await advance(8000);
+		expect(test.site.saves).toHaveLength(4);
+		expect(test.site.current.data.title).toBe("Offline");
+		expect(ana.notices().filter((notice) => notice.kind === "refused")).toHaveLength(3);
+	});
+
+	it("stops saving again after five tries until the next update", async () => {
+		const test = new TestRoom();
+		const ana = await test.join("ana");
+		test.site.forced = Array.from({ length: 10 }, () => "reject" as const);
+		ana.setField("title", "Offline");
+		await advance(2000);
+		await advance(5 * 10_000);
+		expect(test.site.saves).toHaveLength(6);
+		await advance(60_000);
+		expect(test.site.saves).toHaveLength(6);
+		ana.type("x");
+		await advance(2000);
+		expect(test.site.saves).toHaveLength(7);
+	});
+
+	it("gives up on a save the site doesn't answer, so queued work runs, and saves again", async () => {
+		const test = new TestRoom();
+		const ana = await test.join("ana");
+		const save = test.site.save.bind(test.site);
+		let hang = true;
+		test.site.save = (entry, input) => {
+			if (!hang) return save(entry, input);
+			hang = false;
+			return new Promise(() => {});
+		};
+		ana.setField("title", "Slow");
+		await advance(2000);
+		const operation = test.room.save("ben");
+		await advance(19_000);
+		expect(ana.notices()).not.toContainEqual(expect.objectContaining({ kind: "refused" }));
+		await advance(1000);
+		expect(ana.notices()).toContainEqual(
+			expect.objectContaining({ kind: "refused", code: "SITE_UNAVAILABLE" }),
+		);
+		const held = await operation;
+		expect(held).toMatchObject({ rev: expect.any(String), hold: expect.any(String) });
+		expect(test.site.current.data.title).toBe("Slow");
+	});
+
 	it("saves the fields it can read when another can't be, and shows nothing as saved", async () => {
 		const test = new TestRoom();
 		const ana = await test.join("ana");

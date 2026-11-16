@@ -11,6 +11,9 @@ import { RevisionRepository } from "../../database/repositories/revision.js";
 import { EmDashValidationError, type ContentItem } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
 import { resolveConfiguredLocale } from "../../i18n/config.js";
+import { TOKEN_LIFETIME_MS } from "../../rooms/limits.js";
+import { resolveRoomTokenSecret } from "../../rooms/token-secret.js";
+import { signRoomToken } from "../../rooms/token.js";
 import { roomId, type RoomAccess, type RoomHost } from "../../rooms/types.js";
 import { isMissingTableError } from "../../utils/db-errors.js";
 import { entryEditAccess } from "../authorize.js";
@@ -174,13 +177,19 @@ async function joinOnce(
 	if (issued === "busy") return roomBusy();
 	if (issued === "full") return { success: true, data: { mode: "read-only" } };
 	if (issued === null) return singleEditor();
+	const token = await signRoomToken(await resolveRoomTokenSecret(db), {
+		roomId: room,
+		userId: user.id,
+		nonce: issued.token,
+		expiresAt: Date.now() + TOKEN_LIFETIME_MS,
+	});
 	if (holder && holder.userId !== user.id) await locks.releaseEntry(input.collection, entry.id);
 	return {
 		success: true,
 		data: {
 			mode: "room",
 			url: roomUrl(input.basePath, input.collection, entry.id),
-			token: issued.token,
+			token,
 			access,
 		},
 	};
