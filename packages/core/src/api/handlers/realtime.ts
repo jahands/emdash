@@ -7,6 +7,8 @@ import { encodeBase64urlNoPadding } from "@oslojs/encoding";
 import type { Kysely } from "kysely";
 
 import type { Database } from "../../database/types.js";
+import { isClientId } from "../../realtime/publish.js";
+import { capUserName } from "../../rooms/limits.js";
 import { resolveRoomTokenSecret } from "../../rooms/token-secret.js";
 import { signRoomToken } from "../../rooms/token.js";
 import { HUB_NAME } from "../../rooms/types.js";
@@ -26,14 +28,19 @@ export type RealtimeTicketResult =
 	| { mode: "off" };
 
 export interface RealtimeTicketInput {
-	user: { id: string; role: RoleLevel } | null | undefined;
+	user: { id: string; role: RoleLevel; name: string | null; email: string } | null | undefined;
+	/** The `X-EmDash-Client` header: the tab, which the hub keys its presence by. */
+	clientId: string | null;
 	/** Whether this host runs a hub. */
 	live: boolean;
 	/** The site's base path without a trailing slash. */
 	basePath: string;
 }
 
-/** Signs a ticket for the hub's socket, bound to the user and their role. Runs no query of its own. */
+/**
+ * Signs a ticket for the hub's socket, bound to the user, their role and name, and the tab. Runs
+ * no query of its own.
+ */
 export async function handleRealtimeTicket(
 	db: Kysely<Database>,
 	input: RealtimeTicketInput,
@@ -53,6 +60,8 @@ export async function handleRealtimeTicket(
 			nonce: encodeBase64urlNoPadding(crypto.getRandomValues(new Uint8Array(ROOM_TOKEN_BYTES))),
 			expiresAt: Date.now() + TICKET_LIFETIME_MS,
 			role: user.role,
+			name: capUserName(user.name || user.email),
+			clientId: isClientId(input.clientId) ? input.clientId : undefined,
 		});
 		return {
 			success: true,

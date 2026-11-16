@@ -100,6 +100,8 @@ export function useRoomHost() {
 				nonce: crypto.randomUUID(),
 				expiresAt: Date.now() + 30_000,
 				role,
+				name: userId[0]!.toUpperCase() + userId.slice(1),
+				clientId: `tab-${userId}`,
 			});
 		},
 		publish: (changes: unknown[]) => registry.publish(changes as never),

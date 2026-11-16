@@ -1,22 +1,23 @@
 /**
  * The realtime hub, `emdash/internal/realtime/hub`: one per site, telling each admin tab which of
- * its topics changed. Everything it knows lives in its sockets, in each one's attachment and tags
- * on Cloudflare, so a hub that outlived its memory rebuilds from them. It keeps no timers and no
- * storage, which would stop a Durable Object from hibernating: connection lifetime and silence
- * are checked when it publishes.
+ * its topics changed and who else is where. Everything it knows lives in its sockets, in each
+ * one's attachment and tags on Cloudflare, so a hub that outlived its memory rebuilds from them.
+ * It keeps no timers and no storage, which would stop a Durable Object from hibernating:
+ * connection lifetime and silence are checked when it publishes or a roster changes.
  */
 
 import type { RoleLevel } from "@emdash-cms/auth";
 
-import { CONNECTION_LIFETIME_MS } from "../rooms/limits.js";
+import { capUserName, CONNECTION_LIFETIME_MS } from "../rooms/limits.js";
 import type { RoomTokenClaims } from "../rooms/token.js";
 import { CLOSE_CODES } from "../rooms/types.js";
 import { HUB_NAME } from "../rooms/types.js";
 import type { Change, ChangeOp } from "./publish.js";
 import { maySubscribe, parseTopic, topicAndAncestors } from "./topics.js";
 
-/** Far under the 16 KiB a Durable Object keeps per socket, with every topic at its longest. */
 export const MAX_HUB_TOPICS = 32;
+/** What a Durable Object keeps per socket is 16 KiB serialized; this leaves room for its framing. */
+const MAX_STATE_BYTES = 15 * 1024;
 export const MAX_HUB_MESSAGE_BYTES = 16 * 1024;
 /**
  * Tabs ping every 30 s, but browsers run a hidden tab's timers only about once a minute, so a
@@ -27,15 +28,44 @@ const MAX_IDS = 50;
 const GOING_AWAY = 1001;
 const MESSAGE_TOO_BIG = 1009;
 const OPS: ReadonlySet<string> = new Set<ChangeOp>(["create", "update", "delete"]);
+const ACTIVITIES: ReadonlySet<string> = new Set<Activity>(["viewing", "editing"]);
+const WIDE_CHARACTER = /[\u0100-\uffff]/;
+
+export type Activity = "viewing" | "editing";
+
+/** Where a tab says it is. */
+export interface Place {
+	topic: string;
+	activity: Activity;
+}
 
 /** What a socket keeps through hibernation. Plain data, so it fits an attachment. */
 export interface HubSocketState {
 	/** Hub code reads attachments that older code wrote, so the shape is versioned. */
-	v: 1;
+	v: 2;
 	userId: string;
 	role: RoleLevel;
 	connectedAt: number;
 	topics: string[];
+	/** Empty for a ticket an older Worker signed, whose socket can't announce a place. */
+	name: string;
+	/** The tab, from the ticket. Null where the ticket has none, which can't announce either. */
+	clientId: string | null;
+	here: Place | null;
+}
+
+/** A tab in a roster. */
+export interface PresenceEntry {
+	userId: string;
+	name: string;
+	clientId: string;
+	activity: Activity;
+}
+
+/** Everyone at one topic. An empty list means no one is there anymore. */
+export interface PresencePlace {
+	topic: string;
+	people: PresenceEntry[];
 }
 
 /** A socket, from the host. */
@@ -56,8 +86,17 @@ export interface HubSockets {
 	ofUser(userId: string): Iterable<HubSocket>;
 }
 
-export type ClientFrame = { t: "topics"; topics: string[] };
-export type HubFrame = { t: "changes"; changes: Change[] };
+export type ClientFrame =
+	| { t: "topics"; topics: string[] }
+	/** A null topic says the tab is nowhere the hub shows. */
+	| { t: "here"; topic: string | null; activity?: Activity };
+export type HubFrame =
+	| { t: "changes"; changes: Change[] }
+	/**
+	 * The rosters of the topics at or under the socket's subscriptions that it may see. With
+	 * `all`, the list is every place that has anyone, and a place it leaves out is empty.
+	 */
+	| { t: "presence"; places: PresencePlace[]; all?: true };
 
 export interface HubOptions {
 	sockets: HubSockets;
@@ -69,6 +108,8 @@ export class Hub {
 	readonly #now: () => number;
 	/** Used tickets' nonces, until they expire. Lost with the hub's memory. */
 	readonly #used = new Map<string, number>();
+	/** Places whose rosters changed and haven't been sent. Empty between calls. */
+	readonly #dirty = new Set<string>();
 
 	constructor(options: HubOptions) {
 		this.#sockets = options.sockets;
@@ -89,27 +130,32 @@ export class Hub {
 		this.#used.set(ticket.nonce, ticket.expiresAt);
 		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- the ticket route signs the user's role level
 		const role = ticket.role as RoleLevel;
-		return { v: 1, userId: ticket.userId, role, connectedAt: now, topics: [] };
+		return {
+			v: 2,
+			userId: ticket.userId,
+			role,
+			connectedAt: now,
+			topics: [],
+			name: capUserName(ticket.name ?? ""),
+			clientId: ticket.clientId && ticket.clientId.length <= 64 ? ticket.clientId : null,
+			here: null,
+		};
 	}
 
-	/** A text frame from a tab. Sets the socket's topics to the ones it may subscribe to. */
+	/**
+	 * A text frame from a tab: the topics it shows, which become the ones it may subscribe to and
+	 * get it every roster under them, or the place it is at.
+	 */
 	receive(socket: HubSocket, message: string): void {
+		const now = this.#now();
 		if (new TextEncoder().encode(message).byteLength > MAX_HUB_MESSAGE_BYTES) {
-			socket.close(MESSAGE_TOO_BIG, "The message is too big");
-			return;
+			this.#close(socket, MESSAGE_TOO_BIG, "The message is too big");
+		} else if (this.#live(socket, now)) {
+			const frame = readClientFrame(message);
+			if (frame?.t === "topics") this.#subscribe(socket, frame.topics, now);
+			else if (frame?.t === "here") this.#announce(socket, frame);
 		}
-		if (!this.#live(socket, this.#now())) return;
-		let frame: unknown;
-		try {
-			frame = JSON.parse(message);
-		} catch {
-			return;
-		}
-		if (!isTopicsFrame(frame)) return;
-		const topics = [...new Set(frame.topics.filter((topic) => typeof topic === "string"))]
-			.filter((topic) => maySubscribe(socket.state.role, topic))
-			.slice(0, MAX_HUB_TOPICS);
-		socket.save({ ...socket.state, topics });
+		this.#sendRosters(now);
 	}
 
 	/**
@@ -125,7 +171,7 @@ export class Hub {
 			const topic = parseTopic(change.topic);
 			if (topic?.namespace !== "users" || topic.keys.length !== 1) continue;
 			for (const socket of this.#sockets.ofUser(topic.keys[0])) {
-				socket.close(CLOSE_CODES.rejoin, "The user's access changed");
+				this.#close(socket, CLOSE_CODES.rejoin, "The user's access changed");
 				closed.add(socket);
 			}
 		}
@@ -141,44 +187,174 @@ export class Hub {
 			const frame: HubFrame = { t: "changes", changes: matching };
 			socket.send(JSON.stringify(frame));
 		}
+		this.#sendRosters(now);
+	}
+
+	/** A socket closed from the other side, which the host has already left out of its sockets. */
+	left(state: HubSocketState): void {
+		if (!state.here) return;
+		this.#dirty.add(state.here.topic);
+		this.#sendRosters(this.#now());
+	}
+
+	#subscribe(socket: HubSocket, requested: string[], now: number): void {
+		const topics = [...new Set(requested)]
+			.filter((topic) => maySubscribe(socket.state.role, topic))
+			.slice(0, MAX_HUB_TOPICS);
+		while (topics.length > 0 && !fits({ ...socket.state, topics })) topics.pop();
+		socket.save({ ...socket.state, topics });
+		const places: PresencePlace[] = [];
+		for (const [topic, people] of this.#rosters(now, (place) => sees(socket.state, place))) {
+			places.push({ topic, people });
+		}
+		const frame: HubFrame = { t: "presence", places, all: true };
+		socket.send(JSON.stringify(frame));
+	}
+
+	#announce(socket: HubSocket, frame: { topic: string | null; activity: Activity }): void {
+		const { state } = socket;
+		if (!state.name || !state.clientId) return;
+		if (frame.topic !== null && !maySubscribe(state.role, frame.topic)) return;
+		const here = frame.topic === null ? null : { topic: frame.topic, activity: frame.activity };
+		if (here?.topic === state.here?.topic && here?.activity === state.here?.activity) return;
+		const next = { ...state, here };
+		if (!fits(next)) return;
+		socket.save(next);
+		if (state.here) this.#dirty.add(state.here.topic);
+		if (here) this.#dirty.add(here.topic);
+	}
+
+	/** Sends each changed roster to the sockets that may see it, in one frame each. */
+	#sendRosters(now: number): void {
+		while (this.#dirty.size > 0) {
+			const changed = new Set(this.#dirty);
+			this.#dirty.clear();
+			// Closing a stale socket here marks its place for the next round.
+			const rosters = this.#rosters(now, (topic) => changed.has(topic));
+			const places = Array.from(changed, (topic) => ({ topic, people: rosters.get(topic) ?? [] }));
+			for (const socket of this.#sockets.all()) {
+				const visible = places.filter((place) => sees(socket.state, place.topic));
+				if (visible.length === 0) continue;
+				const frame: HubFrame = { t: "presence", places: visible };
+				socket.send(JSON.stringify(frame));
+			}
+		}
+	}
+
+	/** Who is at each place `includes` picks. Closes the stale sockets it finds there. */
+	#rosters(now: number, includes: (topic: string) => boolean): Map<string, PresenceEntry[]> {
+		const rosters = new Map<string, PresenceEntry[]>();
+		for (const socket of this.#sockets.all()) {
+			const { here, userId, name, clientId } = socket.state;
+			if (!here || !clientId || !includes(here.topic) || !this.#live(socket, now)) continue;
+			let people = rosters.get(here.topic);
+			if (!people) rosters.set(here.topic, (people = []));
+			people.push({ userId, name, clientId, activity: here.activity });
+		}
+		return rosters;
 	}
 
 	/** Closes a socket past its lifetime or gone silent. */
 	#live(socket: HubSocket, now: number): boolean {
 		if (now - socket.state.connectedAt >= CONNECTION_LIFETIME_MS) {
-			socket.close(CLOSE_CODES.rejoin, "The connection reached its lifetime");
+			this.#close(socket, CLOSE_CODES.rejoin, "The connection reached its lifetime");
 			return false;
 		}
 		if (now - socket.seenAt() > SILENT_HUB_SOCKET_MS) {
-			socket.close(GOING_AWAY, "The connection went silent");
+			this.#close(socket, GOING_AWAY, "The connection went silent");
 			return false;
 		}
 		return true;
 	}
+
+	#close(socket: HubSocket, code: number, reason: string): void {
+		socket.close(code, reason);
+		if (socket.state.here) this.#dirty.add(socket.state.here.topic);
+	}
 }
 
-/** Whether an attachment is a socket state this code reads. */
-export function isHubSocketState(value: unknown): value is HubSocketState {
-	if (typeof value !== "object" || value === null) return false;
-	const state = value as Partial<HubSocketState>;
+/** Whether a socket may see the roster of `topic`: it shows the topic or one above it, and may. */
+function sees(state: HubSocketState, topic: string): boolean {
 	return (
-		state.v === 1 &&
-		typeof state.userId === "string" &&
-		typeof state.role === "number" &&
-		typeof state.connectedAt === "number" &&
-		Array.isArray(state.topics)
+		topicAndAncestors(topic).some((reach) => state.topics.includes(reach)) &&
+		maySubscribe(state.role, topic)
 	);
 }
 
-function isTopicsFrame(frame: unknown): frame is { t: "topics"; topics: unknown[] } {
+/** Whether a state stays under what a Durable Object keeps per socket. */
+function fits(state: HubSocketState): boolean {
+	const json = JSON.stringify(state);
+	// V8 stores a string with any character past Latin-1 at two bytes per code unit.
+	return json.length * (WIDE_CHARACTER.test(json) ? 2 : 1) <= MAX_STATE_BYTES;
+}
+
+/**
+ * The socket state an attachment holds, or null when this code can't read it. A state from before
+ * presence reads as one that can't announce.
+ */
+export function readHubSocketState(value: unknown): HubSocketState | null {
+	if (typeof value !== "object" || value === null) return null;
+	const state = value as Partial<Omit<HubSocketState, "v">> & { v?: unknown };
+	if (
+		(state.v !== 1 && state.v !== 2) ||
+		typeof state.userId !== "string" ||
+		typeof state.role !== "number" ||
+		typeof state.connectedAt !== "number" ||
+		!Array.isArray(state.topics)
+	) {
+		return null;
+	}
+	const { userId, role, connectedAt, topics } = state;
+	if (state.v === 1) {
+		return { v: 2, userId, role, connectedAt, topics, name: "", clientId: null, here: null };
+	}
+	if (typeof state.name !== "string") return null;
+	const clientId = typeof state.clientId === "string" ? state.clientId : null;
+	const here = isPlace(state.here) ? state.here : null;
+	return { v: 2, userId, role, connectedAt, topics, name: state.name, clientId, here };
+}
+
+function isPlace(value: unknown): value is Place {
 	return (
-		typeof frame === "object" &&
-		frame !== null &&
-		"t" in frame &&
-		frame.t === "topics" &&
-		"topics" in frame &&
-		Array.isArray(frame.topics)
+		typeof value === "object" &&
+		value !== null &&
+		"topic" in value &&
+		typeof value.topic === "string" &&
+		"activity" in value &&
+		typeof value.activity === "string" &&
+		ACTIVITIES.has(value.activity)
 	);
+}
+
+/** The frame a tab sent, or null when it isn't one this hub reads. */
+function readClientFrame(
+	message: string,
+):
+	| { t: "topics"; topics: string[] }
+	| { t: "here"; topic: string | null; activity: Activity }
+	| null {
+	let frame: unknown;
+	try {
+		frame = JSON.parse(message);
+	} catch {
+		return null;
+	}
+	if (typeof frame !== "object" || frame === null || !("t" in frame)) return null;
+	if (frame.t === "topics" && "topics" in frame && Array.isArray(frame.topics)) {
+		const topics = frame.topics.filter((topic): topic is string => typeof topic === "string");
+		return { t: "topics", topics };
+	}
+	if (frame.t === "here" && "topic" in frame) {
+		const { topic } = frame;
+		if (topic !== null && typeof topic !== "string") return null;
+		const activity = "activity" in frame ? frame.activity : undefined;
+		if (activity !== undefined && (typeof activity !== "string" || !ACTIVITIES.has(activity))) {
+			return null;
+		}
+		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- checked against ACTIVITIES
+		return { t: "here", topic, activity: (activity as Activity | undefined) ?? "viewing" };
+	}
+	return null;
 }
 
 function isOp(op: unknown): op is ChangeOp {

@@ -76,12 +76,17 @@ export function clearChangePublisher(publisher: ChangePublisher): void {
 	if (current.publisher === publisher) current.publisher = null;
 }
 
+/** Whether a `X-EmDash-Client` header holds a tab ID. */
+export function isClientId(value: string | null): value is string {
+	return value !== null && CLIENT_ID.test(value);
+}
+
 /**
  * Runs `fn` with changes it publishes marked as made by the tab `clientId`, which is the
  * `X-EmDash-Client` header. A missing or malformed ID marks nothing.
  */
 export function withChangeOrigin<T>(clientId: string | null, fn: () => T): T {
-	if (clientId === null || !CLIENT_ID.test(clientId)) return fn();
+	if (!isClientId(clientId)) return fn();
 	return state().origins.run(clientId, fn);
 }
 

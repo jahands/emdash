@@ -27,7 +27,7 @@ const NAMESPACES: Record<string, Namespace> = {
 	users: { permission: "users:read", minKeys: 0, maxKeys: 1 },
 	redirects: { permission: "redirects:read", minKeys: 0, maxKeys: 0 },
 	bylines: { permission: "bylines:read", minKeys: 0, maxKeys: 0 },
-	sections: { permission: "sections:read", minKeys: 0, maxKeys: 0 },
+	sections: { permission: "sections:read", minKeys: 0, maxKeys: 1 },
 	plugins: { permission: "plugins:read", minKeys: 0, maxKeys: 0 },
 };
 

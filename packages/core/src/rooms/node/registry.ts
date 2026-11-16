@@ -151,7 +151,10 @@ export class RoomRegistry implements RuntimeRoomHost {
 		sockets.add(socket);
 		return {
 			receive: (message) => this.#hub.receive(socket, message),
-			disconnect: () => sockets.delete(socket),
+			disconnect: () => {
+				// A socket the hub closed is already out, and already off its roster.
+				if (sockets.delete(socket)) this.#hub.left(current);
+			},
 		};
 	}
 

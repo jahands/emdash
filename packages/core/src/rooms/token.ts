@@ -23,6 +23,10 @@ export interface RoomTokenClaims {
 	expiresAt: number;
 	/** The user's role level. Hub tickets carry it; room tokens don't. */
 	role?: number;
+	/** The name the hub shows others. Hub tickets carry it; room tokens don't. */
+	name?: string;
+	/** The admin tab the hub ticket is for. */
+	clientId?: string;
 }
 
 /** The token key for a site's preview secret, separate from the keys other tokens use. */
@@ -39,6 +43,8 @@ export async function signRoomToken(secret: string, claims: RoomTokenClaims): Pr
 				n: claims.nonce,
 				e: claims.expiresAt,
 				l: claims.role,
+				m: claims.name,
+				c: claims.clientId,
 			}),
 		),
 	);
@@ -69,6 +75,10 @@ export function readRoomToken(token: string): RoomTokenClaims | null {
 	const claims: RoomTokenClaims = { roomId: r, userId: u, nonce: n, expiresAt: e };
 	const l = "l" in parsed ? parsed.l : undefined;
 	if (typeof l === "number" && Number.isInteger(l)) claims.role = l;
+	const m = "m" in parsed ? parsed.m : undefined;
+	if (typeof m === "string") claims.name = m;
+	const c = "c" in parsed ? parsed.c : undefined;
+	if (typeof c === "string") claims.clientId = c;
 	return claims;
 }
 

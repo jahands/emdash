@@ -18,6 +18,18 @@ export const MAX_ROOM_CONNECTIONS = 25;
  * attachment, which can't pass 16 KiB serialized.
  */
 export const MAX_USER_NAME_LENGTH = 256;
+
+/** The name cut to `MAX_USER_NAME_LENGTH` code points. */
+export function capUserName(name: string): string {
+	if (name.length <= MAX_USER_NAME_LENGTH) return name;
+	let end = 0;
+	let count = 0;
+	for (const char of name) {
+		if (count++ === MAX_USER_NAME_LENGTH) break;
+		end += char.length;
+	}
+	return name.slice(0, end);
+}
 export const MAX_USER_CONNECTIONS = 5;
 /** A token is single use, and valid this long. */
 export const TOKEN_LIFETIME_MS = MINUTE;

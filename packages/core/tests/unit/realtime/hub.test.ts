@@ -4,16 +4,20 @@ import { describe, expect, it } from "vitest";
 import {
 	Hub,
 	SILENT_HUB_SOCKET_MS,
+	readHubSocketState,
 	type HubSocket,
 	type HubSocketState,
+	type PresencePlace,
 } from "../../../src/realtime/hub.js";
 import { CONNECTION_LIFETIME_MS } from "../../../src/rooms/limits.js";
 import type { RoomTokenClaims } from "../../../src/rooms/token.js";
 import { HUB_NAME } from "../../../src/rooms/types.js";
 import { CLOSE_CODES } from "../../../src/rooms/types.js";
 
+type Frame = { t: string; [key: string]: unknown };
+
 class FakeSocket implements HubSocket {
-	readonly frames: unknown[] = [];
+	readonly frames: Frame[] = [];
 	closed: { code: number; reason: string } | null = null;
 	seen: number;
 
@@ -40,6 +44,31 @@ class FakeSocket implements HubSocket {
 	seenAt() {
 		return this.seen;
 	}
+
+	changes() {
+		return this.frames.filter((frame) => frame.t === "changes");
+	}
+
+	presence() {
+		return this.frames.filter((frame) => frame.t === "presence");
+	}
+
+	/** Who this tab knows is at each place, from the presence frames it got. */
+	roster(): Record<string, string[]> {
+		const known = new Map<string, string[]>();
+		for (const frame of this.presence() as Array<{ places: PresencePlace[]; all?: true }>) {
+			if (frame.all) known.clear();
+			for (const { topic, people } of frame.places) {
+				if (people.length === 0) known.delete(topic);
+				else
+					known.set(
+						topic,
+						people.map((person) => `${person.name}:${person.activity}`),
+					);
+			}
+		}
+		return Object.fromEntries(known);
+	}
 }
 
 function setup() {
@@ -59,6 +88,8 @@ function setup() {
 		nonce: `nonce-${++nonces}`,
 		expiresAt: now + 30_000,
 		role: Role.EDITOR,
+		name: overrides.userId ? overrides.userId[0]!.toUpperCase() + overrides.userId.slice(1) : "Ana",
+		clientId: `tab-${nonces}`,
 		...overrides,
 	});
 	const connect = (overrides: Partial<RoomTokenClaims> = {}, topics: string[] = []) => {
@@ -69,10 +100,19 @@ function setup() {
 		if (topics.length > 0) hub.receive(socket, JSON.stringify({ t: "topics", topics }));
 		return socket;
 	};
+	const here = (socket: FakeSocket, topic: string | null, activity?: string) =>
+		hub.receive(socket, JSON.stringify({ t: "here", topic, activity }));
+	/** The host's side of a socket the tab closed. */
+	const hangUp = (socket: FakeSocket) => {
+		sockets.delete(socket);
+		hub.left(socket.state);
+	};
 	return {
 		hub,
 		ticket,
 		connect,
+		here,
+		hangUp,
 		advance(ms: number) {
 			now += ms;
 		},
@@ -85,7 +125,14 @@ describe("Hub", () => {
 			const { hub, ticket } = setup();
 			const used = ticket();
 
-			expect(hub.admit(used)).toMatchObject({ v: 1, userId: "ana", role: Role.EDITOR, topics: [] });
+			expect(hub.admit(used)).toMatchObject({
+				v: 2,
+				userId: "ana",
+				role: Role.EDITOR,
+				topics: [],
+				name: "Ana",
+				here: null,
+			});
 			expect(hub.admit(used)).toBeNull();
 		});
 
@@ -149,7 +196,7 @@ describe("Hub", () => {
 				{ topic: "content/posts/01B", op: "create" },
 			]);
 
-			expect(list.frames).toEqual([
+			expect(list.changes()).toEqual([
 				{
 					t: "changes",
 					changes: [
@@ -158,10 +205,10 @@ describe("Hub", () => {
 					],
 				},
 			]);
-			expect(entry.frames).toEqual([
+			expect(entry.changes()).toEqual([
 				{ t: "changes", changes: [{ topic: "content/posts/01A", op: "update", origin: "tab-1" }] },
 			]);
-			expect(other.frames).toEqual([]);
+			expect(other.changes()).toEqual([]);
 		});
 
 		it("drops changes it can't read and fields it doesn't know", () => {
@@ -175,7 +222,9 @@ describe("Hub", () => {
 			]);
 			hub.publish({ not: "a batch" });
 
-			expect(socket.frames).toEqual([{ t: "changes", changes: [{ topic: "menus", ids: ["m1"] }] }]);
+			expect(socket.changes()).toEqual([
+				{ t: "changes", changes: [{ topic: "menus", ids: ["m1"] }] },
+			]);
 		});
 
 		it("closes a user's sockets with rejoin when their access changes", () => {
@@ -188,9 +237,9 @@ describe("Hub", () => {
 
 			expect(ana.closed?.code).toBe(CLOSE_CODES.rejoin);
 			expect(anaAgain.closed?.code).toBe(CLOSE_CODES.rejoin);
-			expect(ana.frames).toEqual([]);
+			expect(ana.changes()).toEqual([]);
 			expect(admin.closed).toBeNull();
-			expect(admin.frames).toEqual([
+			expect(admin.changes()).toEqual([
 				{ t: "changes", changes: [{ topic: "users/ana", op: "update" }] },
 			]);
 		});
@@ -208,9 +257,202 @@ describe("Hub", () => {
 
 			expect(old.closed?.code).toBe(CLOSE_CODES.rejoin);
 			expect(silent.closed?.code).toBe(1001);
-			expect(fresh.frames).toHaveLength(1);
-			expect(old.frames).toEqual([]);
-			expect(silent.frames).toEqual([]);
+			expect(fresh.changes()).toHaveLength(1);
+			expect(old.changes()).toEqual([]);
+			expect(silent.changes()).toEqual([]);
+		});
+	});
+
+	describe("presence", () => {
+		it("sends a tab's place to the subscribers of it and of the topics above it", () => {
+			const { connect, here } = setup();
+			const list = connect({ userId: "bo" }, ["content/posts"]);
+			const entry = connect({ userId: "cy" }, ["content/posts/01A"]);
+			const elsewhere = connect({ userId: "di" }, ["content/pages", "menus"]);
+			const ana = connect({}, ["content/posts/01A"]);
+
+			here(ana, "content/posts/01A", "editing");
+
+			expect(list.roster()).toEqual({ "content/posts/01A": ["Ana:editing"] });
+			expect(entry.roster()).toEqual({ "content/posts/01A": ["Ana:editing"] });
+			expect(elsewhere.presence()).toEqual([{ t: "presence", places: [], all: true }]);
+			expect(list.presence().at(-1)).toEqual({
+				t: "presence",
+				places: [
+					{
+						topic: "content/posts/01A",
+						people: [
+							{ userId: "ana", name: "Ana", clientId: ana.state.clientId, activity: "editing" },
+						],
+					},
+				],
+			});
+		});
+
+		it("gives a new subscriber everyone already under its topics", () => {
+			const { connect, here } = setup();
+			here(connect({}, []), "content/posts/01A", "editing");
+			here(connect({ userId: "bo" }, []), "menus/main");
+
+			const list = connect({ userId: "cy" }, ["content/posts", "menus/main"]);
+
+			expect(list.presence()).toHaveLength(1);
+			expect(list.roster()).toEqual({
+				"content/posts/01A": ["Ana:editing"],
+				"menus/main": ["Bo:viewing"],
+			});
+		});
+
+		it("moves a tab between places and takes it off when it says it's nowhere", () => {
+			const { connect, here } = setup();
+			const list = connect({ userId: "bo" }, ["content/posts"]);
+			const ana = connect();
+
+			here(ana, "content/posts/01A", "editing");
+			here(ana, "content/posts/01B", "viewing");
+			expect(list.roster()).toEqual({ "content/posts/01B": ["Ana:viewing"] });
+			expect(list.presence().at(-1)).toMatchObject({
+				places: [
+					{ topic: "content/posts/01A", people: [] },
+					{ topic: "content/posts/01B", people: [{ name: "Ana" }] },
+				],
+			});
+
+			here(ana, null);
+			expect(list.roster()).toEqual({});
+			expect(ana.state.here).toBeNull();
+		});
+
+		it("sends nothing when a tab repeats its place", () => {
+			const { connect, here } = setup();
+			const list = connect({ userId: "bo" }, ["menus"]);
+			const ana = connect();
+			here(ana, "menus/main");
+			const sent = list.frames.length;
+
+			here(ana, "menus/main", "viewing");
+
+			expect(list.frames).toHaveLength(sent);
+		});
+
+		it("takes a tab off its place's roster when its socket closes", () => {
+			const { connect, here, hangUp } = setup();
+			const list = connect({ userId: "bo" }, ["menus"]);
+			const ana = connect();
+			const anaAgain = connect();
+			here(ana, "menus/main", "editing");
+			here(anaAgain, "menus/main");
+			expect(list.roster()).toEqual({ "menus/main": ["Ana:editing", "Ana:viewing"] });
+
+			hangUp(ana);
+
+			expect(list.roster()).toEqual({ "menus/main": ["Ana:viewing"] });
+		});
+
+		it("takes a tab off when the hub closes its socket", () => {
+			const { hub, connect, here, advance } = setup();
+			const ana = connect();
+			here(ana, "menus/main");
+			advance(CONNECTION_LIFETIME_MS - 1);
+			ana.seen = ana.state.connectedAt + CONNECTION_LIFETIME_MS - 1;
+			const list = connect({ userId: "bo" }, ["menus"]);
+			expect(list.roster()).toEqual({ "menus/main": ["Ana:viewing"] });
+			advance(1);
+			list.seen = list.state.connectedAt + 1;
+
+			hub.publish([{ topic: "menus" }]);
+
+			expect(ana.closed?.code).toBe(CLOSE_CODES.rejoin);
+			expect(list.roster()).toEqual({});
+		});
+
+		it("leaves out a silent tab that is still at a place", () => {
+			const { connect, here, advance } = setup();
+			here(connect(), "menus/main");
+			advance(SILENT_HUB_SOCKET_MS + 1);
+
+			const list = connect({ userId: "bo" }, ["menus"]);
+
+			expect(list.roster()).toEqual({});
+		});
+
+		it("shows a place only to sockets whose role may subscribe to it", () => {
+			const { connect, here } = setup();
+			const author = connect({ userId: "bo", role: Role.AUTHOR }, ["comments", "users"]);
+			const admin = connect({ userId: "admin", role: Role.ADMIN }, ["comments", "users"]);
+			const editor = connect({ role: Role.EDITOR });
+
+			here(editor, "comments");
+			here(editor, "users/01USER");
+
+			expect(author.state.topics).toEqual([]);
+			expect(author.roster()).toEqual({});
+			// An editor can't see users, so they can't announce a place there either.
+			expect(admin.roster()).toEqual({ comments: ["Ana:viewing"] });
+			expect(editor.state.here).toEqual({ topic: "comments", activity: "viewing" });
+		});
+
+		it("rechecks the receiver's role when a roster goes out", () => {
+			const { connect, here } = setup();
+			const author = connect({ userId: "bo", role: Role.AUTHOR }, ["comments"]);
+			author.state = { ...author.state, topics: ["comments"] };
+
+			here(connect({ role: Role.ADMIN }), "comments");
+
+			expect(author.presence().at(-1)).toEqual({ t: "presence", places: [], all: true });
+		});
+
+		it("ignores a place from a socket whose ticket has no name or tab", () => {
+			const { connect, here } = setup();
+			const list = connect({ userId: "bo" }, ["menus"]);
+			const nameless = connect({ name: undefined });
+			const tabless = connect({ userId: "cy", clientId: undefined });
+
+			here(nameless, "menus/main");
+			here(tabless, "menus/main");
+			here(connect({ userId: "di" }), "menus/main", "dancing");
+
+			expect(list.roster()).toEqual({});
+		});
+
+		it("keeps a socket's state under what an attachment holds", () => {
+			const { connect } = setup();
+
+			const socket = connect(
+				{},
+				Array.from({ length: 32 }, (_, i) => `content/c${i}${"x".repeat(110)}/${"界".repeat(128)}`),
+			);
+
+			expect(socket.state.topics.length).toBeGreaterThan(0);
+			expect(socket.state.topics.length).toBeLessThan(32);
+		});
+	});
+
+	describe("readHubSocketState", () => {
+		it("reads a state from before presence as one that can't announce", () => {
+			expect(
+				readHubSocketState({
+					v: 1,
+					userId: "ana",
+					role: Role.EDITOR,
+					connectedAt: 1,
+					topics: ["menus"],
+				}),
+			).toEqual({
+				v: 2,
+				userId: "ana",
+				role: Role.EDITOR,
+				connectedAt: 1,
+				topics: ["menus"],
+				name: "",
+				clientId: null,
+				here: null,
+			});
+		});
+
+		it("refuses a state from a newer hub or one it can't read", () => {
+			expect(readHubSocketState({ v: 3, userId: "ana" })).toBeNull();
+			expect(readHubSocketState(null)).toBeNull();
 		});
 	});
 });

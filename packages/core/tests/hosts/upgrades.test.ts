@@ -9,6 +9,10 @@ import { useRoomHost } from "./room-host.js";
 
 const NATIVE_CALLBACK = "shouldUpgradeCallback" in serve();
 
+async function nextFrame(socket: { next(): Promise<Uint8Array> }): Promise<unknown> {
+	return JSON.parse(new TextDecoder().decode(await socket.next()));
+}
+
 describe("room upgrades from the site's server", () => {
 	const host = useRoomHost();
 
@@ -52,15 +56,40 @@ describe("room upgrades from the site's server", () => {
 		socket.ws.send("ping");
 		expect(new TextDecoder().decode(await socket.next())).toBe("pong");
 		socket.ws.send(JSON.stringify({ t: "topics", topics: ["content/posts"] }));
-		socket.ws.send("ping");
-		await socket.next();
+		expect(await nextFrame(socket)).toEqual({ t: "presence", places: [], all: true });
 		await host.publish([{ topic: "content/posts/01A", op: "update" }]);
 
-		expect(JSON.parse(new TextDecoder().decode(await socket.next()))).toEqual({
+		expect(await nextFrame(socket)).toEqual({
 			t: "changes",
 			changes: [{ topic: "content/posts/01A", op: "update" }],
 		});
 		socket.ws.close();
+	});
+
+	it("takes a tab off its place's roster when its realtime socket closes", async () => {
+		const { port } = await host.attached();
+		const ana = await openSocket(host.hubUrl(port, await host.ticket("ana")));
+		const ben = await openSocket(host.hubUrl(port, await host.ticket("ben")));
+		ben.ws.send(JSON.stringify({ t: "topics", topics: ["menus"] }));
+		await nextFrame(ben);
+		ana.ws.send(JSON.stringify({ t: "here", topic: "menus/main", activity: "editing" }));
+		expect(await nextFrame(ben)).toEqual({
+			t: "presence",
+			places: [
+				{
+					topic: "menus/main",
+					people: [{ userId: "ana", name: "Ana", clientId: "tab-ana", activity: "editing" }],
+				},
+			],
+		});
+
+		ana.ws.close();
+
+		expect(await nextFrame(ben)).toEqual({
+			t: "presence",
+			places: [{ topic: "menus/main", people: [] }],
+		});
+		ben.ws.close();
 	});
 
 	it("closes a realtime socket with busy for a room's token or a used ticket", async () => {
