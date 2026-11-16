@@ -303,6 +303,11 @@ It uses single-editor mode when:
 After a browser's first three co-editing connections fail, it uses single-editor mode for every
 entry until the browser session ends.
 
+On a site with co-editing, an entry open in single-editor mode refreshes when it changes somewhere
+else, such as through the REST API or a scheduled publish. If you have unsaved edits, the editor
+keeps them and shows **This changed somewhere else**. Select **Load new version** to replace your
+edits with the saved entry.
+
 When a tab in single-editor mode opens an entry that others are co-editing, EmDash shows **People
 are editing this entry together**. Select **Join** to edit with them, or **Open read-only**. When the
 browser can't open co-editing connections, **Join** isn't offered, and the entry opens read-only.

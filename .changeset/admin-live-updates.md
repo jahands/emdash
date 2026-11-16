@@ -4,7 +4,9 @@
 "@emdash-cms/cloudflare": minor
 ---
 
-Adds live updates to the admin on sites with `coEditing: true`. Content lists, the comments inbox and the menus list refresh within a few seconds when someone changes them in another tab, through the REST API, MCP, a plugin, the scheduler or a co-edited entry's autosave. A tab doesn't refetch for its own changes, and new public comments still appear on the next refresh, since only moderation sends updates.
+Adds live updates to the admin on sites with `coEditing: true`. Screens refresh within a few seconds when someone changes what they show in another tab, through the REST API, MCP, a plugin, the scheduler or a co-edited entry's autosave. This covers content lists, entries open in single-editor mode, the comments inbox, menus, widgets, taxonomies and their terms, bylines, sections, the media library, redirects, settings, the content types list, users and plugins. A tab doesn't refetch for its own changes, and new public comments still appear on the next refresh, since only moderation sends updates.
+
+A form with unsaved edits keeps them when what it edits changes elsewhere. It shows **This changed somewhere else** with **Load new version**, which replaces the edits with the saved version. Entries in single-editor mode, settings, sections, menu items and widgets work this way. An entry open in a co-editing room stays current through the room.
 
 Each admin tab holds one WebSocket on `/_emdash/api/realtime`, with a short-lived ticket from `POST /_emdash/api/realtime`. Sites without co-editing see no change.
 
