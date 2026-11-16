@@ -31,6 +31,8 @@ declare module "virtual:emdash/room-engine" {
 	export const loadRoomEngine:
 		| (() => Promise<typeof import("emdash/internal/co-editing/room")>)
 		| null;
+	/** Imports the realtime hub, or null when co-editing is off. */
+	export const loadHubEngine: (() => Promise<typeof import("emdash/internal/realtime/hub")>) | null;
 }
 
 declare module "cloudflare:email" {

@@ -5,8 +5,8 @@
  */
 
 import { env } from "cloudflare:workers";
-import { RoomSaveError, type RuntimeRoomHost } from "emdash/internal/co-editing";
-import { setRoomNotifier } from "emdash/internal/co-editing/notifications";
+import { HUB_NAME, RoomSaveError, type RuntimeRoomHost } from "emdash/internal/co-editing";
+import { setChangePublisher, setRoomNotifier } from "emdash/internal/co-editing/notifications";
 
 import { roomsBinding } from "./binding.js";
 
@@ -15,6 +15,7 @@ export function createRoomHost(): RuntimeRoomHost | null {
 	const rooms = roomsBinding(env);
 	if (!rooms) return null;
 	const room = (roomId: string) => rooms.getByName(roomId);
+	const hub = { publish: (changes: unknown[]) => rooms.getByName(HUB_NAME).publish(changes) };
 	const host: RuntimeRoomHost = {
 		issueToken: (roomId, claims) => room(roomId).issueToken(claims),
 		isOpen: (roomId) => room(roomId).isOpen(),
@@ -29,11 +30,13 @@ export function createRoomHost(): RuntimeRoomHost | null {
 		release: (roomId, hold, options) => room(roomId).release(hold, options),
 		notify: (roomId, outside) => room(roomId).notify(outside),
 		forgetTokens: (roomId, userId) => room(roomId).forgetTokens(userId),
+		publish: hub.publish,
 		// Alarms drop rooms, and Workers sends no shutdown signal.
 		expireIdle: async () => {},
 		shutdown: async () => {},
 		activate() {
 			setRoomNotifier(host);
+			setChangePublisher(hub);
 		},
 	};
 	return host;

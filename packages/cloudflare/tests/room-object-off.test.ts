@@ -17,7 +17,7 @@ vi.mock("cloudflare:workers", () => ({
 	},
 	exports: {},
 }));
-vi.mock("virtual:emdash/room-engine", () => ({ loadRoomEngine: null }));
+vi.mock("virtual:emdash/room-engine", () => ({ loadRoomEngine: null, loadHubEngine: null }));
 vi.mock("../src/rooms/store.js", () => ({
 	DurableObjectRoomStore: class {
 		holdsState() {

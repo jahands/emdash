@@ -1,10 +1,16 @@
-import { CLOSE_CODES, roomIdFromPath, verifyRoomToken } from "emdash/internal/co-editing";
+import {
+	CLOSE_CODES,
+	HUB_NAME,
+	isRealtimePath,
+	roomIdFromPath,
+	verifyRoomToken,
+} from "emdash/internal/co-editing";
 
 import { roomsBinding } from "./binding.js";
 
 /**
- * Forwards a room's WebSocket upgrade to its Durable Object, or returns null for any other
- * request. A Worker with its own `fetch` calls this first.
+ * Forwards a room's WebSocket upgrade to its Durable Object, and a realtime hub upgrade to the
+ * hub's, or returns null for any other request. A Worker with its own `fetch` calls this first.
  */
 export function handleRoomUpgrade(request: Request, env: unknown): Promise<Response> | null {
 	if (request.method !== "GET" || request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
@@ -13,7 +19,7 @@ export function handleRoomUpgrade(request: Request, env: unknown): Promise<Respo
 	const url = new URL(request.url);
 	const token = url.searchParams.get("token");
 	if (token === null) return null;
-	const roomId = roomIdFromPath(url.pathname);
+	const roomId = isRealtimePath(url.pathname) ? HUB_NAME : roomIdFromPath(url.pathname);
 	const rooms = roomsBinding(env);
 	if (!roomId || !rooms) return null;
 	return forward(request, rooms, roomId, token);
@@ -25,7 +31,8 @@ async function forward(
 	roomId: string,
 	token: string,
 ): Promise<Response> {
-	// Any name creates its Durable Object, so only a token signed for this room reaches one.
+	// Any name creates its Durable Object, so only a token signed for this room, or a ticket
+	// signed for the hub, reaches one.
 	let verified = false;
 	try {
 		verified = (await verifyRoomToken(token, roomId, tokenSecret)) !== null;
