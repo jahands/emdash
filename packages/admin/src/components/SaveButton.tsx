@@ -72,7 +72,7 @@ export const SaveButton = forwardRef<HTMLButtonElement, SaveButtonProps>(functio
 			setSlowSave(false);
 			return;
 		}
-		const timer = setTimeout(() => setSlowSave(true), SLOW_AUTOMATIC_SAVE_MS);
+		const timer = setTimeout(setSlowSave, SLOW_AUTOMATIC_SAVE_MS, true);
 		return () => clearTimeout(timer);
 	}, [automatic, isBusy]);
 	const activeState: SaveState = sync

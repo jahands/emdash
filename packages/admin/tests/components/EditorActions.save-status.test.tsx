@@ -29,7 +29,9 @@ describe("EditorActions save status", () => {
 		const shown = async (wait = 300) => {
 			// The longer wait outlasts the delay before a slow save shows Saving.
 			await new Promise((resolve) => setTimeout(resolve, wait));
-			const button = screen.container.querySelector("[data-save-button-labels]")!.closest("button")!;
+			const button = screen.container
+				.querySelector("[data-save-button-labels]")!
+				.closest("button")!;
 			const style = getComputedStyle(button);
 			return {
 				label: button.querySelector("[data-save-button-state].visible")?.textContent,
