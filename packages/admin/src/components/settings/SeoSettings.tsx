@@ -25,6 +25,8 @@ import {
 	type MediaItem,
 	type SiteSettingsUpdate,
 } from "../../lib/api";
+import { useLiveQueries } from "../../lib/realtime/LiveSyncProvider.js";
+import { ChangedElsewhereNotice } from "../ChangedElsewhereNotice.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { SaveButton } from "../SaveButton.js";
 import {
@@ -77,6 +79,7 @@ export function SeoSettings() {
 		() => seoSettingsSnapshot(formData) !== seoSettingsSnapshot(savedFormData),
 		[formData, savedFormData],
 	);
+	const live = useLiveQueries({ queryKeys: [["settings"]], dirty: isDirty });
 
 	const saveMutation = useMutation({
 		mutationFn: (data: SiteSettingsUpdate) => updateSettings(data),
@@ -163,6 +166,7 @@ export function SeoSettings() {
 			}
 		>
 			<form id="seo-settings-form" onSubmit={handleSubmit} className="grid gap-8">
+				{live.changedElsewhere && <ChangedElsewhereNotice onLoad={live.loadLatest} />}
 				<SettingsSection title={t`Search Engine Optimization`}>
 					<SettingRow>
 						<SettingsInput

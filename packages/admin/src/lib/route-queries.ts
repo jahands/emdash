@@ -9,7 +9,12 @@
  * `meta.live` names the realtime topics whose changes refetch a query.
  */
 
-import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
+import {
+	infiniteQueryOptions,
+	queryOptions,
+	type QueryClient,
+	type QueryKey,
+} from "@tanstack/react-query";
 
 import type { ContentListSort, ContentStatusFilter } from "../components/ContentList.js";
 // Screens imported these from the `./api.js` barrel, which their tests mock.
@@ -37,6 +42,39 @@ import { fetchDashboardStats } from "./api/dashboard.js";
 import { fetchRedirects } from "./api/redirects.js";
 import { fetchTaxonomyDef, fetchTerms } from "./api/taxonomies.js";
 import type { PagedQuery } from "./use-paged-query.js";
+
+/**
+ * Topics for queries that several screens declare with the same key. A query takes `meta` from
+ * whichever of its observers rendered last, so these come from query defaults instead.
+ */
+const LIVE_QUERY_DEFAULTS: ReadonlyArray<readonly [QueryKey, string[]]> = [
+	// Collections, taxonomies, settings and plugins all shape the manifest.
+	[["manifest"], ["schema", "settings", "plugins"]],
+	[["schema"], ["schema"]],
+	[["collections"], ["schema"]],
+	[["relations"], ["schema"]],
+	[["byline-fields"], ["schema"]],
+	[["taxonomy-defs"], ["schema"]],
+	[["settings"], ["settings"]],
+	[["site-domain"], ["settings"]],
+	[["plugins"], ["plugins"]],
+	[["media"], ["media"]],
+	[["media-folder"], ["media"]],
+	[["media-folders"], ["media"]],
+	[["widget-areas"], ["widgets"]],
+	[["menu"], ["menus"]],
+	[["sections"], ["sections"]],
+	[["bylines"], ["bylines"]],
+	[["redirects", "list"], ["redirects"]],
+	[["users"], ["users"]],
+];
+
+/** Gives the admin's query client the topics of queries declared in several places. */
+export function setLiveQueryDefaults(queryClient: QueryClient): void {
+	for (const [queryKey, live] of LIVE_QUERY_DEFAULTS) {
+		queryClient.setQueryDefaults(queryKey, { meta: { live } });
+	}
+}
 
 export function dashboardStatsQueryOptions() {
 	return queryOptions({ queryKey: ["dashboard-stats"], queryFn: fetchDashboardStats });
@@ -211,6 +249,7 @@ export function taxonomyDefQueryOptions(name: string) {
 	return queryOptions({
 		queryKey: ["taxonomy-def", name],
 		queryFn: () => fetchTaxonomyDef(name),
+		meta: { live: [`taxonomies/${name}`] },
 	});
 }
 
@@ -222,6 +261,7 @@ export function taxonomyTermsQueryOptions(name: string, locale: string | undefin
 	return queryOptions({
 		queryKey: ["taxonomy-terms", name, locale, { includeCounts: true }],
 		queryFn: () => fetchTerms(name, { locale }),
+		meta: { live: [`taxonomies/${name}`] },
 	});
 }
 

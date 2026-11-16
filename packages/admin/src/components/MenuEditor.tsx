@@ -45,9 +45,11 @@ import {
 } from "../lib/api";
 import { fetchManifest } from "../lib/api/client.js";
 import { guardUnsavedInput, revealErrors, useSingleFlight } from "../lib/dialog-form.js";
+import { useLiveQueries } from "../lib/realtime/LiveSyncProvider.js";
 import { translationsLoadState } from "../lib/translations-load-state.js";
 import { isSafeHref } from "../lib/url.js";
 import { ArrowPrev } from "./ArrowIcons.js";
+import { ChangedElsewhereNotice } from "./ChangedElsewhereNotice.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { ContentPickerModal } from "./ContentPickerModal";
 import { DialogError, getMutationError } from "./DialogError.js";
@@ -295,6 +297,12 @@ export function MenuEditor() {
 					item.parentId === null || ids.has(item.parentId) ? item : { ...item, parentId: null },
 				),
 			);
+			// An item dialog without edits follows the item as it's now saved.
+			const latest = editingItem && menu.items.find((item) => item.id === editingItem.id);
+			if (latest && sameMenuItemValues(editValues, toMenuItemFormValues(editingItem))) {
+				setEditingItem(latest);
+				setEditValues(toMenuItemFormValues(latest));
+			}
 		}
 	}
 
@@ -439,6 +447,15 @@ export function MenuEditor() {
 	const editErrors = editSubmitted ? editProblems : {};
 	const editDirty =
 		editingItem !== null && !sameMenuItemValues(editValues, toMenuItemFormValues(editingItem));
+	const live = useLiveQueries({ queryKeys: [["menu", name]], dirty: editDirty });
+	const loadLatestItem = async () => {
+		await live.loadLatest();
+		const latest = queryClient
+			.getQueryData<MenuWithItems>(["menu", name, routeLocale ?? null])
+			?.items.find((item) => item.id === editingItem?.id);
+		if (latest) openEditItem(latest);
+		else setEditingItem(null);
+	};
 
 	const handleUpdateItem = (e: React.FormEvent<HTMLFormElement>) => {
 		e.preventDefault();
@@ -893,6 +910,7 @@ export function MenuEditor() {
 					<LayerDialog.Body>
 						{editingItem && (
 							<form id={editFormId} noValidate onSubmit={handleUpdateItem} className="grid gap-5">
+								{live.changedElsewhere && <ChangedElsewhereNotice onLoad={loadLatestItem} />}
 								<Input
 									label={t`Label`}
 									name="label"

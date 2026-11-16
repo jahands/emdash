@@ -28,6 +28,7 @@ import {
 import { AuthProviderProvider, type AuthProviders } from "./lib/auth-provider-context";
 import { PluginAdminProvider, type PluginAdmins } from "./lib/plugin-context";
 import { setRoutePrefetchFiles, type RoutePrefetchFiles } from "./lib/route-prefetch.js";
+import { setLiveQueryDefaults } from "./lib/route-queries.js";
 import { loadDateLocale } from "./locales/date-locale.js";
 import { LocaleDirectionProvider } from "./locales/index.js";
 import { KumoTranslationsProvider } from "./locales/KumoTranslationsProvider.js";
@@ -44,6 +45,7 @@ const queryClient = new QueryClient({
 });
 
 refetchCurrentUserOnForbidden(queryClient);
+setLiveQueryDefaults(queryClient);
 
 // Create the router with query client context
 const router = createAdminRouter(queryClient);

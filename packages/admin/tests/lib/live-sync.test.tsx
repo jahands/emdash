@@ -7,52 +7,8 @@ import { LiveSyncProvider } from "../../src/lib/realtime/LiveSyncProvider";
 import { TAB_ID } from "../../src/lib/realtime/tab-id";
 import { contentListQuery, menusQueryOptions } from "../../src/lib/route-queries";
 import { pagedQueryOptions } from "../../src/lib/use-paged-query";
+import { FakeSocket } from "../utils/fake-hub";
 import { createTestQueryClient } from "../utils/test-helpers";
-
-/** A hub socket the test plays the server's side of. */
-class FakeSocket extends EventTarget {
-	static readonly OPEN = 1;
-	static instances: FakeSocket[] = [];
-	readyState = 0;
-	readonly sent: string[] = [];
-
-	constructor(readonly url: string) {
-		super();
-		FakeSocket.instances.push(this);
-	}
-
-	send(data: string) {
-		this.sent.push(data);
-	}
-
-	close(code = 1000) {
-		this.drop(code);
-	}
-
-	open() {
-		this.readyState = FakeSocket.OPEN;
-		this.dispatchEvent(new Event("open"));
-	}
-
-	push(frame: unknown) {
-		this.dispatchEvent(new MessageEvent("message", { data: JSON.stringify(frame) }));
-	}
-
-	drop(code: number) {
-		if (this.readyState === 3) return;
-		this.readyState = 3;
-		this.dispatchEvent(new CloseEvent("close", { code }));
-	}
-
-	/** The topics the last frame subscribed to. */
-	topics(): string[] {
-		for (const data of this.sent.toReversed()) {
-			const frame = JSON.parse(data) as { t: string; topics?: string[] };
-			if (frame.t === "topics") return frame.topics ?? [];
-		}
-		return [];
-	}
-}
 
 const LIST = contentListQuery("posts", {
 	locale: undefined,

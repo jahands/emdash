@@ -21,8 +21,10 @@ import {
 	type UpdateSectionInput,
 } from "../lib/api";
 import { getPluginBlocks } from "../lib/pluginBlocks";
+import { useLiveQueries } from "../lib/realtime/LiveSyncProvider.js";
 import { cn, slugify } from "../lib/utils";
 import { ArrowPrev } from "./ArrowIcons.js";
+import { ChangedElsewhereNotice } from "./ChangedElsewhereNotice.js";
 import { GalleryDetailPanel } from "./editor/GalleryDetailPanel";
 import type { GalleryAttributes } from "./editor/GalleryNode";
 import { ImageDetailPanel, type ImageAttributes } from "./editor/ImageDetailPanel";
@@ -227,6 +229,8 @@ function SectionEditorForm({ section, isSaving, pluginBlocks, onSave }: SectionE
 		[title, sectionSlug, description, keywords, content],
 	);
 	const isDirty = currentData !== lastSavedData;
+	// A refetch gives the section a new `updatedAt`, which remounts this form with it.
+	const live = useLiveQueries({ queryKeys: [["sections", section.slug]], dirty: isDirty });
 
 	// Block sidebar state populated when a node view (e.g. ImageNode) requests
 	// sidebar space.
@@ -278,6 +282,8 @@ function SectionEditorForm({ section, isSaving, pluginBlocks, onSave }: SectionE
 					<bdi dir="ltr">{section.slug}</bdi>
 				</p>
 			</EditorHeader>
+
+			{live.changedElsewhere && <ChangedElsewhereNotice onLoad={live.loadLatest} />}
 
 			<div className="grid gap-6 xl:grid-cols-12">
 				{/* Main content */}

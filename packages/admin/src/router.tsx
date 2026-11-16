@@ -35,6 +35,7 @@ import type { OutsideValue } from "./co-editing/types.js";
 import { AdminFrameSkeleton, useRemoveBootLoader } from "./components/AdminFrameSkeleton.js";
 import { EMPTY_BYLINE_FILTER, type BylineFilterState } from "./components/BylineFilter";
 import type { BylineFormValues } from "./components/BylineFormDialog.js";
+import { ChangedElsewhereNotice } from "./components/ChangedElsewhereNotice.js";
 import type { SyncProblem } from "./components/co-editing/SyncStatus.js";
 import { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER } from "./components/content-list-options.js";
 import type { ReferenceEntryRow } from "./components/ContentEditor";
@@ -147,7 +148,7 @@ import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/conte
 import { describeContentValidationError } from "./lib/content-validation-errors";
 import { usePluginPage, type PluginAdmins } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
-import { LiveSyncProvider } from "./lib/realtime/LiveSyncProvider.js";
+import { LiveSyncProvider, useLiveQueries } from "./lib/realtime/LiveSyncProvider.js";
 import {
 	autosavedDraftKey,
 	lastAutosavedDrafts,
@@ -1276,8 +1277,10 @@ function ContentEditPage() {
 		},
 		[],
 	);
+	const [editorDirty, setEditorDirty] = React.useState(false);
 	const handleEditorDirtyChange = React.useCallback((isDirty: boolean) => {
 		isEditorDirtyRef.current = isDirty;
+		setEditorDirty(isDirty);
 	}, []);
 
 	const { data: manifest } = useQuery({
@@ -1745,6 +1748,22 @@ function ContentEditPage() {
 		queryFn: () => fetchRevision(rawItem!.draftRevisionId!),
 		enabled: !!rawItem?.draftRevisionId,
 	});
+
+	// A room keeps the entry current itself, and its checkpoints would refetch it under the editor.
+	const liveEntry = useLiveQueries({
+		topics: coEditing.mode === "single-editor" ? [`content/${collection}/${id}`] : [],
+		queryKeys: rawItem?.draftRevisionId
+			? [
+					["content", collection, id],
+					["revision", rawItem.draftRevisionId],
+				]
+			: [["content", collection, id]],
+		dirty: editorDirty,
+	});
+	const loadLatestEntry = async () => {
+		await liveEntry.loadLatest();
+		resetEditorItem(id, { discarded: true });
+	};
 
 	// Merge draft revision data into the item for the editor.
 	// The item's metadata (id, status, slug, etc.) comes from the content table;
@@ -2730,6 +2749,15 @@ function ContentEditPage() {
 				takeOverFailed={entryLock.takeOverFailed}
 				canJoin={coEditing.mode !== "single-editor" || coEditing.canJoin}
 			/>
+		);
+	}
+
+	if (liveEntry.changedElsewhere) {
+		notice = (
+			<>
+				<ChangedElsewhereNotice onLoad={loadLatestEntry} />
+				{notice}
+			</>
 		);
 	}
 
@@ -3969,6 +3997,9 @@ function ContentTypesEditPage() {
 	} = useQuery({
 		queryKey: ["schema", "collections", slug],
 		queryFn: () => fetchCollection(slug),
+		// The editor seeds its form from the collection once, so a live refetch would show
+		// someone else's change as an edit of this tab's.
+		meta: { live: [] },
 	});
 
 	const updateMutation = useMutation({

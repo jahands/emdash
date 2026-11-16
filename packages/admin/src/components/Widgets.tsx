@@ -71,6 +71,7 @@ import {
 import { getPluginBlocks } from "../lib/pluginBlocks";
 import { widgetAreasQueryOptions, widgetComponentsQueryOptions } from "../lib/route-queries.js";
 import { CaretNext } from "./ArrowIcons.js";
+import { ChangedElsewhereNotice } from "./ChangedElsewhereNotice.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { GalleryDetailPanel } from "./editor/GalleryDetailPanel";
@@ -938,6 +939,28 @@ function WidgetItem({
 	);
 }
 
+interface WidgetFormValues {
+	title: string;
+	content: unknown[];
+	menuName: string;
+	componentId: string;
+	componentProps: Record<string, unknown>;
+}
+
+function widgetFormValues(widget: Widget): WidgetFormValues {
+	return {
+		title: widget.title ?? "",
+		content: Array.isArray(widget.content) ? widget.content : [],
+		menuName: widget.menuName ?? "",
+		componentId: widget.componentId ?? "",
+		componentProps: widget.componentProps ?? {},
+	};
+}
+
+function sameWidgetValues(a: WidgetFormValues, b: WidgetFormValues): boolean {
+	return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /** Inline editor form for a widget, rendered when the widget is expanded */
 function WidgetEditor({
 	widget,
@@ -957,15 +980,41 @@ function WidgetEditor({
 	onBlockSidebarClose: () => void;
 }) {
 	const { t } = useLingui();
-	const [title, setTitle] = React.useState(widget.title ?? "");
-	const [content, setContent] = React.useState<unknown[]>(
-		Array.isArray(widget.content) ? widget.content : [],
-	);
-	const [menuName, setMenuName] = React.useState(widget.menuName ?? "");
-	const [componentId, setComponentId] = React.useState(widget.componentId ?? "");
+	const [baseline, setBaseline] = React.useState(() => widgetFormValues(widget));
+	const [title, setTitle] = React.useState(baseline.title);
+	const [content, setContent] = React.useState<unknown[]>(baseline.content);
+	const [menuName, setMenuName] = React.useState(baseline.menuName);
+	const [componentId, setComponentId] = React.useState(baseline.componentId);
 	const [componentProps, setComponentProps] = React.useState<Record<string, unknown>>(
-		widget.componentProps ?? {},
+		baseline.componentProps,
 	);
+	// The content editor reads its value once, so adopting a newer version remounts it.
+	const [generation, setGeneration] = React.useState(0);
+	const [changedElsewhere, setChangedElsewhere] = React.useState(false);
+
+	const adopt = (values: WidgetFormValues) => {
+		setBaseline(values);
+		setTitle(values.title);
+		setContent(values.content);
+		setMenuName(values.menuName);
+		setComponentId(values.componentId);
+		setComponentProps(values.componentProps);
+		setGeneration((previous) => previous + 1);
+		setChangedElsewhere(false);
+	};
+
+	// The areas list refetches when any widget changes. An editor without edits takes the newer
+	// version, as does one whose edits are what was just saved; one with other edits says so.
+	const [seenWidget, setSeenWidget] = React.useState(widget);
+	if (widget !== seenWidget) {
+		setSeenWidget(widget);
+		const incoming = widgetFormValues(widget);
+		if (!sameWidgetValues(incoming, baseline)) {
+			const shown = { title, content, menuName, componentId, componentProps };
+			if (sameWidgetValues(shown, baseline) || sameWidgetValues(shown, incoming)) adopt(incoming);
+			else setChangedElsewhere(true);
+		}
+	}
 
 	const { data: menus = [], isPending: menusPending } = useQuery({
 		queryKey: ["menus"],
@@ -990,6 +1039,13 @@ function WidgetEditor({
 
 	return (
 		<div className="mt-3 p-3 bg-kumo-tint rounded space-y-4">
+			{changedElsewhere && (
+				<ChangedElsewhereNotice
+					onLoad={async () => {
+						adopt(widgetFormValues(seenWidget));
+					}}
+				/>
+			)}
 			<Input
 				label={t`Title`}
 				value={title}
@@ -1001,6 +1057,7 @@ function WidgetEditor({
 				<div>
 					<Label className="text-sm font-medium mb-2 block">{t`Content`}</Label>
 					<PortableTextEditor
+						key={generation}
 						value={content as Parameters<typeof PortableTextEditor>[0]["value"]}
 						onChange={(value) => setContent(value)}
 						minimal

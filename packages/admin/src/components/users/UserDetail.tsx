@@ -65,14 +65,14 @@ export function UserDetail({
 	const [email, setEmail] = React.useState(user?.email ?? "");
 	const [role, setRole] = React.useState(user?.role ?? 30);
 
-	// Reset the form for a different user, and when the details replace the list row unless
-	// the form has been edited since, as the row may be older than the details.
+	// Reset the form for a different user, and when newer details arrive unless the form has
+	// been edited since.
 	const [seed, setSeed] = React.useState(user);
 	if (user !== seed) {
 		setSeed(user);
 		const edited =
 			!!seed && (name !== (seed.name ?? "") || email !== seed.email || role !== seed.role);
-		if (user && (user.id !== seed?.id || (seed === summary && !edited))) {
+		if (user && (user.id !== seed?.id || !edited)) {
 			setName(user.name ?? "");
 			setEmail(user.email ?? "");
 			setRole(user.role);

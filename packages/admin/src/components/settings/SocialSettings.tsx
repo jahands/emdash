@@ -10,6 +10,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import { fetchSettings, updateSettings, type SiteSettings } from "../../lib/api";
+import { useLiveQueries } from "../../lib/realtime/LiveSyncProvider.js";
+import { ChangedElsewhereNotice } from "../ChangedElsewhereNotice.js";
 import { SaveButton } from "../SaveButton.js";
 import {
 	PendingSaveAction,
@@ -59,6 +61,7 @@ export function SocialSettings() {
 		() => socialSettingsSnapshot(formData) !== socialSettingsSnapshot(savedFormData),
 		[formData, savedFormData],
 	);
+	const live = useLiveQueries({ queryKeys: [["settings"]], dirty: isDirty });
 
 	const saveMutation = useMutation({
 		mutationFn: (data: Partial<SiteSettings>) => updateSettings(data),
@@ -127,6 +130,7 @@ export function SocialSettings() {
 			}
 		>
 			<form id="social-settings-form" onSubmit={handleSubmit} className="grid gap-8">
+				{live.changedElsewhere && <ChangedElsewhereNotice onLoad={live.loadLatest} />}
 				<SettingsSection
 					title={t`Social Profiles`}
 					description={t`Add your social media profiles. These are available to your site's theme and can be displayed in headers, footers, or author bios.`}

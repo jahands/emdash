@@ -26,8 +26,10 @@ import {
 	type SiteSettingsUpdate,
 } from "../../lib/api";
 import { useCurrentUser } from "../../lib/api/current-user.js";
+import { useLiveQueries } from "../../lib/realtime/LiveSyncProvider.js";
 import { useDateLocale } from "../../locales/date-locale.js";
 import { Button } from "../Button.js";
+import { ChangedElsewhereNotice } from "../ChangedElsewhereNotice.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { SaveButton } from "../SaveButton.js";
@@ -194,6 +196,7 @@ export function GeneralSettings() {
 		() => generalSettingsSnapshot(formData) !== generalSettingsSnapshot(savedFormData),
 		[formData, savedFormData],
 	);
+	const live = useLiveQueries({ queryKeys: [["settings"]], dirty: isDirty });
 
 	const saveMutation = useMutation({
 		mutationFn: (data: SiteSettingsUpdate) => updateSettings(data),
@@ -343,6 +346,7 @@ export function GeneralSettings() {
 			}
 		>
 			<form id="general-settings-form" onSubmit={handleSubmit} className="grid gap-8">
+				{live.changedElsewhere && <ChangedElsewhereNotice onLoad={live.loadLatest} />}
 				<SiteStatusSection />
 
 				<SettingsSection title={t`Site Identity`}>
