@@ -1,7 +1,8 @@
 /**
  * Signed room tokens. The join route signs the nonce a room issues, bound to the room and the
  * user, so a host can refuse an upgrade before it reaches a room. The room still forgets a nonce
- * once used, so a token is single use while the room stays in memory.
+ * once used, so a token is single use while the room stays in memory. Realtime hub tickets are
+ * room tokens for the hub's name, which no room ID can be, with the user's role.
  */
 
 import { decodeBase64urlIgnorePadding, encodeBase64urlNoPadding } from "@oslojs/encoding";
@@ -20,6 +21,8 @@ export interface RoomTokenClaims {
 	nonce: string;
 	/** In ms since the epoch. */
 	expiresAt: number;
+	/** The user's role level. Hub tickets carry it; room tokens don't. */
+	role?: number;
 }
 
 /** The token key for a site's preview secret, separate from the keys other tokens use. */
@@ -35,6 +38,7 @@ export async function signRoomToken(secret: string, claims: RoomTokenClaims): Pr
 				u: claims.userId,
 				n: claims.nonce,
 				e: claims.expiresAt,
+				l: claims.role,
 			}),
 		),
 	);
@@ -62,7 +66,10 @@ export function readRoomToken(token: string): RoomTokenClaims | null {
 	const { r, u, n, e } = parsed;
 	if (typeof r !== "string" || typeof u !== "string" || typeof n !== "string") return null;
 	if (typeof e !== "number" || !Number.isFinite(e)) return null;
-	return { roomId: r, userId: u, nonce: n, expiresAt: e };
+	const claims: RoomTokenClaims = { roomId: r, userId: u, nonce: n, expiresAt: e };
+	const l = "l" in parsed ? parsed.l : undefined;
+	if (typeof l === "number" && Number.isInteger(l)) claims.role = l;
+	return claims;
 }
 
 /**

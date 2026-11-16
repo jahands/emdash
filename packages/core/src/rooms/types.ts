@@ -10,6 +10,7 @@ import type {
 } from "@emdash-cms/admin/internal/co-editing/types";
 
 import type { ContentWrite } from "../api/content-save.js";
+import type { Change } from "../realtime/publish.js";
 import type { FieldType, FieldValidation } from "../schema/types.js";
 
 export { CLOSE_CODES } from "@emdash-cms/admin/internal/co-editing/types";
@@ -125,6 +126,11 @@ export interface RuntimeRoomHost extends RoomHost {
 	shutdown(): Promise<void>;
 	/** Makes this the host notifications and upgrades reach. Called once the runtime is published. */
 	activate(): void;
+	/**
+	 * Sends changes to the site's realtime hub, which tells admin tabs. Absent where the host runs
+	 * no hub, which turns live updates off.
+	 */
+	publish?(changes: Change[]): Promise<void>;
 }
 
 export interface TokenClaims {

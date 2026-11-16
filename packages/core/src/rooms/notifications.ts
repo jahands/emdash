@@ -16,6 +16,8 @@ import { validateIdentifier } from "../database/validate.js";
 import { chunks, SQL_BATCH_SIZE } from "../utils/chunks.js";
 import { roomId, type EntryRef, type OutsideValue, type RoomHost } from "./types.js";
 
+export { clearChangePublisher, setChangePublisher } from "../realtime/publish.js";
+
 type RoomNotifier = Pick<RoomHost, "notify">;
 
 interface NotificationQueue {

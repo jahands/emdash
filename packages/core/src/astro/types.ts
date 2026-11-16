@@ -192,6 +192,8 @@ export interface EmDashManifest {
 	};
 	/** Whether this host runs co-editing rooms. When false, the editor doesn't ask to join one. */
 	coEditing?: boolean;
+	/** Whether this host runs the realtime hub. When false, the admin opens no live updates socket. */
+	realtime?: boolean;
 	/**
 	 * i18n configuration from Astro config.
 	 * Only present when i18n is enabled (multiple locales configured).

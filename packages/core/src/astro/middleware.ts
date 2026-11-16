@@ -68,6 +68,7 @@ import { getLastContentWriteAt } from "../object-cache/index.js";
 import type { SandboxRunnerFactory } from "../plugins/sandbox/types.js";
 import type { ResolvedPlugin } from "../plugins/types.js";
 import { invalidateUrlPatternCache } from "../query.js";
+import { CLIENT_HEADER, withChangeOrigin } from "../realtime/publish.js";
 import {
 	createRequestMetrics,
 	getRequestContext,
@@ -1172,7 +1173,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
 			const renderAndFinalize = async () => {
 				const t0 = performance.now();
-				const response = await next();
+				// Prerendering has no request headers to read.
+				const origin = context.isPrerendered ? null : request.headers.get(CLIENT_HEADER);
+				const response = await withChangeOrigin(origin, next);
 				timings.push({ name: "render", dur: performance.now() - t0, desc: "Page render" });
 				timings.push({ name: "mw", dur: performance.now() - mwStart, desc: "Total middleware" });
 				pushMetricsTimings(timings, metrics);

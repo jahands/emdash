@@ -6,6 +6,8 @@
 import type { Kysely } from "kysely";
 
 import type { Database } from "../../database/types.js";
+import { Hub, type HubSocket, type HubSocketState } from "../../realtime/hub.js";
+import { clearChangePublisher, setChangePublisher, type Change } from "../../realtime/publish.js";
 import { isClaimedElsewhere, KyselyRoomStore, listExpiredRooms } from "../kysely-store.js";
 import { CLAIM_RENEWAL_MS, SERVER_WAIT_MS } from "../limits.js";
 import { clearRoomNotifier, setRoomNotifier } from "../notifications.js";
@@ -51,6 +53,18 @@ export interface AcceptedConnection {
 	disconnect(): void;
 }
 
+/** A hub socket, from the host. */
+export interface HubConnection {
+	send(frame: string): void;
+	close(code: number, reason: string): void;
+}
+
+/** A connection the hub took: the host hands it the socket's text frames and its close. */
+export interface AcceptedHubConnection {
+	receive(message: string): void;
+	disconnect(): void;
+}
+
 export class RoomRegistry implements RuntimeRoomHost {
 	/** This process's ID in room claims. */
 	readonly host = crypto.randomUUID();
@@ -60,6 +74,9 @@ export class RoomRegistry implements RuntimeRoomHost {
 	readonly #timers: RoomTimers;
 	readonly #rooms = new Map<string, Room>();
 	readonly #inFlight = new Map<string, number>();
+	/** Kept apart from `#rooms`, whose idle tick drops what isn't open. */
+	readonly #hubSockets = new Set<HubSocket>();
+	readonly #hub: Hub;
 	#cancelTick: (() => void) | null = null;
 	#shuttingDown = false;
 	#firstTokenAt: number | null = null;
@@ -69,6 +86,16 @@ export class RoomRegistry implements RuntimeRoomHost {
 		this.#site = options.site;
 		this.#build = options.build;
 		this.#timers = options.timers ?? nodeTimers;
+		const sockets = this.#hubSockets;
+		this.#hub = new Hub({
+			sockets: {
+				all: () => sockets,
+				*ofUser(userId) {
+					for (const socket of sockets) if (socket.state.userId === userId) yield socket;
+				},
+			},
+			now: () => this.#timers.now(),
+		});
 		trackRegistry(this);
 	}
 
@@ -86,7 +113,46 @@ export class RoomRegistry implements RuntimeRoomHost {
 	/** Makes this the registry outside writes notify and the site's server hands room sockets to. */
 	activate(): void {
 		setRoomNotifier(this);
+		setChangePublisher(this);
 		setUpgradeRegistry(this);
+	}
+
+	async publish(changes: Change[]): Promise<void> {
+		if (!this.#shuttingDown) this.#hub.publish(changes);
+	}
+
+	/**
+	 * Hands a socket with a verified ticket to the hub. Closes it with `busy`, and returns null,
+	 * while shutting down or when the hub refuses the ticket.
+	 */
+	acceptHub(ticket: RoomTokenClaims, connection: HubConnection): AcceptedHubConnection | null {
+		const state = this.#shuttingDown ? null : this.#hub.admit(ticket);
+		if (!state) {
+			connection.close(CLOSE_CODES.busy, "No valid ticket");
+			return null;
+		}
+		const sockets = this.#hubSockets;
+		let current: HubSocketState = state;
+		const socket: HubSocket = {
+			get state() {
+				return current;
+			},
+			send: (frame) => connection.send(frame),
+			close(code, reason) {
+				sockets.delete(socket);
+				connection.close(code, reason);
+			},
+			save(next) {
+				current = next;
+			},
+			// `ws` pings every socket and ends the ones that stop answering.
+			seenAt: () => this.#timers.now(),
+		};
+		sockets.add(socket);
+		return {
+			receive: (message) => this.#hub.receive(socket, message),
+			disconnect: () => sockets.delete(socket),
+		};
 	}
 
 	async issueToken(
@@ -188,7 +254,9 @@ export class RoomRegistry implements RuntimeRoomHost {
 		this.#shuttingDown = true;
 		untrackRegistry(this);
 		clearRoomNotifier(this);
+		clearChangePublisher(this);
 		clearUpgradeRegistry(this);
+		for (const socket of this.#hubSockets) socket.close(1001, "The server is shutting down");
 		this.#cancelTick?.();
 		this.#cancelTick = null;
 		await Promise.allSettled(Array.from(this.#rooms.values(), (room) => room.shutdown()));

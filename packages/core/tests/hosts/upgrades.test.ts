@@ -44,6 +44,37 @@ describe("room upgrades from the site's server", () => {
 		socket.ws.close();
 	});
 
+	it("hands a realtime upgrade with a hub ticket to the hub, which answers pings and sends changes", async () => {
+		const { port } = await host.attached();
+		const socket = await openSocket(host.hubUrl(port, await host.ticket(), "/blog"));
+		expect(socket.status).toBe(101);
+
+		socket.ws.send("ping");
+		expect(new TextDecoder().decode(await socket.next())).toBe("pong");
+		socket.ws.send(JSON.stringify({ t: "topics", topics: ["content/posts"] }));
+		socket.ws.send("ping");
+		await socket.next();
+		await host.publish([{ topic: "content/posts/01A", op: "update" }]);
+
+		expect(JSON.parse(new TextDecoder().decode(await socket.next()))).toEqual({
+			t: "changes",
+			changes: [{ topic: "content/posts/01A", op: "update" }],
+		});
+		socket.ws.close();
+	});
+
+	it("closes a realtime socket with busy for a room's token or a used ticket", async () => {
+		const { port } = await host.attached();
+		const ticket = await host.ticket();
+		(await openSocket(host.hubUrl(port, ticket))).ws.close();
+
+		const reused = await openSocket(host.hubUrl(port, ticket));
+		const roomToken = await openSocket(host.hubUrl(port, await host.token()));
+
+		expect((await reused.closed).code).toBe(CLOSE_CODES.busy);
+		expect((await roomToken.closed).code).toBe(CLOSE_CODES.busy);
+	});
+
 	it("completes the handshake for a bad token, then closes with busy", async () => {
 		const { port } = await host.attached();
 		await host.token();

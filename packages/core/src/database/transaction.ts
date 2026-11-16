@@ -17,6 +17,7 @@
 import type { Kysely, Transaction } from "kysely";
 
 import { deferObjectCacheInvalidations } from "../object-cache/index.js";
+import { withChangeQueue } from "../realtime/publish.js";
 import { withRoomNotificationQueue } from "../rooms/notifications.js";
 
 /**
@@ -53,9 +54,10 @@ export async function withTransaction<DB, T>(
 	if (db.isTransaction) {
 		return fn(db);
 	}
-	// Room notifications wait for the outermost call: after the commit, or after the last
-	// statement on D1, where a nested call can't tell itself apart by `isTransaction`.
-	return withRoomNotificationQueue(() => runTransaction(db, fn));
+	// Room notifications and realtime changes wait for the outermost call: after the commit, or
+	// after the last statement on D1, where a nested call can't tell itself apart by
+	// `isTransaction`. Changes from a call that throws are dropped.
+	return withRoomNotificationQueue(() => withChangeQueue(() => runTransaction(db, fn)));
 }
 
 async function runTransaction<DB, T>(

@@ -137,6 +137,7 @@ export async function buildAdminManifest(
 				staging,
 				siteDomain,
 				coEditing: Boolean(emdash?.rooms),
+				realtime: Boolean(emdash?.rooms?.publish),
 				authMode: authMode.type === "external" ? authMode.providerType : "passkey",
 				providerManagedName,
 				signupEnabled,

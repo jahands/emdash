@@ -233,6 +233,11 @@ export function injectCoreRoutes(
 		entrypoint: resolveRoute("api/content/[collection]/[id]/room.ts"),
 	});
 
+	injectRoute({
+		pattern: "/_emdash/api/realtime",
+		entrypoint: resolveRoute("api/realtime.ts"),
+	});
+
 	// i18n translation routes
 	injectRoute({
 		pattern: "/_emdash/api/content/[collection]/[id]/translations",

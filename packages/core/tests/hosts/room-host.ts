@@ -6,6 +6,7 @@ import type { Kysely } from "kysely";
 import { afterEach, beforeEach, expect, vi } from "vitest";
 
 import type { Database } from "../../src/database/types.js";
+import { HUB_NAME } from "../../src/realtime/path.js";
 import { RoomRegistry } from "../../src/rooms/node/registry.js";
 import { watchServers } from "../../src/rooms/node/upgrades.js";
 import { resolveRoomTokenSecret } from "../../src/rooms/token-secret.js";
@@ -90,6 +91,20 @@ export function useRoomHost() {
 				nonce: issued.token,
 				expiresAt: Date.now() + 60_000,
 			});
+		},
+		/** A realtime hub ticket, as the ticket route signs it. */
+		async ticket(userId = "ana", role = 40): Promise<string> {
+			return signRoomToken(await resolveRoomTokenSecret(db), {
+				roomId: HUB_NAME,
+				userId,
+				nonce: crypto.randomUUID(),
+				expiresAt: Date.now() + 30_000,
+				role,
+			});
+		},
+		publish: (changes: unknown[]) => registry.publish(changes as never),
+		hubUrl(port: number, ticket: string, base = ""): string {
+			return `ws://127.0.0.1:${port}${base}/_emdash/api/realtime?token=${encodeURIComponent(ticket)}`;
 		},
 		roomUrl(port: number, token: string, base = ""): string {
 			return `ws://127.0.0.1:${port}${roomPath(base, ENTRY.collection, ENTRY.id, token)}`;
