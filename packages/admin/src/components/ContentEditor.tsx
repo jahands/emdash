@@ -3018,6 +3018,7 @@ export function ContentEditor({
 											authorColor={revisionView.authorColor}
 											isCurrent={revisionView.isCurrent}
 											isPublished={revisionView.isPublished}
+											comparingLive={revisionView.comparingLive}
 											sameAsCurrent={revisionView.sameAsCurrent}
 											hasDraft={
 												Boolean(item.draftRevisionId) &&

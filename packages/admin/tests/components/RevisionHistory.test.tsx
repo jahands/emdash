@@ -81,6 +81,7 @@ function makeView(overrides: Partial<RevisionViewContextValue> = {}): RevisionVi
 		listLimit: REVISION_LIST_LIMIT,
 		showOlderVersions: vi.fn(),
 		view: vi.fn(),
+		viewDraftChanges: vi.fn(),
 		exit: vi.fn(),
 		goToChange: vi.fn(),
 		...overrides,

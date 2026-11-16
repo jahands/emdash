@@ -14,6 +14,7 @@ import {
 import { useRevisionViewContext } from "../src/components/revisions/revision-view-context";
 import { ThemeProvider } from "../src/components/ThemeProvider";
 import type { AdminManifest, ContentItem, RevisionListResponse } from "../src/lib/api";
+import type { RevisionDiff } from "../src/lib/revision-diff/types";
 import { createAdminRouter } from "../src/router";
 import { render } from "./utils/render.tsx";
 import { createTestQueryClient } from "./utils/test-helpers.tsx";
@@ -51,7 +52,15 @@ vi.mock("../src/components/RevisionHistory", () => ({
 }));
 
 vi.mock("../src/components/revisions/RevisionViewCanvas", () => ({
-	RevisionViewCanvas: ({ label }: { label: string }) => <article aria-label={label} />,
+	// Names the fields the diff marks as changed.
+	RevisionViewCanvas: ({ label, diff }: { label: string; diff: RevisionDiff }) => (
+		<article aria-label={label}>
+			{diff.fields
+				.filter((field) => field.status !== "unchanged")
+				.map((field) => field.slug)
+				.join(" ")}
+		</article>
+	),
 }));
 
 vi.mock("../src/lib/revision-diff/index.js", async (importOriginal) => ({
@@ -94,6 +103,8 @@ function textBlocks(text: string) {
 
 const DRAFT_DATA = { title: "Draft title", content: textBlocks("Draft body") };
 const OLD_DATA = { title: "Old title", content: textBlocks("Old body") };
+/** The published version: only its title differs from the draft. */
+const LIVE_DATA = { title: "Live title", content: textBlocks("Draft body") };
 const DRAFT_INTERNALS = { _references: { related: ["tg_1"] } };
 
 function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
@@ -216,6 +227,11 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 		}
 		if (url.startsWith("/_emdash/api/content/posts/post_1/lock")) {
 			return jsonResponse({ data: { enabled: false, holder: null, heldByCaller: false } });
+		}
+		if (method === "GET" && url === "/_emdash/api/content/posts/post_1/compare") {
+			return jsonResponse({
+				data: { hasChanges: true, live: LIVE_DATA, draft: revisions[0]?.data ?? null },
+			});
 		}
 		if (method === "GET" && url.startsWith("/_emdash/api/content/posts/post_1/revisions")) {
 			const gate = gates.list.shift();
@@ -399,6 +415,19 @@ describe("ContentEditPage revision view", () => {
 			.element(screen.getByRole("button", { name: "View the old version" }))
 			.toHaveFocus();
 	});
+	it("shows the draft against the live version from the Publish panel", async () => {
+		server = createMockServer();
+		const screen = await renderEditPage();
+
+		await screen.getByRole("button", { name: "View changes" }).click();
+
+		// The version before the draft differs in both fields; the live one only in the title.
+		const changes = screen.getByRole("article", { name: "Changes since the published version" });
+		await expect.element(changes).toHaveTextContent(/^title$/);
+		await expect.element(screen.getByText("Compared with published")).toBeVisible();
+		await expect.element(screen.getByText("Current version", { exact: true })).toBeVisible();
+	});
+
 	it("follows the autosave it sent on the way in to the new current version, dated now", async () => {
 		server = createMockServer();
 		const screen = await renderEditPage();
