@@ -2,6 +2,7 @@ import { sql, type ExpressionBuilder, type Kysely } from "kysely";
 import { ulid } from "ulidx";
 
 import { invalidateCommentObjectCache } from "../../object-cache/index.js";
+import { publishChange } from "../../realtime/publish.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
@@ -323,6 +324,7 @@ export class CommentRepository {
 			.execute();
 
 		invalidateCommentObjectCache();
+		publishChange("comments", { ids: [id], op: "update" });
 		return this.findById(id);
 	}
 
@@ -347,6 +349,7 @@ export class CommentRepository {
 			.executeTakeFirst();
 		if (result) {
 			invalidateCommentObjectCache();
+			publishChange("comments", { ids: [id], op: "update" });
 			return { state: "updated", comment: this.rowToComment(result) };
 		}
 
@@ -377,6 +380,7 @@ export class CommentRepository {
 			return updated;
 		});
 		invalidateCommentObjectCache();
+		if (updatedCount > 0) publishChange("comments", { ids, op: "update" });
 		return updatedCount;
 	}
 
@@ -390,7 +394,9 @@ export class CommentRepository {
 			.executeTakeFirst();
 
 		invalidateCommentObjectCache();
-		return (result.numDeletedRows ?? 0) > 0;
+		const deleted = (result.numDeletedRows ?? 0) > 0;
+		if (deleted) publishChange("comments", { ids: [id], op: "delete" });
+		return deleted;
 	}
 
 	/**
@@ -405,7 +411,9 @@ export class CommentRepository {
 			.executeTakeFirst();
 
 		invalidateCommentObjectCache();
-		return Number(result.numDeletedRows ?? 0);
+		const deleted = Number(result.numDeletedRows ?? 0);
+		if (deleted > 0) publishChange("comments", { ids, op: "delete" });
+		return deleted;
 	}
 
 	/**
@@ -419,7 +427,9 @@ export class CommentRepository {
 			.executeTakeFirst();
 
 		invalidateCommentObjectCache();
-		return Number(result.numDeletedRows ?? 0);
+		const deleted = Number(result.numDeletedRows ?? 0);
+		if (deleted > 0) publishChange("comments", { op: "delete" });
+		return deleted;
 	}
 
 	/**

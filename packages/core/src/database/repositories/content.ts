@@ -7,6 +7,8 @@ import { normalizeExplicitDatetime } from "../../datetime-normalization.js";
 import { getLocaleCandidates } from "../../i18n/config.js";
 import { canonicalLocaleColumn, localeMatches, localeOrder } from "../../i18n/query.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
+import { publishChange, type ChangeOp } from "../../realtime/publish.js";
+import { contentTopic } from "../../realtime/topics.js";
 import { notifyRoom } from "../../rooms/notifications.js";
 import type { OutsideValue } from "../../rooms/types.js";
 import { isIndexableFieldType, isStoragelessFieldRow, type FieldType } from "../../schema/types.js";
@@ -83,6 +85,20 @@ type ResolvedFieldFilter =
 			kind: "range";
 			bounds: Partial<Record<"gt" | "gte" | "lt" | "lte", NormalizedFilterScalar>>;
 	  };
+
+/**
+ * Tells the entry's room, and admin tabs through the realtime hub, that a write changed the
+ * entry. The hub's change also reaches the collection's list.
+ */
+function entryChanged(
+	type: string,
+	id: string,
+	outside: readonly OutsideValue[] = [],
+	op: ChangeOp = "update",
+): void {
+	notifyRoom({ collection: type, id }, outside);
+	publishChange(contentTopic(type, id), { op });
+}
 
 /** The values outside a room's document that an update writes. */
 function outsideValuesWritten(input: UpdateContentInput): OutsideValue[] {
@@ -626,6 +642,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
+		publishChange(contentTopic(type, id), { op: "create" });
 
 		// Fetch and return the created item
 		const item = await this.findById(type, id);
@@ -1254,7 +1271,7 @@ export class ContentRepository {
 
 		if (hasColumnWrites) invalidateCollectionCache(type);
 		if (result.numUpdatedRows > 0n) {
-			notifyRoom({ collection: type, id }, outsideValuesWritten(input));
+			entryChanged(type, id, outsideValuesWritten(input));
 		}
 
 		const updated = await this.findById(type, id);
@@ -1366,7 +1383,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 		const item = await this.findById(type, id);
 		if (!item) throw new Error("Content not found");
 
@@ -1440,7 +1457,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 		await new RevisionRepository(this.db, this.datetimeContexts).queuePruning(type, id, revisionId);
 		return revisionId;
 	}
@@ -1664,7 +1681,7 @@ export class ContentRepository {
 
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed && liveMetadataChanged) invalidateCollectionCache(type);
-		if (changed) notifyRoom({ collection: type, id }, outsideValuesWritten(input));
+		if (changed) entryChanged(type, id, outsideValuesWritten(input));
 		return changed;
 	}
 
@@ -1819,7 +1836,7 @@ export class ContentRepository {
 			}
 
 			if (synced) {
-				notifyRoom({ collection: type, id: current.id });
+				entryChanged(type, current.id);
 				return true;
 			}
 			await cleanUp();
@@ -1847,7 +1864,7 @@ export class ContentRepository {
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed) {
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id });
+			entryChanged(type, id, [], "delete");
 		}
 		return changed;
 	}
@@ -1889,7 +1906,7 @@ export class ContentRepository {
 		if (!restored) throw new ContentMutationConflictError("Content changed while restoring");
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id: existing.id });
+		entryChanged(type, existing.id);
 		return this.mapRow(type, restored);
 	}
 
@@ -1918,7 +1935,7 @@ export class ContentRepository {
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed) {
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id });
+			entryChanged(type, id, [], "delete");
 		}
 		return changed;
 	}
@@ -2373,7 +2390,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
@@ -2425,7 +2442,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		if ((result.numAffectedRows ?? 0n) > 0n) notifyRoom({ collection: type, id });
+		if ((result.numAffectedRows ?? 0n) > 0n) entryChanged(type, id);
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
@@ -2797,7 +2814,7 @@ export class ContentRepository {
 				}
 
 				invalidateCollectionCache(type);
-				notifyRoom({ collection: type, id }, ["publishedAt"]);
+				entryChanged(type, id, ["publishedAt"]);
 				const updated = await this.findById(type, id);
 				if (!updated) throw new Error("Content not found");
 				return updated;
@@ -2946,7 +2963,7 @@ export class ContentRepository {
 			}
 
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id }, ["publishedAt"]);
+			entryChanged(type, id, ["publishedAt"]);
 			updated ??= await this.findById(type, id);
 			if (!updated) {
 				throw new Error("Content not found");
@@ -3032,7 +3049,7 @@ export class ContentRepository {
 			if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
 
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id });
+			entryChanged(type, id);
 			const updated = await this.findById(type, id);
 			if (!updated) throw new Error("Content not found");
 			return updated;
@@ -3123,7 +3140,7 @@ export class ContentRepository {
 		`.execute(this.db);
 		const row = result.rows[0];
 		if (!row) return null;
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 		return this.mapRow(type, row);
 	}
 
@@ -3195,7 +3212,7 @@ export class ContentRepository {
 			AND ${nullableColumnMatch("scheduled_at", existing.scheduledAt)}
 		`.execute(this.db);
 		if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
