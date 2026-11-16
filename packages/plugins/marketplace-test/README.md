@@ -35,6 +35,7 @@ The source manifest uses canonical capability names. The generated manifest clos
 | `hooks.email-transport:register` | Exclusive delivery hook declaration and direct hook transport                                    |
 | `hooks.email-events:register`    | Before-send and after-send hooks                                                                 |
 | `hooks.page-fragments:register`  | Declaration and manifest round-trip only; sandbox registration is excluded below                 |
+| `realtime:publish`               | Publishing to its declared `events` channel, refusal off it, and a widget that refreshes on it   |
 
 The fixture also covers plugin-scoped storage CRUD, indexed queries, batches, conditional updates, revisions and stale compare-and-set operations; the corresponding KV and settings revision APIs; encrypted secret persistence and rotation; cron schedule/list/cancel; all logger methods; site and URL context; and lifecycle restart persistence.
 

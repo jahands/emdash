@@ -1,5 +1,7 @@
 export { EmDashRuntime } from "./emdash-runtime.js";
 export { waitForDeferredTasks } from "./deferred-tasks.js";
+export { clearChangePublisher, setChangePublisher } from "./realtime/publish.js";
+export type { Change, ChangePublisher } from "./realtime/publish.js";
 export type { RuntimeDependencies } from "./emdash-runtime.js";
 export {
 	dispatchPluginApiRequest,

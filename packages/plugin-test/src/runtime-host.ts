@@ -50,6 +50,10 @@ import {
 	validateEditorDraftPatch,
 	validateEditorDraftRequest,
 	waitForDeferredTasks,
+	clearChangePublisher,
+	setChangePublisher,
+	type Change,
+	type ChangePublisher,
 	type UserInfo,
 } from "emdash/internal/plugin-test-runtime";
 import { Kysely } from "kysely";
@@ -326,6 +330,8 @@ export interface PluginRuntimeTestHost {
 		comments(): Promise<Array<Record<string, unknown>>>;
 		redirects(): Promise<RedirectInfo[]>;
 		email(): Promise<Array<Record<string, unknown>>>;
+		/** Live-update changes the plugin and the host published, after any pending ones go out. */
+		realtime(): Promise<Change[]>;
 	};
 	scheduled: {
 		setTime(value: string | Date): void;
@@ -405,6 +411,13 @@ export async function createPluginRuntimeTestHost(
 	await optionRepo.set("emdash:exclusive_hook:email:deliver", "plugin-test-email-transport");
 
 	const capturedEmail: Array<Record<string, unknown>> = [];
+	const capturedChanges: Change[] = [];
+	const changePublisher: ChangePublisher = {
+		publish: async (changes) => {
+			capturedChanges.push(...changes);
+		},
+	};
+	setChangePublisher(changePublisher);
 	const capturedHttpRequests: PluginHttpTestRequest[] = [];
 	const httpResponses = new Map<string, PluginHttpResponseWire[]>();
 	const httpFetch: typeof fetch = async (input, init) => {
@@ -449,6 +462,7 @@ export async function createPluginRuntimeTestHost(
 		adminWidgets: manifest.admin.widgets,
 		editorPanels: manifest.admin.editorPanels,
 		editorActions: manifest.admin.editorActions,
+		realtime: manifest.realtime,
 	};
 	const sandboxedPluginEntries = [entry];
 	const emailTransport = definePlugin({
@@ -1178,6 +1192,10 @@ export async function createPluginRuntimeTestHost(
 				);
 			},
 			email: async () => capturedEmail.map((message) => ({ ...message })),
+			realtime: async () => {
+				await waitForDeferredTasks();
+				return capturedChanges.map((change) => ({ ...change }));
+			},
 		},
 		scheduled: {
 			setTime(value) {
@@ -1225,6 +1243,7 @@ export async function createPluginRuntimeTestHost(
 			await runtime.shutdown();
 			await runtime.db.destroy();
 			setI18nConfig(previousI18n);
+			clearChangePublisher(changePublisher);
 			await db.destroy();
 			await reset();
 		},

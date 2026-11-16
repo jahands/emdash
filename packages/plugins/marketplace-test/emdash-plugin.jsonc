@@ -34,8 +34,12 @@
 		"hooks.email-transport:register",
 		"hooks.email-events:register",
 		"hooks.page-fragments:register",
+		"realtime:publish",
 	],
 	"allowedHosts": [],
+	"realtime": {
+		"channels": { "events": { "permission": "plugins:read" } },
+	},
 	"storage": {
 		"events": { "indexes": ["type", "timestamp", ["type", "timestamp"]] },
 		"lifecycle": { "indexes": ["type"] },
@@ -50,7 +54,7 @@
 			{ "path": "/components", "label": "Block Kit", "icon": "layout" },
 		],
 		"widgets": [
-			{ "id": "status", "title": "Capability status", "size": "half" },
+			{ "id": "status", "title": "Capability status", "size": "half", "refreshOn": ["events"] },
 			{ "id": "authority", "title": "Granted authority", "size": "full" },
 		],
 		"editorPanels": [
