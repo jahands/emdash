@@ -6,6 +6,7 @@ import type { Element } from "@emdash-cms/blocks";
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 
+import { TAB_ID, TAB_ID_HEADER } from "../realtime/tab-id.js";
 import type { EditorDraftAccessDeclaration } from "../sandboxed-editor-extensions.js";
 
 export const API_BASE = "/_emdash/api";
@@ -14,7 +15,8 @@ const forbiddenResponseListeners = new Set<() => void>();
 
 /**
  * Fetch wrapper that adds the X-EmDash-Request CSRF protection header
- * to all requests. All API calls should use this instead of raw fetch().
+ * to all requests, and the tab's ID, so live updates skip the tab's own changes.
+ * All API calls should use this instead of raw fetch().
  */
 export async function apiFetch(
 	input: string | URL | Request,
@@ -22,6 +24,7 @@ export async function apiFetch(
 ): Promise<Response> {
 	const headers = new Headers(init?.headers);
 	headers.set("X-EmDash-Request", "1");
+	headers.set(TAB_ID_HEADER, TAB_ID);
 	const response = await fetch(input, { ...init, headers });
 	if (response.status === 403) {
 		for (const listener of forbiddenResponseListeners) listener();
@@ -300,6 +303,8 @@ export interface AdminManifest {
 	};
 	/** Whether this host runs co-editing rooms. When false, the editor doesn't ask to join one. */
 	coEditing?: boolean;
+	/** Whether this host runs the realtime hub. When false, the admin opens no live updates socket. */
+	realtime?: boolean;
 	/**
 	 * i18n configuration. Present when multiple locales are configured.
 	 */

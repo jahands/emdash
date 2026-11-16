@@ -123,7 +123,6 @@ import {
 } from "./lib/api";
 import { useAdminLayout } from "./lib/api/admin-layout.js";
 import {
-	fetchCommentCounts,
 	updateCommentStatus,
 	deleteComment,
 	bulkCommentAction,
@@ -148,6 +147,7 @@ import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/conte
 import { describeContentValidationError } from "./lib/content-validation-errors";
 import { usePluginPage, type PluginAdmins } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
+import { LiveSyncProvider } from "./lib/realtime/LiveSyncProvider.js";
 import {
 	autosavedDraftKey,
 	lastAutosavedDrafts,
@@ -159,6 +159,7 @@ import {
 	blockTypesQueryOptions,
 	bylineFieldsQueryOptions,
 	bylinesQueryOptions,
+	commentCountsQueryOptions,
 	commentsQueryOptions,
 	contentAuthorsQueryOptions,
 	contentListQuery,
@@ -670,9 +671,11 @@ function RootComponent() {
 
 	// Plugin admin components are passed via props and available through PluginAdminContext
 	return (
-		<Shell manifest={manifest}>
-			<Outlet />
-		</Shell>
+		<LiveSyncProvider enabled={manifest.realtime === true}>
+			<Shell manifest={manifest}>
+				<Outlet />
+			</Shell>
+		</LiveSyncProvider>
 	);
 }
 
@@ -848,6 +851,7 @@ function ContentListPage() {
 	const [trashOpened, setTrashOpened] = React.useState(false);
 	const trash = usePagedQuery({
 		scope: ["content", collection, "trash"],
+		live: [`content/${collection}`],
 		queryKey: [{ locale: activeLocale }],
 		queryFn: ({ page, perPage }) =>
 			fetchTrashedContent(collection, { locale: activeLocale, page, limit: perPage }),
@@ -3166,12 +3170,7 @@ function CommentsPage() {
 		}),
 	);
 
-	// The admin page embeds these for moderators, so the tabs show them without a request.
-	const { data: counts } = useQuery({
-		queryKey: ["commentCounts"],
-		queryFn: fetchCommentCounts,
-		staleTime: 60 * 1000,
-	});
+	const { data: counts } = useQuery({ ...commentCountsQueryOptions(), staleTime: 60 * 1000 });
 
 	// Status change mutation
 	const statusMutation = useMutation({

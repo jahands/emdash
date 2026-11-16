@@ -25,6 +25,8 @@ export interface PagedQuery<T> {
 	/** The rest of the key: filters, search and sort. Any change returns to page 1. */
 	queryKey: QueryKey;
 	queryFn: (page: { page: number; perPage: number }) => Promise<PagedResult<T>>;
+	/** Realtime topics whose changes refetch the list. */
+	live?: readonly string[];
 }
 
 interface UsePagedQueryOptions<T> extends PagedQuery<T> {
@@ -38,7 +40,11 @@ const NO_ITEMS: never[] = [];
 /** The query for one page of `list`. */
 export function pagedQueryOptions<T>(list: PagedQuery<T>, page: number, perPage: number) {
 	const queryKey: QueryKey = [...list.scope, ...list.queryKey, { page, perPage }];
-	return queryOptions({ queryKey, queryFn: () => list.queryFn({ page, perPage }) });
+	return queryOptions({
+		queryKey,
+		queryFn: () => list.queryFn({ page, perPage }),
+		meta: list.live ? { live: list.live } : undefined,
+	});
 }
 
 /** The page size a list shows until the user picks another. */
@@ -54,6 +60,7 @@ export function usePagedQuery<T>({
 	scope,
 	queryKey,
 	queryFn,
+	live,
 	pageSizes,
 	enabled,
 }: UsePagedQueryOptions<T>) {
@@ -76,7 +83,7 @@ export function usePagedQuery<T>({
 		[scopeHash, scopeLength],
 	);
 	const query = useQuery({
-		...pagedQueryOptions({ scope, queryKey, queryFn }, page, perPage),
+		...pagedQueryOptions({ scope, queryKey, queryFn, live }, page, perPage),
 		placeholderData,
 		enabled,
 	});

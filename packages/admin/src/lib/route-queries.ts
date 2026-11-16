@@ -5,6 +5,8 @@
  *
  * Kept out of the screens' modules: the router imports it, and the screens'
  * code loads on demand.
+ *
+ * `meta.live` names the realtime topics whose changes refetch a query.
  */
 
 import { infiniteQueryOptions, queryOptions } from "@tanstack/react-query";
@@ -30,7 +32,7 @@ import {
 	type SectionSource,
 } from "./api.js";
 import { listBylineFields } from "./api/byline-fields.js";
-import { fetchComments, type CommentStatus } from "./api/comments.js";
+import { fetchCommentCounts, fetchComments, type CommentStatus } from "./api/comments.js";
 import { fetchDashboardStats } from "./api/dashboard.js";
 import { fetchRedirects } from "./api/redirects.js";
 import { fetchTaxonomyDef, fetchTerms } from "./api/taxonomies.js";
@@ -60,6 +62,7 @@ export function contentListQuery(
 	const { locale, sort, search, status, author, date, byline, fields } = filters;
 	return {
 		scope: ["content", collection],
+		live: [`content/${collection}`],
 		queryKey: [filters],
 		queryFn: ({ page, perPage }) =>
 			fetchContentList(collection, {
@@ -142,6 +145,16 @@ export function commentsQueryOptions(filters: {
 			}),
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		meta: { live: ["comments"] },
+	});
+}
+
+/** The admin page embeds these for moderators, so the sidebar and tabs show them without a request. */
+export function commentCountsQueryOptions() {
+	return queryOptions({
+		queryKey: ["commentCounts"],
+		queryFn: fetchCommentCounts,
+		meta: { live: ["comments"] },
 	});
 }
 
@@ -149,6 +162,7 @@ export function menusQueryOptions(locale: string | undefined) {
 	return queryOptions({
 		queryKey: ["menus", locale],
 		queryFn: () => fetchMenus({ locale }),
+		meta: { live: ["menus"] },
 	});
 }
 

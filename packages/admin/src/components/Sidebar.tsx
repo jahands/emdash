@@ -12,9 +12,9 @@ import * as React from "react";
 import { navPathId, resolveNav, type LayoutNavGroup } from "../lib/admin-layout.js";
 import { formatAdminVersion } from "../lib/admin-version.js";
 import { useAdminLayout } from "../lib/api/admin-layout.js";
-import { fetchCommentCounts } from "../lib/api/comments";
 import { useCurrentUser } from "../lib/api/current-user";
 import { resolvePluginPagePath, usePluginAdmins, type PluginAdmins } from "../lib/plugin-context";
+import { commentCountsQueryOptions } from "../lib/route-queries.js";
 import {
 	groupNavItems,
 	joinsContentFolder,
@@ -683,8 +683,7 @@ export function SidebarNav({ manifest }: SidebarNavProps) {
 
 	// Fetch pending comment count for badge
 	const { data: commentCounts } = useQuery({
-		queryKey: ["commentCounts"],
-		queryFn: fetchCommentCounts,
+		...commentCountsQueryOptions(),
 		staleTime: 60 * 1000,
 		retry: false,
 		enabled: role >= ROLE_EDITOR && !manifest.admin?.hiddenNavItems?.includes("comments"),
