@@ -55,6 +55,7 @@ import { ContentPickerModal } from "./ContentPickerModal";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { HelpLabel } from "./FieldHelpLabel.js";
 import { useI18nConfig } from "./LocaleSwitcher.js";
+import { ScreenPresence } from "./presence/ScreenPresence.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
 import { TranslationsPanel } from "./TranslationsPanel.js";
 
@@ -628,7 +629,8 @@ export function MenuEditor() {
 						</div>
 						<p className="mt-1 text-sm leading-5 text-pretty text-kumo-subtle">{t`Edit menu items`}</p>
 					</div>
-					<div className="flex flex-wrap gap-2">
+					<div className="flex flex-wrap items-center gap-2">
+						<ScreenPresence topic={`menus/${name}`} editing={editDirty} />
 						<Button
 							icon={<FileIcon />}
 							variant="secondary"

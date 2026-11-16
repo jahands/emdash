@@ -32,6 +32,7 @@ import { Button } from "../Button.js";
 import { ChangedElsewhereNotice } from "../ChangedElsewhereNotice.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MediaPickerModal } from "../MediaPickerModal";
+import { ScreenPresence } from "../presence/ScreenPresence.js";
 import { SaveButton } from "../SaveButton.js";
 import { ChangeDomainDialog } from "./ChangeDomainDialog.js";
 import {
@@ -333,16 +334,19 @@ export function GeneralSettings() {
 			description={description}
 			loading={isLoading}
 			actions={
-				isLoading ? (
-					<PendingSaveAction />
-				) : (
-					<SaveButton
-						type="submit"
-						form="general-settings-form"
-						isDirty={isDirty}
-						isSaving={saveMutation.isPending}
-					/>
-				)
+				<>
+					<ScreenPresence topic="settings" editing={isDirty} />
+					{isLoading ? (
+						<PendingSaveAction />
+					) : (
+						<SaveButton
+							type="submit"
+							form="general-settings-form"
+							isDirty={isDirty}
+							isSaving={saveMutation.isPending}
+						/>
+					)}
+				</>
 			}
 		>
 			<form id="general-settings-form" onSubmit={handleSubmit} className="grid gap-8">

@@ -28,6 +28,7 @@ import {
 import { useLiveQueries } from "../../lib/realtime/LiveSyncProvider.js";
 import { ChangedElsewhereNotice } from "../ChangedElsewhereNotice.js";
 import { MediaPickerModal } from "../MediaPickerModal";
+import { ScreenPresence } from "../presence/ScreenPresence.js";
 import { SaveButton } from "../SaveButton.js";
 import {
 	PendingSaveAction,
@@ -153,16 +154,19 @@ export function SeoSettings() {
 			description={description}
 			loading={isLoading}
 			actions={
-				isLoading ? (
-					<PendingSaveAction />
-				) : (
-					<SaveButton
-						type="submit"
-						form="seo-settings-form"
-						isDirty={isDirty}
-						isSaving={saveMutation.isPending}
-					/>
-				)
+				<>
+					<ScreenPresence topic="settings" editing={isDirty} />
+					{isLoading ? (
+						<PendingSaveAction />
+					) : (
+						<SaveButton
+							type="submit"
+							form="seo-settings-form"
+							isDirty={isDirty}
+							isSaving={saveMutation.isPending}
+						/>
+					)}
+				</>
 			}
 		>
 			<form id="seo-settings-form" onSubmit={handleSubmit} className="grid gap-8">

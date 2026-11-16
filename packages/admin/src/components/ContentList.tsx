@@ -50,6 +50,11 @@ import { getEntryTitle } from "../lib/entryTitle.js";
 import { useDebouncedValue } from "../lib/hooks.js";
 import { inlineLabel } from "../lib/inline-label.js";
 import { usePluginAdmins } from "../lib/plugin-context.js";
+import {
+	useLiveEnabled,
+	usePresence,
+	type PresentPerson,
+} from "../lib/realtime/LiveSyncProvider.js";
 import { contentUrl } from "../lib/url.js";
 import { cn, formatDate, parseTimestamp } from "../lib/utils.js";
 import { getLocaleDir } from "../locales/config.js";
@@ -83,6 +88,7 @@ import {
 } from "./DataTable.js";
 import { ListPaginationFooter, type ListPagination } from "./ListPaginationFooter.js";
 import { LocaleSwitcher } from "./LocaleSwitcher";
+import { PresenceFaces } from "./presence/PresenceFaces.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
 import { declaredLabelTranslator } from "./Sidebar.js";
 import { TableToolbar, TableToolbarSearch } from "./TableToolbar.js";
@@ -328,6 +334,8 @@ export function ContentList({
 }: ContentListProps) {
 	const { t, i18n: lingui } = useLingui();
 	const pluginAdmins = usePluginAdmins();
+	const presenceSlot = useLiveEnabled();
+	const editorsById = useEditorsById(collection);
 	const [activeTab, setActiveTab] = React.useState<ViewTab>("all");
 	const [searchQuery, setSearchQuery] = React.useState("");
 	const [page, setPage] = React.useState(0);
@@ -886,6 +894,8 @@ export function ContentList({
 										selected={selectedIds.has(item.id)}
 										onToggleSelect={toggleOne}
 										extensionColumns={extensionColumns}
+										presenceSlot={presenceSlot}
+										editors={editorsById.get(item.id)}
 									/>
 								))
 							)}
@@ -1517,6 +1527,24 @@ interface ContentListItemProps {
 	selected?: boolean;
 	onToggleSelect?: (id: string) => void;
 	extensionColumns?: ResolvedContentListColumn[];
+	/** Keeps room beside the actions for who is editing, so a face appearing moves nothing. */
+	presenceSlot?: boolean;
+	editors?: readonly PresentPerson[];
+}
+
+/** Who else is editing each entry of the collection, by entry ID. */
+function useEditorsById(collection: string): ReadonlyMap<string, readonly PresentPerson[]> {
+	const topic = `content/${collection}`;
+	const people = usePresence(topic);
+	return React.useMemo(() => {
+		const byId = new Map<string, PresentPerson[]>();
+		for (const person of people) {
+			if (person.activity !== "editing" || person.topic === topic) continue;
+			const id = person.topic.slice(topic.length + 1);
+			byId.set(id, [...(byId.get(id) ?? []), person]);
+		}
+		return byId;
+	}, [people, topic]);
 }
 
 function ContentListItem({
@@ -1535,6 +1563,8 @@ function ContentListItem({
 	selected,
 	onToggleSelect,
 	extensionColumns,
+	presenceSlot,
+	editors,
 }: ContentListItemProps) {
 	const { t, i18n: lingui } = useLingui();
 	const title = getEntryTitle(item, titleField);
@@ -1560,6 +1590,11 @@ function ContentListItem({
 	);
 	const localeChip = showLocale && <LocaleChip locale={item.locale} />;
 	const formattedDate = <bdi>{formatDate(date, lingui.locale)}</bdi>;
+	const editorNames =
+		editors &&
+		new Intl.ListFormat(lingui.locale, { type: "conjunction" }).format(
+			editors.map((editor) => editor.name),
+		);
 
 	return (
 		<tr data-selected={selected || undefined}>
@@ -1624,53 +1659,67 @@ function ContentListItem({
 				);
 			})}
 			<td className="text-end">
-				<RowActionsMenu label={t`Actions for ${title}`}>
-					<DropdownMenu.LinkItem
-						closeOnClick
-						icon={<Pencil className="size-4" aria-hidden="true" />}
-						render={
-							<Link
-								to="/content/$collection/$id"
-								params={{ collection, id: item.id }}
-								search={{ locale: item.locale }}
-							/>
-						}
-					>
-						{t`Edit`}
-					</DropdownMenu.LinkItem>
-					{item.status === "published" && item.slug && (
+				<div className="flex items-center justify-end gap-2">
+					{presenceSlot && (
+						<span data-presence-slot="" className="flex size-6 shrink-0">
+							{editors && (
+								<PresenceFaces
+									people={editors}
+									max={1}
+									ringClassName="ring-transparent"
+									label={t`Being edited by ${editorNames}`}
+								/>
+							)}
+						</span>
+					)}
+					<RowActionsMenu label={t`Actions for ${title}`}>
 						<DropdownMenu.LinkItem
 							closeOnClick
-							icon={<ArrowSquareOut className="size-4" aria-hidden="true" />}
-							href={contentUrl(collection, item.slug, urlPattern, {
-								locale: item.locale,
-								i18n,
-								id: item.id,
-								date: item.publishedAt,
-							})}
-							target="_blank"
-							rel="noreferrer"
+							icon={<Pencil className="size-4" aria-hidden="true" />}
+							render={
+								<Link
+									to="/content/$collection/$id"
+									params={{ collection, id: item.id }}
+									search={{ locale: item.locale }}
+								/>
+							}
 						>
-							{t`View published`}
+							{t`Edit`}
 						</DropdownMenu.LinkItem>
-					)}
-					{onDuplicate && (
+						{item.status === "published" && item.slug && (
+							<DropdownMenu.LinkItem
+								closeOnClick
+								icon={<ArrowSquareOut className="size-4" aria-hidden="true" />}
+								href={contentUrl(collection, item.slug, urlPattern, {
+									locale: item.locale,
+									i18n,
+									id: item.id,
+									date: item.publishedAt,
+								})}
+								target="_blank"
+								rel="noreferrer"
+							>
+								{t`View published`}
+							</DropdownMenu.LinkItem>
+						)}
+						{onDuplicate && (
+							<DropdownMenu.Item
+								icon={<Copy className="size-4" aria-hidden="true" />}
+								onClick={() => onDuplicate(item.id)}
+							>
+								{t`Duplicate`}
+							</DropdownMenu.Item>
+						)}
+						<DropdownMenu.Separator />
 						<DropdownMenu.Item
-							icon={<Copy className="size-4" aria-hidden="true" />}
-							onClick={() => onDuplicate(item.id)}
+							variant="danger"
+							icon={<Trash className="size-4" aria-hidden="true" />}
+							onClick={trash.show}
 						>
-							{t`Duplicate`}
+							{t`Move to trash`}
 						</DropdownMenu.Item>
-					)}
-					<DropdownMenu.Separator />
-					<DropdownMenu.Item
-						variant="danger"
-						icon={<Trash className="size-4" aria-hidden="true" />}
-						onClick={trash.show}
-					>
-						{t`Move to trash`}
-					</DropdownMenu.Item>
-				</RowActionsMenu>
+					</RowActionsMenu>
+				</div>
 				<ConfirmDialog
 					{...trash.dialog}
 					title={t`Move to Trash?`}

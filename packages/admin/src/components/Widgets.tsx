@@ -82,6 +82,7 @@ import {
 	type BlockSidebarPanel,
 	type PluginBlockDef,
 } from "./PortableTextEditor";
+import { ScreenPresence } from "./presence/ScreenPresence.js";
 
 /** Palette item types that can be dragged into areas */
 interface PaletteItemData {
@@ -454,80 +455,83 @@ export function Widgets() {
 								{t`Manage content widgets in your widget areas`}
 							</p>
 						</div>
-						<LayerDialog.Root
-							open={isCreateAreaOpen}
-							{...guardUnsavedInput(
-								newAreaName !== "" || newAreaLabel !== "" || newAreaDescription !== "",
-								handleCreateAreaOpenChange,
-							)}
-							dismissDisabled={createAreaMutation.isPending}
-						>
-							<LayerDialog.Trigger
-								render={(props) => (
-									<Button {...props} icon={<Plus />}>
-										{t`Add Widget Area`}
-									</Button>
+						<div className="flex items-center gap-2">
+							<ScreenPresence topic="widgets" editing={expandedWidgets.size > 0} />
+							<LayerDialog.Root
+								open={isCreateAreaOpen}
+								{...guardUnsavedInput(
+									newAreaName !== "" || newAreaLabel !== "" || newAreaDescription !== "",
+									handleCreateAreaOpenChange,
 								)}
-							/>
-							<LayerDialog.Content>
-								<LayerDialog.Title>{t`Create Widget Area`}</LayerDialog.Title>
-								<LayerDialog.Description>
-									{t`A widget area is a place in your theme, such as a sidebar, that holds widgets.`}
-								</LayerDialog.Description>
-								<LayerDialog.Body>
-									<form
-										ref={createAreaFormRef}
-										id={createAreaFormId}
-										noValidate
-										onSubmit={handleCreateArea}
-										className="grid gap-5"
-									>
-										<Input
-											dir="ltr"
-											label={t`Name`}
-											name="name"
-											required
-											placeholder="sidebar"
-											value={newAreaName}
-											onChange={(e) => setNewAreaName(e.target.value)}
-											error={areaErrors.name && t(areaErrors.name)}
-											aria-invalid={areaErrors.name ? true : undefined}
-										/>
-										<Input
-											label={t`Label`}
-											name="label"
-											required
-											placeholder={t`Main Sidebar`}
-											value={newAreaLabel}
-											onChange={(e) => setNewAreaLabel(e.target.value)}
-											error={areaErrors.label && t(areaErrors.label)}
-											aria-invalid={areaErrors.label ? true : undefined}
-										/>
-										<Input
-											label={t`Description`}
-											name="description"
-											placeholder={t`Appears on posts and pages`}
-											value={newAreaDescription}
-											onChange={(e) => setNewAreaDescription(e.target.value)}
-										/>
-										<DialogError
-											message={getMutationError(
-												takenAreaName.unlessTaken(createAreaMutation.error),
-											)}
-										/>
-									</form>
-								</LayerDialog.Body>
-								<LayerDialog.Actions dismissLabel={t`Cancel`}>
-									<LayerDialog.Action
-										type="submit"
-										form={createAreaFormId}
-										disabled={createAreaMutation.isPending}
-									>
-										{createAreaMutation.isPending ? t`Creating...` : t`Create`}
-									</LayerDialog.Action>
-								</LayerDialog.Actions>
-							</LayerDialog.Content>
-						</LayerDialog.Root>
+								dismissDisabled={createAreaMutation.isPending}
+							>
+								<LayerDialog.Trigger
+									render={(props) => (
+										<Button {...props} icon={<Plus />}>
+											{t`Add Widget Area`}
+										</Button>
+									)}
+								/>
+								<LayerDialog.Content>
+									<LayerDialog.Title>{t`Create Widget Area`}</LayerDialog.Title>
+									<LayerDialog.Description>
+										{t`A widget area is a place in your theme, such as a sidebar, that holds widgets.`}
+									</LayerDialog.Description>
+									<LayerDialog.Body>
+										<form
+											ref={createAreaFormRef}
+											id={createAreaFormId}
+											noValidate
+											onSubmit={handleCreateArea}
+											className="grid gap-5"
+										>
+											<Input
+												dir="ltr"
+												label={t`Name`}
+												name="name"
+												required
+												placeholder="sidebar"
+												value={newAreaName}
+												onChange={(e) => setNewAreaName(e.target.value)}
+												error={areaErrors.name && t(areaErrors.name)}
+												aria-invalid={areaErrors.name ? true : undefined}
+											/>
+											<Input
+												label={t`Label`}
+												name="label"
+												required
+												placeholder={t`Main Sidebar`}
+												value={newAreaLabel}
+												onChange={(e) => setNewAreaLabel(e.target.value)}
+												error={areaErrors.label && t(areaErrors.label)}
+												aria-invalid={areaErrors.label ? true : undefined}
+											/>
+											<Input
+												label={t`Description`}
+												name="description"
+												placeholder={t`Appears on posts and pages`}
+												value={newAreaDescription}
+												onChange={(e) => setNewAreaDescription(e.target.value)}
+											/>
+											<DialogError
+												message={getMutationError(
+													takenAreaName.unlessTaken(createAreaMutation.error),
+												)}
+											/>
+										</form>
+									</LayerDialog.Body>
+									<LayerDialog.Actions dismissLabel={t`Cancel`}>
+										<LayerDialog.Action
+											type="submit"
+											form={createAreaFormId}
+											disabled={createAreaMutation.isPending}
+										>
+											{createAreaMutation.isPending ? t`Creating...` : t`Create`}
+										</LayerDialog.Action>
+									</LayerDialog.Actions>
+								</LayerDialog.Content>
+							</LayerDialog.Root>
+						</div>
 					</div>
 
 					<div className="overflow-x-auto">

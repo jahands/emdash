@@ -35,6 +35,7 @@ import {
 	type BlockSidebarPanel,
 	type PluginBlockDef,
 } from "./PortableTextEditor";
+import { ScreenPresence } from "./presence/ScreenPresence.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
 import { SaveButton } from "./SaveButton";
 import { PendingSaveAction } from "./settings/SettingsLayout.js";
@@ -274,7 +275,12 @@ function SectionEditorForm({ section, isSaving, pluginBlocks, onSave }: SectionE
 						icon={<ArrowPrev />}
 					/>
 				}
-				actions={<SaveButton isSaving={isSaving} isDirty={isDirty} onClick={handleSave} />}
+				actions={
+					<>
+						<ScreenPresence topic={`sections/${section.slug}`} editing={isDirty} />
+						<SaveButton isSaving={isSaving} isDirty={isDirty} onClick={handleSave} />
+					</>
+				}
 			>
 				<h1 className="truncate text-2xl font-semibold">{section.title}</h1>
 				<p className="text-sm text-kumo-subtle">

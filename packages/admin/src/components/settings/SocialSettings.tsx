@@ -12,6 +12,7 @@ import * as React from "react";
 import { fetchSettings, updateSettings, type SiteSettings } from "../../lib/api";
 import { useLiveQueries } from "../../lib/realtime/LiveSyncProvider.js";
 import { ChangedElsewhereNotice } from "../ChangedElsewhereNotice.js";
+import { ScreenPresence } from "../presence/ScreenPresence.js";
 import { SaveButton } from "../SaveButton.js";
 import {
 	PendingSaveAction,
@@ -117,16 +118,19 @@ export function SocialSettings() {
 			description={description}
 			loading={isLoading}
 			actions={
-				isLoading ? (
-					<PendingSaveAction />
-				) : (
-					<SaveButton
-						type="submit"
-						form="social-settings-form"
-						isDirty={isDirty}
-						isSaving={saveMutation.isPending}
-					/>
-				)
+				<>
+					<ScreenPresence topic="settings" editing={isDirty} />
+					{isLoading ? (
+						<PendingSaveAction />
+					) : (
+						<SaveButton
+							type="submit"
+							form="social-settings-form"
+							isDirty={isDirty}
+							isSaving={saveMutation.isPending}
+						/>
+					)}
+				</>
 			}
 		>
 			<form id="social-settings-form" onSubmit={handleSubmit} className="grid gap-8">

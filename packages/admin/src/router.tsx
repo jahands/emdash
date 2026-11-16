@@ -148,7 +148,11 @@ import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/conte
 import { describeContentValidationError } from "./lib/content-validation-errors";
 import { usePluginPage, type PluginAdmins } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
-import { LiveSyncProvider, useLiveQueries } from "./lib/realtime/LiveSyncProvider.js";
+import {
+	LiveSyncProvider,
+	useAnnouncePresence,
+	useLiveQueries,
+} from "./lib/realtime/LiveSyncProvider.js";
 import {
 	autosavedDraftKey,
 	lastAutosavedDrafts,
@@ -1760,6 +1764,8 @@ function ContentEditPage() {
 			: [["content", collection, id]],
 		dirty: editorDirty,
 	});
+	// Cursors and fields stay in the room; this tells lists and other screens who has the entry open.
+	useAnnouncePresence(`content/${collection}/${id}`, editAccess === null ? "viewing" : "editing");
 	const loadLatestEntry = async () => {
 		await liveEntry.loadLatest();
 		resetEditorItem(id, { discarded: true });
