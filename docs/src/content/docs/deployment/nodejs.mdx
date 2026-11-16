@@ -196,7 +196,7 @@ upstream emdash_rooms {
 
 With these upstreams, the room location from [Forward WebSocket upgrades](#forward-websocket-upgrades) uses `proxy_pass http://emdash_rooms;`, and `location /` uses `proxy_pass http://emdash;`.
 
-Live updates reach the admin tabs connected to the process that handled the change. With these upstreams, every live updates socket goes to one process, so changes that the other process handles reach no tab, and its lists refresh when you return to the tab.
+Live updates reach the admin tabs connected to the process that handled the change. With these upstreams, every live updates socket goes to one process, so changes that the other process handles reach no tab, and its lists refresh when you return to the tab. Because every tab connects to that one process, the admin still shows everyone who has an entry or screen open.
 
 Without routing by path, people whose requests reach another process wait read-only, without **Take over**, while the room is open in the first one. With round-robin routing, someone editing alone can need several tries to join, because a missed upgrade holds the room's claim for up to a minute.
 
