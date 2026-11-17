@@ -189,7 +189,7 @@ describe("EmDashRoom", () => {
 		expect(blocksText(site.current.data.body)).toBe("First paragraph.");
 		site.forced = [];
 		const ben = await RoomClient.join(stub, site, "ben");
-		expect(ben.text()).toBe("Unsaved First paragraph.");
+		await vi.waitFor(() => expect(ben.text()).toBe("Unsaved First paragraph."));
 		ben.close();
 	});
 });
