@@ -30,11 +30,14 @@ function Screen() {
 describe("LiveSyncProvider", () => {
 	let queryClient: QueryClient;
 	const reads = { menus: 0, posts: 0 };
+	/** While set, list reads wait for it, as a slow server would. */
+	let postsGate: Promise<void> | null = null;
 
 	beforeEach(() => {
 		FakeSocket.instances = [];
 		reads.menus = 0;
 		reads.posts = 0;
+		postsGate = null;
 		vi.stubGlobal("WebSocket", FakeSocket);
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -49,6 +52,7 @@ describe("LiveSyncProvider", () => {
 			}
 			if (url.includes("/_emdash/api/content/posts")) {
 				reads.posts++;
+				await postsGate;
 				return json({ items: [], total: 0 });
 			}
 			return new Response(null, { status: 404 });
@@ -98,6 +102,26 @@ describe("LiveSyncProvider", () => {
 
 		await vi.waitFor(() => expect(reads.posts).toBe(2));
 		expect(reads.menus).toBe(1);
+	});
+
+	it("lets a slow refetch finish, then refetches once for the changes that arrived during it", async () => {
+		const socket = await connect();
+		let release = () => {};
+		postsGate = new Promise((resolve) => (release = resolve));
+
+		socket.change("content/posts", { op: "create" });
+		await vi.waitFor(() => expect(reads.posts).toBe(2));
+		socket.change("content/posts", { op: "create" });
+		await new Promise((resolve) => setTimeout(resolve, 2300));
+		socket.change("content/posts", { op: "create" });
+		await new Promise((resolve) => setTimeout(resolve, 2300));
+		expect(reads.posts).toBe(2);
+
+		postsGate = null;
+		release();
+		await vi.waitFor(() => expect(reads.posts).toBe(3));
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(reads.posts).toBe(3);
 	});
 
 	it("reconnects after the socket drops, and refetches what it may have missed", async () => {

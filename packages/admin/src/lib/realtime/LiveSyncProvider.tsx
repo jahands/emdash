@@ -274,6 +274,8 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	const cache = queryClient.getQueryCache();
 	const pendingQueries = new Map<string, Arrival>();
 	const pendingRegistrations = new Map<LiveRegistration, Arrival>();
+	/** Queries a change reached mid-fetch, refetched once that fetch settles. */
+	const trailing = new Map<string, Arrival>();
 	let lastFlush = Number.NEGATIVE_INFINITY;
 	let flushTimer: number | undefined;
 	let topicsTimer: number | undefined;
@@ -335,21 +337,53 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			queries.delete(hash);
 			tell(holder, arrival);
 		}
-		const refetchKeys: QueryKey[] = [];
+		const refetchKeys: Array<{ queryKey: QueryKey; arrival: Arrival }> = [];
 		for (const [registration, arrival] of registrations) {
 			if (held.includes(registration)) tell(registration, arrival);
-			else refetchKeys.push(...registration.queryKeys);
+			else for (const queryKey of registration.queryKeys) refetchKeys.push({ queryKey, arrival });
 		}
 		for (const [registration, arrival] of told) registration.arrived(arrival);
 
 		if (queries.size === 0 && refetchKeys.length === 0) return;
-		void queryClient.invalidateQueries({
-			predicate: (query) =>
-				queries.has(query.queryHash) ||
-				refetchKeys.some((queryKey) => matchQuery({ queryKey }, query)),
-			// A hidden tab marks them stale, and refetches them when it shows again.
-			refetchType: document.visibilityState === "hidden" ? "none" : "active",
-		});
+		const now = new Set<string>();
+		for (const query of cache.getAll()) {
+			let arrival = queries.get(query.queryHash);
+			for (const key of refetchKeys) {
+				if (matchQuery({ queryKey: key.queryKey }, query)) arrival = merge(arrival, key.arrival);
+			}
+			if (!arrival) continue;
+			// List reads ignore the abort signal, so cancelling would only make the server do the
+			// work again, and steady changes could keep a slow list from ever finishing.
+			if (query.state.fetchStatus === "fetching") {
+				trailing.set(query.queryHash, merge(trailing.get(query.queryHash), arrival));
+			} else {
+				now.add(query.queryHash);
+			}
+		}
+		invalidate(now);
+	}
+
+	function invalidate(hashes: ReadonlySet<string>): void {
+		if (hashes.size === 0) return;
+		void queryClient.invalidateQueries(
+			{
+				predicate: (query) => hashes.has(query.queryHash),
+				// A hidden tab marks them stale, and refetches them when it shows again.
+				refetchType: document.visibilityState === "hidden" ? "none" : "active",
+			},
+			{ cancelRefetch: false },
+		);
+	}
+
+	function refetchTrailing(query: Query): void {
+		const arrival = trailing.get(query.queryHash);
+		if (!arrival || query.state.fetchStatus !== "idle") return;
+		trailing.delete(query.queryHash);
+		const holder = [...registry.registrations].find(
+			(registration) => registration.held() && owns(registration, query),
+		);
+		if (holder) holder.arrived(arrival);
+		else invalidate(new Set([query.queryHash]));
 	}
 
 	function sendTopics(): void {
@@ -374,6 +408,11 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	};
 	const unsubscribe = cache.subscribe((event) => {
 		if (event.type === "observerAdded" || event.type === "observerRemoved") scheduleTopics();
+		else if (event.type === "removed") trailing.delete(event.query.queryHash);
+		else if (event.type === "updated" && trailing.has(event.query.queryHash)) {
+			// Outside the cache's notification, which is still dispatching the settled fetch.
+			queueMicrotask(() => refetchTrailing(event.query));
+		}
 	});
 	registry.onChange = scheduleTopics;
 	sendTopics();
