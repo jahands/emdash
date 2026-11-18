@@ -135,6 +135,21 @@ describe("LiveSyncProvider", () => {
 		expect(FakeSocket.instances[1]!.topics()).toEqual(["content/posts", "menus"]);
 	});
 
+	it("doesn't refetch on reconnect what the tab already refetched since the socket dropped", async () => {
+		const socket = await connect();
+
+		socket.drop(1006);
+		await new Promise((resolve) => setTimeout(resolve, 20));
+		await queryClient.refetchQueries({ queryKey: ["menus"] });
+		expect(reads).toEqual({ menus: 2, posts: 1 });
+
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2), { timeout: 3000 });
+		FakeSocket.instances[1]!.open();
+		await vi.waitFor(() => expect(reads.posts).toBe(2));
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(reads.menus).toBe(2);
+	});
+
 	it("opens no socket when the host runs no hub", async () => {
 		await render(
 			<QueryClientProvider client={queryClient}>

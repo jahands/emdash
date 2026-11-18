@@ -39,8 +39,8 @@ export interface LivePlace {
 
 export interface LiveConnectionEvents {
 	changes(changes: LiveChange[]): void;
-	/** The socket opened again after a gap, in which changes may have been missed. */
-	resync(): void;
+	/** The socket opened again after a gap since `since`, in ms, in which changes may have been missed. */
+	resync(since: number): void;
 	/**
 	 * Rosters under the tab's topics. With `all`, every place that has anyone, so a place left
 	 * out is empty; the tab also gets an empty `all` when its socket closes.
@@ -82,6 +82,8 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	/** Closed while the tab was hidden; it reopens when the tab shows again. */
 	let paused = false;
 	let everOpened = false;
+	/** When the last open socket closed. */
+	let closedAt = 0;
 	let failures = 0;
 	let attempt = 0;
 	let retryTimer: number | undefined;
@@ -130,7 +132,7 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			pingTimer = window.setInterval(() => {
 				if (ws.readyState === WebSocket.OPEN) ws.send("ping");
 			}, PING_MS);
-			if (everOpened) events.resync();
+			if (everOpened) events.resync(closedAt);
 			everOpened = true;
 		});
 		ws.addEventListener("message", (event) => {
@@ -143,8 +145,11 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		ws.addEventListener("close", (event) => {
 			if (socket === ws) socket = null;
 			window.clearInterval(pingTimer);
-			// Rosters stop reaching a closed socket, so what the tab knows would go stale.
-			if (opened) events.presence([], true);
+			if (opened) {
+				closedAt = Date.now();
+				// Rosters stop reaching a closed socket, so what the tab knows would go stale.
+				events.presence([], true);
+			}
 			if (stopped || paused) return;
 			if (!opened || event.code === BUSY) failures++;
 			else failures = 0;

@@ -35,6 +35,12 @@ const TOPICS_DELAY_MS = 100;
 /** A change arrived, or the socket reopened after a gap in which one may have been missed. */
 type Arrival = "change" | "gap";
 
+interface Pending {
+	arrival: Arrival;
+	/** Data from a fetch that started after this, in ms, already has the change. */
+	since: number;
+}
+
 interface LiveRegistration {
 	/** Subscribed while registered, beyond the topics of queries' `meta.live`. */
 	readonly topics: readonly string[];
@@ -272,28 +278,34 @@ const NO_TOPICS: readonly string[] = [];
 
 function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => void {
 	const cache = queryClient.getQueryCache();
-	const pendingQueries = new Map<string, Arrival>();
-	const pendingRegistrations = new Map<LiveRegistration, Arrival>();
+	const pendingQueries = new Map<string, Pending>();
+	const pendingRegistrations = new Map<LiveRegistration, Pending>();
 	/** Queries a change reached mid-fetch, refetched once that fetch settles. */
 	const trailing = new Map<string, Arrival>();
+	/** When each query's current fetch started, and when the fetch that gave its data did. */
+	const fetchStarted = new Map<string, number>();
+	const dataFetchStarted = new Map<string, number>();
 	let lastFlush = Number.NEGATIVE_INFINITY;
 	let flushTimer: number | undefined;
 	let topicsTimer: number | undefined;
 	let placeTimer: number | undefined;
 	let sentTopics = "";
 
-	const mark = (arrival: Arrival, matches: (topics: readonly string[]) => boolean) => {
+	const mark = (pending: Pending, matches: (topics: readonly string[]) => boolean) => {
 		for (const query of cache.getAll()) {
 			const topics = liveTopics(query);
 			if (topics.length > 0 && matches(topics)) {
-				pendingQueries.set(query.queryHash, merge(pendingQueries.get(query.queryHash), arrival));
+				pendingQueries.set(
+					query.queryHash,
+					mergePending(pendingQueries.get(query.queryHash), pending),
+				);
 			}
 		}
 		for (const registration of registry.registrations) {
 			if (registration.topics.length > 0 && matches(registration.topics)) {
 				pendingRegistrations.set(
 					registration,
-					merge(pendingRegistrations.get(registration), arrival),
+					mergePending(pendingRegistrations.get(registration), pending),
 				);
 			}
 		}
@@ -307,11 +319,14 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			for (const change of changes) {
 				if (change.origin === TAB_ID) continue;
 				const reached = topicAndAncestors(change.topic);
-				mark("change", (topics) => topics.some((topic) => reached.includes(topic)));
+				mark({ arrival: "change", since: Date.now() }, (topics) =>
+					topics.some((topic) => reached.includes(topic)),
+				);
 			}
 		},
-		resync() {
-			mark("gap", () => true);
+		resync(since) {
+			// React Query's own focus and reconnect refetches have often caught up already.
+			mark({ arrival: "gap", since }, () => true);
 		},
 		presence(places, all) {
 			registry.presence.apply(places, all);
@@ -330,34 +345,38 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		const told = new Map<LiveRegistration, Arrival>();
 		const tell = (registration: LiveRegistration, arrival: Arrival) =>
 			told.set(registration, merge(told.get(registration), arrival));
-		for (const [hash, arrival] of queries) {
+		for (const [hash, pending] of queries) {
 			const query = cache.get(hash);
 			const holder = query && held.find((registration) => owns(registration, query));
 			if (!holder) continue;
 			queries.delete(hash);
-			tell(holder, arrival);
+			tell(holder, pending.arrival);
 		}
-		const refetchKeys: Array<{ queryKey: QueryKey; arrival: Arrival }> = [];
-		for (const [registration, arrival] of registrations) {
-			if (held.includes(registration)) tell(registration, arrival);
-			else for (const queryKey of registration.queryKeys) refetchKeys.push({ queryKey, arrival });
+		const refetchKeys: Array<{ queryKey: QueryKey; pending: Pending }> = [];
+		for (const [registration, pending] of registrations) {
+			if (held.includes(registration)) tell(registration, pending.arrival);
+			else for (const queryKey of registration.queryKeys) refetchKeys.push({ queryKey, pending });
 		}
 		for (const [registration, arrival] of told) registration.arrived(arrival);
 
 		if (queries.size === 0 && refetchKeys.length === 0) return;
 		const now = new Set<string>();
 		for (const query of cache.getAll()) {
-			let arrival = queries.get(query.queryHash);
+			const hash = query.queryHash;
+			let pending = queries.get(hash);
 			for (const key of refetchKeys) {
-				if (matchQuery({ queryKey: key.queryKey }, query)) arrival = merge(arrival, key.arrival);
+				if (matchQuery({ queryKey: key.queryKey }, query)) {
+					pending = mergePending(pending, key.pending);
+				}
 			}
-			if (!arrival) continue;
-			// List reads ignore the abort signal, so cancelling would only make the server do the
-			// work again, and steady changes could keep a slow list from ever finishing.
+			if (!pending) continue;
 			if (query.state.fetchStatus === "fetching") {
-				trailing.set(query.queryHash, merge(trailing.get(query.queryHash), arrival));
-			} else {
-				now.add(query.queryHash);
+				if ((fetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) > pending.since) continue;
+				// List reads ignore the abort signal, so cancelling would only make the server do the
+				// work again, and steady changes could keep a slow list from ever finishing.
+				trailing.set(hash, merge(trailing.get(hash), pending.arrival));
+			} else if ((dataFetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) <= pending.since) {
+				now.add(hash);
 			}
 		}
 		invalidate(now);
@@ -408,10 +427,18 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	};
 	const unsubscribe = cache.subscribe((event) => {
 		if (event.type === "observerAdded" || event.type === "observerRemoved") scheduleTopics();
-		else if (event.type === "removed") trailing.delete(event.query.queryHash);
-		else if (event.type === "updated" && trailing.has(event.query.queryHash)) {
+		else if (event.type === "removed") {
+			trailing.delete(event.query.queryHash);
+			fetchStarted.delete(event.query.queryHash);
+			dataFetchStarted.delete(event.query.queryHash);
+		} else if (event.type === "updated") {
+			const hash = event.query.queryHash;
+			if (event.action.type === "fetch") fetchStarted.set(hash, Date.now());
+			else if (event.action.type === "success" && !event.action.manual) {
+				dataFetchStarted.set(hash, fetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY);
+			}
 			// Outside the cache's notification, which is still dispatching the settled fetch.
-			queueMicrotask(() => refetchTrailing(event.query));
+			if (trailing.has(hash)) queueMicrotask(() => refetchTrailing(event.query));
 		}
 	});
 	registry.onChange = scheduleTopics;
@@ -446,6 +473,14 @@ function owns(registration: LiveRegistration, query: Query): boolean {
 /** A change outweighs a gap: the screen should say something changed. */
 function merge(previous: Arrival | undefined, next: Arrival): Arrival {
 	return previous === "change" ? previous : next;
+}
+
+function mergePending(previous: Pending | undefined, next: Pending): Pending {
+	if (!previous) return next;
+	return {
+		arrival: merge(previous.arrival, next.arrival),
+		since: Math.max(previous.since, next.since),
+	};
 }
 
 function liveTopics(query: Query): readonly string[] {
