@@ -1,11 +1,9 @@
+import { type Migration, Migrator } from "kysely/migration";
 import { afterEach, beforeEach, expect, it } from "vitest";
 
 import { columnExists } from "../../../src/database/dialect-helpers.js";
-import {
-	createMigrator,
-	MIGRATION_NAMES,
-	runMigrations,
-} from "../../../src/database/migrations/runner.js";
+import { MIGRATION_LOCK_TABLE } from "../../../src/database/migration-lock.js";
+import { createMigrator, MIGRATION_NAMES } from "../../../src/database/migrations/runner.js";
 import {
 	describeEachDialect,
 	getExactMigrationStatusForDialect,
@@ -71,15 +69,30 @@ describeEachDialect("migrations applied under their earlier names", (dialect) =>
 		expect(await runMigrationsForDialect(ctx)).toEqual({ applied: [] });
 	});
 
-	it("leaves a history that the next ordered migration run accepts", async () => {
+	it("leaves a history that ordered runs accept after one migration run", async () => {
 		const options = { migrationTableSchema: ctx.pgCtx?.schemaName };
 		await runMigrationsForDialect(ctx);
 
-		// A count below the registered one sends the run through the Migrator,
-		// as the next release's migration will.
-		expect(await runMigrations(ctx.db, { ...options, appliedCount: 0 })).toEqual({ applied: [] });
-		const { error, results } = await createMigrator(ctx.db, options).migrateToLatest();
-		expect(error).toBeUndefined();
-		expect(results).toEqual([]);
+		const current = await createMigrator(ctx.db, options).migrateToLatest();
+		expect(current.error).toBeUndefined();
+		expect(current.results).toEqual([]);
+
+		// A later release appending a migration, with no reconciliation in the runner.
+		const registered = await createMigrator(ctx.db, options).getMigrations();
+		const appended: Record<string, Migration> = Object.fromEntries(
+			registered.map(({ name, migration }) => [name, migration]),
+		);
+		appended["999_appended"] = { up: async () => {} };
+		const next = await new Migrator({
+			db: ctx.db,
+			provider: { getMigrations: async () => appended },
+			migrationTableName: "_emdash_migrations",
+			migrationLockTableName: MIGRATION_LOCK_TABLE,
+			migrationTableSchema: options.migrationTableSchema,
+		}).migrateToLatest();
+		expect(next.error).toBeUndefined();
+		expect(next.results?.map((result) => [result.migrationName, result.status])).toEqual([
+			["999_appended", "Success"],
+		]);
 	});
 });

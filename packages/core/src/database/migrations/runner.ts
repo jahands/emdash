@@ -748,6 +748,10 @@ export async function runMigrations(
 		throw new MigrationFailedError(`Migration failed: ${msg || "unknown error"}${failedSuffix}`);
 	}
 
+	// Records the renamed migrations after `098_user_last_login` now, so later
+	// runs pass the order check without this reconciliation.
+	if (unordered) await reconcileRenamedMigrations(db, schema);
+
 	return { applied };
 }
 
