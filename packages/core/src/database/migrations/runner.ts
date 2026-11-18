@@ -213,6 +213,17 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"100_content_sitemap_indexes": m100,
 });
 
+/**
+ * Earlier builds of this fork applied these migrations under the names on the
+ * left, before upstream's `098_user_last_login` took their number. The runner
+ * renames those records so the migrations count as applied rather than as
+ * missing history, and are not run again.
+ */
+const RENAMED_MIGRATIONS: ReadonlyMap<string, string> = new Map([
+	["098_content_live_list_indexes", "099_content_live_list_indexes"],
+	["099_content_sitemap_indexes", "100_content_sitemap_indexes"],
+]);
+
 /** Ordered names from the statically registered migration set. */
 export const MIGRATION_NAMES: readonly string[] = Object.freeze(Object.keys(MIGRATIONS));
 
@@ -330,14 +341,73 @@ export interface MigrationOptions {
 	appliedCount?: number | null;
 }
 
-export function createMigrator(db: Kysely<Database>, options?: MigrationOptions): Migrator {
+export function createMigrator(
+	db: Kysely<Database>,
+	options?: MigrationOptions,
+	allowUnorderedMigrations = false,
+): Migrator {
 	return new Migrator({
 		db,
 		provider: new StaticMigrationProvider(),
 		migrationTableName: MIGRATION_TABLE,
 		migrationLockTableName: MIGRATION_LOCK_TABLE,
 		migrationTableSchema: options?.migrationTableSchema,
+		allowUnorderedMigrations,
 	});
+}
+
+function migrationTableRef(schema: string | undefined) {
+	return schema ? sql`${sql.ref(schema)}.${sql.ref(MIGRATION_TABLE)}` : sql.ref(MIGRATION_TABLE);
+}
+
+const RENUMBER_AFTER = "098_user_last_login";
+
+/**
+ * Renames records of the RENAMED_MIGRATIONS and keeps them recorded after
+ * `098_user_last_login`, which the Migrator's order check requires. Returns
+ * whether `098_user_last_login` has yet to run behind them, which only an
+ * unordered run allows.
+ */
+async function reconcileRenamedMigrations(
+	db: Kysely<Database>,
+	schema: string | undefined,
+): Promise<boolean> {
+	const table = migrationTableRef(schema);
+	const renames = [...RENAMED_MIGRATIONS];
+	const names = [...RENAMED_MIGRATIONS.keys(), ...RENAMED_MIGRATIONS.values(), RENUMBER_AFTER];
+	const { rows } = await sql<{ name: string; timestamp: string }>`
+		SELECT ${sql.ref("name")}, ${sql.ref("timestamp")} FROM ${table} WHERE ${sql.ref("name")} IN (${sql.join(names)})
+	`.execute(db);
+
+	if (rows.some((row) => RENAMED_MIGRATIONS.has(row.name))) {
+		await sql`
+			UPDATE ${table}
+			SET name = CASE name ${sql.join(
+				renames.map(([from, to]) => sql`WHEN ${from} THEN ${to}`),
+				sql` `,
+			)} END
+			WHERE name IN (${sql.join(renames.map(([from]) => from))})
+		`.execute(db);
+	}
+
+	const renamed = rows.filter((row) => row.name !== RENUMBER_AFTER);
+	if (renamed.length === 0) return false;
+	const after = rows.find((row) => row.name === RENUMBER_AFTER);
+	if (!after) return true;
+
+	// Equal timestamps order by name, which puts the renamed records after it.
+	const recordedBefore = renamed.some(
+		(row) =>
+			row.timestamp !== after.timestamp &&
+			new Date(row.timestamp).getTime() <= new Date(after.timestamp).getTime(),
+	);
+	if (recordedBefore) {
+		await sql`
+			UPDATE ${table} SET ${sql.ref("timestamp")} = ${after.timestamp}
+			WHERE ${sql.ref("name")} IN (${sql.join([...RENAMED_MIGRATIONS.values()])})
+		`.execute(db);
+	}
+	return false;
 }
 
 /**
@@ -530,9 +600,7 @@ export async function getExactMigrationStatus(
 	db: Kysely<Database>,
 	options?: MigrationOptions,
 ): Promise<ExactMigrationStatus> {
-	const table = options?.migrationTableSchema
-		? sql`${sql.ref(options.migrationTableSchema)}.${sql.ref(MIGRATION_TABLE)}`
-		: sql.ref(MIGRATION_TABLE);
+	const table = migrationTableRef(options?.migrationTableSchema);
 
 	let rows: readonly { name: string }[];
 	try {
@@ -549,7 +617,7 @@ export async function getExactMigrationStatus(
 		throw error;
 	}
 
-	const appliedNames = new Set(rows.map((row) => row.name));
+	const appliedNames = new Set(rows.map((row) => RENAMED_MIGRATIONS.get(row.name) ?? row.name));
 	const knownApplied = MIGRATION_NAMES.filter((name) => appliedNames.has(name));
 	const pending = MIGRATION_NAMES.filter((name) => !appliedNames.has(name));
 	const knownNames = new Set(MIGRATION_NAMES);
@@ -629,12 +697,13 @@ export async function runMigrations(
 			return { applied: baselineApplied };
 		}
 	}
+	const unordered = initialCount !== null && (await reconcileRenamedMigrations(db, schema));
 
 	if (options?.contentRowLimit !== undefined) {
 		await assertWithinContentRowLimit(db, options.contentRowLimit, options);
 	}
 
-	const migrator = createMigrator(db, options);
+	const migrator = createMigrator(db, options, unordered);
 
 	const { error, results } = await migrator.migrateToLatest();
 
