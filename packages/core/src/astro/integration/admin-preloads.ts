@@ -19,6 +19,7 @@ const RESOLVED_ADMIN_PRELOADS_ID = "\0" + VIRTUAL_ADMIN_PRELOADS_ID;
 const PLACEHOLDER = "__EMDASH_ADMIN_PRELOADS__";
 const PLACEHOLDER_LITERAL = /(["'`])__EMDASH_ADMIN_PRELOADS__\1/g;
 const ADMIN_ISLAND_RE = /[/\\]astro[/\\]routes[/\\]PluginRegistry\.(?:mjs|js|tsx)$/;
+const REACT_RENDERER_RE = /[/\\]@astrojs[/\\]react[/\\]dist[/\\]client(?:-v17)?\.js$/;
 const JS_FILE = /\.js$/;
 const TRAILING_SLASH = /\/$/;
 const REPEATED_SLASHES = /\/{2,}/g;
@@ -53,9 +54,10 @@ function staticClosure(bundle: ClientBundle, fileName: string): string[] {
 }
 
 /**
- * The admin's preloads in a client build: the static closure of the admin
- * island plus the plugin admin entry (both load before the admin renders),
- * and for each admin route module the files its closure adds to that.
+ * The admin's preloads in a client build: the static closures of the admin
+ * island, the React renderer that hydrates it and the plugin admin entry (all
+ * load before the admin renders), and for each admin route module the files
+ * its closure adds to that.
  */
 export function collectAdminPreloads(
 	bundle: ClientBundle,
@@ -72,6 +74,14 @@ export function collectAdminPreloads(
 	if (!island) return undefined;
 
 	const boot = new Set(staticClosure(bundle, island.fileName));
+	// Astro's island script imports the renderer beside the island, so nothing the island
+	// imports leads to it.
+	const renderer = chunks.find(
+		(chunk) => chunk.facadeModuleId && REACT_RENDERER_RE.test(chunk.facadeModuleId),
+	);
+	if (renderer) {
+		for (const file of staticClosure(bundle, renderer.fileName)) boot.add(file);
+	}
 	const pluginAdmins = chunks.find((chunk) => chunk.facadeModuleId === options.pluginAdminEntryId);
 	if (pluginAdmins) {
 		for (const file of staticClosure(bundle, pluginAdmins.fileName)) boot.add(file);

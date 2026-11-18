@@ -64,6 +64,32 @@ describe("collectAdminPreloads", () => {
 		});
 	});
 
+	it("counts the React renderer that hydrates the island as boot", () => {
+		const bundle = bundleOf(
+			chunk("_astro/PluginRegistry.js", ["_astro/react.js"], ISLAND),
+			chunk("_astro/react.js"),
+			chunk(
+				"_astro/client.js",
+				["_astro/react.js", "_astro/react-dom-client.js"],
+				"/site/node_modules/.pnpm/@astrojs+react@6.0.5/node_modules/@astrojs/react/dist/client.js",
+			),
+			chunk("_astro/react-dom-client.js", ["_astro/react.js"]),
+		);
+
+		const preloads = collectAdminPreloads(bundle, {
+			adminDistPath: ADMIN_DIST,
+			pluginAdminEntryId: PLUGIN_ADMIN_ENTRY,
+			href,
+		});
+
+		expect(preloads?.boot.toSorted()).toEqual([
+			"/_astro/PluginRegistry.js",
+			"/_astro/client.js",
+			"/_astro/react-dom-client.js",
+			"/_astro/react.js",
+		]);
+	});
+
 	it("counts the plugin admin entry as boot, since the admin waits for it", () => {
 		const bundle = bundleOf(
 			chunk("_astro/PluginRegistry.js", [], ISLAND),
