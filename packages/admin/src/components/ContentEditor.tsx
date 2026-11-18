@@ -1186,6 +1186,24 @@ export function ContentEditor({
 			? focusField
 			: undefined;
 
+	// Fields that showed before the room went live mount again inside it, with every block closed
+	// and the link already taken off the URL, so the room's fields get the link once more.
+	const [linkFocusedOutsideRoom, setLinkFocusedOutsideRoom] = React.useState<{
+		itemId: string | undefined;
+		field: string;
+	} | null>(null);
+	const linkedField =
+		focusField ??
+		(room && linkFocusedOutsideRoom?.itemId === item?.id
+			? linkFocusedOutsideRoom?.field
+			: undefined);
+	const handleLinkedFieldFocused = useStableCallback(() => {
+		setLinkFocusedOutsideRoom(
+			!room && linkedField ? { itemId: item?.id, field: linkedField } : null,
+		);
+		if (focusField) onFieldFocused?.();
+	});
+
 	// Autosave with debounce
 	// Track pending autosave to cancel on manual save
 	const autosaveTimeoutRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -2912,8 +2930,9 @@ export function ContentEditor({
 													readOnly,
 													timezone,
 													blockReveal: field.kind === "blocks" ? blockReveal : undefined,
-													focusField: field.kind === "blocks" ? focusField : undefined,
-													onFieldFocused: field.kind === "blocks" ? onFieldFocused : undefined,
+													focusField: field.kind === "blocks" ? linkedField : undefined,
+													onFieldFocused:
+														field.kind === "blocks" ? handleLinkedFieldFocused : undefined,
 													referenceState,
 													onReferenceChange: handleReferenceCurrentChange,
 													onLoadMoreReferences: handleLoadMoreReferences,

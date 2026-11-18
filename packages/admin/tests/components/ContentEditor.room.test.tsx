@@ -17,6 +17,7 @@ import {
 	type BylineSummary,
 	type ContentItem,
 } from "../../src/lib/api";
+import type { BlockType } from "../../src/lib/api/schema";
 import { RoomOperationsContext, type RoomOperations } from "../../src/lib/co-editing/operations";
 import { RoomSaveError, type RoomEditing } from "../../src/lib/co-editing/types";
 import { PluginAdminProvider, type PluginAdmins } from "../../src/lib/plugin-context";
@@ -1619,5 +1620,68 @@ describe("EntryLockNotice for a room", () => {
 			.toHaveTextContent("This browser can’t join them, so nothing you change here will be saved.");
 		expect(page.getByRole("alertdialog").elements()).toHaveLength(0);
 		expect(screen.getByRole("button").elements()).toHaveLength(0);
+	});
+});
+
+describe("ContentEditor's block links when the room goes live", () => {
+	const SECTION: BlockType = {
+		id: "section-id",
+		slug: "section",
+		label: "Section",
+		category: "Layout",
+		currentVersion: 1,
+		source: "user",
+		createdAt: "2026-01-01T00:00:00.000Z",
+		updatedAt: "2026-01-01T00:00:00.000Z",
+		versions: [
+			{
+				id: "section-v1",
+				blockTypeId: "section-id",
+				version: 1,
+				fields: [{ slug: "heading", label: "Heading", type: "string" }],
+				fingerprint: "section-v1",
+				active: true,
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+		],
+	};
+	const BLOCK_FIELDS: Record<string, FieldDescriptor> = {
+		title: { kind: "string", label: "Title" },
+		layout: {
+			kind: "blocks",
+			label: "Layout",
+			blockTypes: [SECTION],
+			validation: { allowedTypes: ["section"] },
+		},
+	};
+	const LAYOUT = [{ _type: "section", _key: "services", _version: 1, heading: "Services" }];
+
+	it("opens and focuses the linked block again in the room's fields", async () => {
+		const onFieldFocused = vi.fn();
+		const item = makeItem({ data: { title: "My Post", layout: LAYOUT } });
+		const props = { fields: BLOCK_FIELDS, item, onFieldFocused };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "layout.services.heading"));
+		unmounts.push(() => screen.unmount());
+		const heading = () => document.getElementById("field-layout.services.heading");
+
+		await expect.poll(() => document.activeElement === heading()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+
+		// The page takes the link off the URL, then the room goes live and the fields mount again.
+		await screen.rerender(editor(null));
+		const fake = createRoom({ title: "My Post", layout: LAYOUT, slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+
+		await expect
+			.element(screen.getByRole("button", { name: "Section", exact: true }))
+			.toHaveAttribute("aria-expanded", "true");
+		await expect.poll(() => document.activeElement === heading()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
 	});
 });
