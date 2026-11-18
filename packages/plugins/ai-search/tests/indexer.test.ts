@@ -415,10 +415,11 @@ describe("Indexer", () => {
 
 		const page = await indexer.syncPage("posts", undefined);
 
-		expect(page).toMatchObject({
-			synced: ["entry-1", "entry-3"],
-			failures: [{ id: "entry-2", error: "AiSearchError: internal_error" }],
-		});
+		// Records sync concurrently, so `synced` lists them in the order they finish.
+		expect(page.synced.toSorted()).toEqual(["entry-1", "entry-3"]);
+		expect(page.failures).toMatchObject([
+			{ id: "entry-2", error: "AiSearchError: internal_error" },
+		]);
 		expect([...items.items.keys()].toSorted()).toEqual(["posts/entry-1.md", "posts/entry-3.md"]);
 	});
 
