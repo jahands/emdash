@@ -27,6 +27,7 @@ import { GET as getCommentCounts } from "../../../src/astro/routes/api/admin/com
 import { GET as getCurrentUser } from "../../../src/astro/routes/api/auth/me.js";
 import { GET as getAuthMode } from "../../../src/astro/routes/api/auth/mode.js";
 import { GET as getEntry } from "../../../src/astro/routes/api/content/[collection]/[id].js";
+import { GET as compareEntry } from "../../../src/astro/routes/api/content/[collection]/[id]/compare.js";
 import { GET as listEntries } from "../../../src/astro/routes/api/content/[collection]/index.js";
 import { GET as getManifest } from "../../../src/astro/routes/api/manifest.js";
 import { runWithContext } from "../../../src/request-context.js";
@@ -42,6 +43,7 @@ import {
 
 const ENTRY_MAX_WAVES = 2;
 const ENTRY_MAX_QUERIES = 8;
+const COMPARE_MAX_WAVES = 2;
 const MANIFEST_MAX_WAVES = 1;
 const MANIFEST_MAX_QUERIES = 6;
 const DASHBOARD_MAX_WAVES = 2;
@@ -192,6 +194,20 @@ describeEachDialect("admin read round trips", (dialect) => {
 		const plainItem = JSON.parse(plain.text).data.item;
 		expect(plainItem.slug).toBe("post-3");
 		expect(plainItem).not.toHaveProperty("draftSlug");
+	});
+
+	it("compares an entry's draft with its live version within the round-trip budget", async () => {
+		const params = { collection: "posts", id: draftEntryId };
+		const result = await inRequest(() =>
+			compareEntry(context(`/content/posts/${draftEntryId}/compare`, params)),
+		);
+
+		expect(result.response.status, result.text).toBe(200);
+		const { data } = JSON.parse(result.text);
+		expect(data.hasChanges).toBe(true);
+		expect(data.live.title).toBe("Post 3");
+		expect(data.draft.title).toBe("Pending title");
+		expect(sequentialWaves(result.spans)).toBeLessThanOrEqual(COMPARE_MAX_WAVES);
 	});
 
 	it("builds the manifest within the round-trip budget", async () => {

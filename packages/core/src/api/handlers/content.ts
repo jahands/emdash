@@ -3241,6 +3241,11 @@ export async function handleContentCompare(
 	}>
 > {
 	try {
+		// Reading revisions normalizes their dates by the collection's fields, which the request
+		// cache then shares, so they load alongside the entry instead of after the revisions.
+		if (getRequestContext()) {
+			void new ContentDatetimeNormalizer(db).writableFieldSlugs(collection).catch(() => {});
+		}
 		const repo = new ContentRepository(db);
 		const entry = await repo.findByIdOrSlug(collection, id);
 
@@ -3254,19 +3259,24 @@ export async function handleContentCompare(
 			};
 		}
 
-		const revisionRepo = new RevisionRepository(db);
-
-		const live = entry.liveRevisionId ? await revisionRepo.findById(entry.liveRevisionId) : null;
-		const draft = entry.draftRevisionId ? await revisionRepo.findById(entry.draftRevisionId) : null;
-
+		const revisionIds = [entry.liveRevisionId, entry.draftRevisionId].filter(
+			(revisionId): revisionId is string => revisionId !== null,
+		);
 		// Reference selections have to be filled in from the links on both sides
 		// before they can be compared. The published selection is the links, not
 		// whatever `_references` the live revision happens to carry; and the draft
 		// stages only the fields its saves named, so the rest of its effective
 		// selection is the live one.
-		const liveReferences = entry.translationGroup
-			? await liveReferenceSelection(db, collection, entry.translationGroup)
-			: {};
+		const [revisions, liveReferences] = await settleAll([
+			revisionIds.length > 0
+				? new RevisionRepository(db).findByIds(collection, revisionIds)
+				: Promise.resolve([]),
+			entry.translationGroup
+				? liveReferenceSelection(db, collection, entry.translationGroup)
+				: Promise.resolve({}),
+		]);
+		const live = revisions.find((revision) => revision.id === entry.liveRevisionId);
+		const draft = revisions.find((revision) => revision.id === entry.draftRevisionId);
 		const withReferences = (
 			revisionData: Record<string, unknown> | undefined,
 			staged: StagedReferences,

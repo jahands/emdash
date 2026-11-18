@@ -428,6 +428,23 @@ describe("ContentEditPage revision view", () => {
 		await expect.element(screen.getByText("Current version", { exact: true })).toBeVisible();
 	});
 
+	it("asks for the comparison with the live version without waiting for the version list", async () => {
+		server = createMockServer();
+		const releaseList = server.holdNextListRead();
+		const screen = await renderEditPage();
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+
+		await screen.getByRole("button", { name: "View changes" }).click();
+
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(1));
+		expect(listReads()).toHaveLength(1);
+		releaseList();
+		const changes = screen.getByRole("article", { name: "Changes since the published version" });
+		await expect.element(changes).toHaveTextContent(/^title$/);
+		expect(compareReads()).toHaveLength(1);
+	});
+
 	it("follows the autosave it sent on the way in to the new current version, dated now", async () => {
 		server = createMockServer();
 		const screen = await renderEditPage();

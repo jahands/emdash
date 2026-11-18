@@ -1,5 +1,5 @@
 import { useLingui } from "@lingui/react/macro";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
 import {
@@ -254,22 +254,33 @@ export function useRevisionView({
 
 	const comparing = isViewing && comparingLive;
 	const compareQuery = useQuery({
-		// The list changes whenever the draft does, including saves that keep the draft's id.
 		queryKey: [
 			"contentCompare",
 			collection,
 			entryId ?? "",
 			draftRevisionId ?? null,
 			liveRevisionId ?? null,
-			query.dataUpdatedAt,
 		] as const,
 		queryFn: () => compareRevisions(collection, entryId ?? ""),
-		enabled: comparing && Boolean(entryId) && Boolean(list),
+		enabled: comparing && Boolean(entryId),
 		placeholderData: (previous, previousQuery) =>
 			previousQuery?.queryKey[1] === collection && previousQuery.queryKey[2] === entryId
 				? previous
 				: undefined,
 	});
+	// The list is read again whenever the draft changes, including saves that keep the draft's id,
+	// so the comparison is too. Its first read runs alongside the list's.
+	const queryClient = useQueryClient();
+	const listUpdatedAt = query.dataUpdatedAt;
+	const seenListUpdateRef = React.useRef(listUpdatedAt);
+	React.useEffect(() => {
+		const seen = seenListUpdateRef.current;
+		seenListUpdateRef.current = listUpdatedAt;
+		if (seen === 0 || seen === listUpdatedAt) return;
+		void queryClient.invalidateQueries({
+			queryKey: ["contentCompare", collection, entryId ?? ""],
+		});
+	}, [listUpdatedAt, queryClient, collection, entryId]);
 	const compared = comparing ? compareQuery.data : undefined;
 	const liveDiff = React.useMemo(() => {
 		if (!compared) return null;
