@@ -274,10 +274,11 @@ interface RouterContext {
 }
 
 /*
- * When the router preloads a route on hover, focus or touch of a link, its
- * loader prefetches the queries the screen renders first, so the screen
- * usually opens with its data. Loaders never hold up a navigation, and do
- * nothing on one: the screen requests what is missing as it mounts.
+ * A route's loader prefetches the queries its screen renders first, with the
+ * screen's own query options. It runs when the router preloads the route on
+ * hover, focus or touch of a link, so the screen usually opens with its data,
+ * and on navigation, so the requests start before the screen's code arrives.
+ * Loaders never hold up a navigation: they don't return their promises.
  */
 
 /** Calls `load` with the manifest, which the admin's frame loads before it shows a link. */
@@ -709,8 +710,7 @@ const dashboardRoute = createRoute({
 	path: "/",
 	component: withRouteModules(DashboardPage, Dashboard),
 	staticData: { pageTitle: msg`Dashboard` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		void queryClient.prefetchQuery(dashboardStatsQueryOptions());
 	},
 });
@@ -744,13 +744,7 @@ const contentListRoute = createRoute({
 	}),
 	staticData: { pageTitle: msg`Content` },
 	loaderDeps: ({ search }) => ({ locale: search.locale }),
-	loader: ({
-		preload,
-		context: { queryClient, pluginAdmins = {} },
-		params: { collection },
-		deps,
-	}) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient, pluginAdmins = {} }, params: { collection }, deps }) => {
 		withCachedManifest(queryClient, (manifest) => {
 			if (!manifest.collections[collection]) return;
 			const list = contentListQuery(collection, {
@@ -2845,8 +2839,7 @@ const mediaRoute = createRoute({
 				: undefined,
 	}),
 	loaderDeps: ({ search }) => ({ folder: search.folder }),
-	loader: ({ preload, context: { queryClient }, deps: { folder } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient }, deps: { folder } }) => {
 		void queryClient.prefetchQuery(
 			mediaListQueryOptions({
 				search: "",
@@ -3131,8 +3124,7 @@ const commentsRoute = createRoute({
 	path: "/comments",
 	component: withRouteModules(CommentsPage, CommentInbox),
 	staticData: { pageTitle: msg`Comments` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		void queryClient.prefetchInfiniteQuery(
 			commentsQueryOptions({ status: "pending", collection: "", search: "" }),
 		);
@@ -3473,8 +3465,7 @@ const pluginManagerRoute = createRoute({
 	path: "/plugins-manager",
 	component: withRouteModules(PluginManagerPage, PluginManager),
 	staticData: { pageTitle: msg`Plugins` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		void queryClient.prefetchQuery(pluginsQueryOptions());
 	},
 });
@@ -3618,8 +3609,7 @@ const menuListRoute = createRoute({
 	path: "/menus",
 	component: MenuList,
 	staticData: { pageTitle: msg`Menus` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		withCachedManifest(queryClient, (manifest) => {
 			void queryClient.prefetchQuery(menusQueryOptions(manifest.i18n?.defaultLocale));
 		});
@@ -3644,8 +3634,7 @@ const taxonomyRoute = createRoute({
 	path: "/taxonomies/$taxonomy",
 	component: withRouteModules(TaxonomyPage, TaxonomyManager),
 	staticData: { pageTitle: msg`Taxonomies` },
-	loader: ({ preload, context: { queryClient }, params: { taxonomy } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient }, params: { taxonomy } }) => {
 		void queryClient.prefetchQuery(taxonomyDefQueryOptions(taxonomy));
 		withCachedManifest(queryClient, (manifest) => {
 			void queryClient.prefetchQuery(
@@ -3667,8 +3656,7 @@ const widgetsRoute = createRoute({
 	path: "/widgets",
 	component: Widgets,
 	staticData: { pageTitle: msg`Widgets` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		void queryClient.prefetchQuery(widgetAreasQueryOptions());
 		void queryClient.prefetchQuery(widgetComponentsQueryOptions());
 	},
@@ -3680,8 +3668,7 @@ const redirectsRoute = createRoute({
 	path: "/redirects",
 	component: Redirects,
 	staticData: { pageTitle: msg`Redirects` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		void queryClient.prefetchInfiniteQuery(
 			redirectsQueryOptions({ search: "", enabled: undefined, auto: undefined, group: undefined }),
 		);
@@ -3693,8 +3680,7 @@ const sectionsListRoute = createRoute({
 	path: "/sections",
 	component: Sections,
 	staticData: { pageTitle: msg`Sections` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		void queryClient.prefetchQuery(sectionsQueryOptions({ source: null, search: "" }));
 	},
 });
@@ -3719,8 +3705,7 @@ const usersRoute = createRoute({
 		UsersPage,
 	),
 	staticData: { pageTitle: msg`Users` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		if (!cachedUserIsAdmin(queryClient)) return;
 		void queryClient.prefetchInfiniteQuery(usersQueryOptions({ search: "", role: undefined }));
 	},
@@ -3748,8 +3733,7 @@ const bylinesRoute = createRoute({
 	staticData: { pageTitle: msg`Bylines` },
 	validateSearch: parseBylinesLocaleSearch,
 	loaderDeps: ({ search }) => ({ locale: search.locale }),
-	loader: ({ preload, context: { queryClient }, deps }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient }, deps }) => {
 		withCachedManifest(queryClient, (manifest) => {
 			const locale = deps.locale ?? manifest.i18n?.defaultLocale;
 			void queryClient.prefetchQuery(bylinesQueryOptions({ search: "", guest: "all", locale }));
@@ -3765,8 +3749,7 @@ const bylineSchemaRoute = createRoute({
 	path: "/byline-schema",
 	component: BylineSchemaPage,
 	staticData: { pageTitle: msg`Byline Schema`, heading: msg`Byline schema` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		if (cachedUserIsAdmin(queryClient)) void queryClient.prefetchQuery(bylineFieldsQueryOptions());
 	},
 });
@@ -3777,8 +3760,7 @@ const contentTypesListRoute = createRoute({
 	path: "/content-types",
 	component: withRouteModules(ContentTypesListPage, ContentTypeList, BlockTypeList),
 	staticData: { pageTitle: msg`Content Types` },
-	loader: ({ preload, context: { queryClient } }) => {
-		if (!preload) return;
+	loader: ({ context: { queryClient } }) => {
 		void queryClient.prefetchQuery(schemaCollectionsQueryOptions());
 		void queryClient.prefetchQuery(orphanedTablesQueryOptions());
 		void queryClient.prefetchQuery(blockTypesQueryOptions());

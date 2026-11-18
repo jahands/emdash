@@ -831,7 +831,10 @@ describe("MediaPage – upload completion", () => {
 			return mockedFetch(input, init);
 		};
 
-		const { router, TestApp } = buildRouter();
+		const { router, queryClient, TestApp } = buildRouter();
+		// The route's loader reads the first page before the screen mounts. The admin's client keeps
+		// it fresh for a minute; the test client would drop it, or refetch it on mount.
+		queryClient.setQueryDefaults(["media-folders"], { gcTime: Infinity, staleTime: 60_000 });
 		await router.navigate({ to: "/media" });
 		const screen = await render(<TestApp />);
 

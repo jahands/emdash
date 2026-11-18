@@ -1,8 +1,10 @@
+import { QueryClient } from "@tanstack/react-query";
 import { afterEach, describe, expect, it } from "vitest";
 import { render } from "vitest-browser-react";
 
 import { AdminApp } from "../src/App.js";
 import type { AdminManifest } from "../src/lib/api/index.js";
+import { createAdminRouter } from "../src/router.js";
 
 const MANIFEST: AdminManifest = {
 	version: "1.0.0",
@@ -179,5 +181,25 @@ describe("hovering a sidebar link", () => {
 		expect(window.location.search).toBe("?locale=en");
 		// A full page load would have replaced the window object and lost the marker.
 		expect(marker in window).toBe(true);
+	});
+});
+
+describe("navigating to a screen", () => {
+	afterEach(() => {
+		globalThis.fetch = originalFetch;
+	});
+
+	it("starts the screen's data before the screen renders", async () => {
+		mockApi();
+		const queryClient = new QueryClient();
+		queryClient.setQueryData(["manifest"], MANIFEST);
+		const router = createAdminRouter(queryClient);
+
+		router.history.push("/_emdash/admin/widgets");
+		await router.load();
+
+		expect(requestCount("/_emdash/api/widget-areas")).toBe(1);
+		expect(requestCount("/_emdash/api/widget-components")).toBe(1);
+		queryClient.clear();
 	});
 });
