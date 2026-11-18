@@ -3,7 +3,9 @@
  * its topics changed and who else is where. Everything it knows lives in its sockets, in each
  * one's attachment and tags on Cloudflare, so a hub that outlived its memory rebuilds from them.
  * It keeps no timers and no storage, which would stop a Durable Object from hibernating:
- * connection lifetime and silence are checked when it publishes or a roster changes.
+ * connection lifetime and silence are checked when it publishes or a roster changes. A socket
+ * near the end of its lifetime is asked to renew on the next of those, so its tab can open a new
+ * one before this one closes and miss nothing.
  */
 
 import type { RoleLevel } from "@emdash-cms/auth";
@@ -26,6 +28,8 @@ export const MAX_HUB_MESSAGE_BYTES = 16 * 1024;
  * socket silent this long is gone.
  */
 export const SILENT_HUB_SOCKET_MS = 3 * 60 * 1000;
+/** How long before the end of its lifetime a socket is asked to renew. */
+export const RENEW_HUB_SOCKET_MS = 60 * 1000;
 const MAX_IDS = 50;
 const GOING_AWAY = 1001;
 const MESSAGE_TOO_BIG = 1009;
@@ -103,7 +107,12 @@ export type HubFrame =
 	 * The rosters of the topics at or under the socket's subscriptions that it may see. With
 	 * `all`, the list is every place that has anyone, and a place it leaves out is empty.
 	 */
-	| { t: "presence"; places: PresencePlace[]; all?: true };
+	| { t: "presence"; places: PresencePlace[]; all?: true }
+	/**
+	 * Open a new socket, then close this one. Sent once per socket while the hub stays awake,
+	 * near the end of its lifetime. Tabs from before it ignore it.
+	 */
+	| { t: "renew" };
 
 export interface HubOptions {
 	sockets: HubSockets;
@@ -117,6 +126,8 @@ export class Hub {
 	readonly #used = new Map<string, number>();
 	/** Places whose rosters changed and haven't been sent. Empty between calls. */
 	readonly #dirty = new Set<string>();
+	/** Sockets asked to renew. Lost with the hub's memory, after which they are asked again. */
+	readonly #renewing = new WeakSet<HubSocket>();
 
 	constructor(options: HubOptions) {
 		this.#sockets = options.sockets;
@@ -187,14 +198,17 @@ export class Hub {
 		const now = this.#now();
 		const reaches = changes.map((change) => topicAndAncestors(change.topic));
 		for (const socket of this.#sockets.all()) {
-			if (closed.has(socket) || !this.#live(socket, now)) continue;
+			if (closed.has(socket) || this.#silent(socket, now)) continue;
 			const { topics } = socket.state;
 			const matching = changes.filter((_, index) =>
 				reaches[index].some((topic) => topics.includes(topic)),
 			);
-			if (matching.length === 0) continue;
-			const frame: HubFrame = { t: "changes", changes: matching };
-			socket.send(JSON.stringify(frame));
+			if (matching.length > 0) {
+				const frame: HubFrame = { t: "changes", changes: matching };
+				socket.send(JSON.stringify(frame));
+			}
+			// After the frame, so the socket that reached its lifetime doesn't miss the change.
+			this.#expired(socket, now);
 		}
 		this.#sendRosters(now);
 	}
@@ -263,17 +277,29 @@ export class Hub {
 		return rosters;
 	}
 
-	/** Closes a socket past its lifetime or gone silent. */
+	/** Closes a socket gone silent or past its lifetime, and asks one near its end to renew. */
 	#live(socket: HubSocket, now: number): boolean {
-		if (now - socket.state.connectedAt >= CONNECTION_LIFETIME_MS) {
-			this.#close(socket, CLOSE_CODES.rejoin, "The connection reached its lifetime");
-			return false;
-		}
-		if (now - socket.seenAt() > SILENT_HUB_SOCKET_MS) {
-			this.#close(socket, GOING_AWAY, "The connection went silent");
-			return false;
-		}
+		return !this.#silent(socket, now) && !this.#expired(socket, now);
+	}
+
+	#silent(socket: HubSocket, now: number): boolean {
+		if (now - socket.seenAt() <= SILENT_HUB_SOCKET_MS) return false;
+		this.#close(socket, GOING_AWAY, "The connection went silent");
 		return true;
+	}
+
+	#expired(socket: HubSocket, now: number): boolean {
+		const age = now - socket.state.connectedAt;
+		if (age >= CONNECTION_LIFETIME_MS) {
+			this.#close(socket, CLOSE_CODES.rejoin, "The connection reached its lifetime");
+			return true;
+		}
+		if (age >= CONNECTION_LIFETIME_MS - RENEW_HUB_SOCKET_MS && !this.#renewing.has(socket)) {
+			this.#renewing.add(socket);
+			const frame: HubFrame = { t: "renew" };
+			socket.send(JSON.stringify(frame));
+		}
+		return false;
 	}
 
 	#close(socket: HubSocket, code: number, reason: string): void {

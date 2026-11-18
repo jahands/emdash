@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 
 import {
 	Hub,
+	RENEW_HUB_SOCKET_MS,
 	SILENT_HUB_SOCKET_MS,
 	readHubSocketState,
 	type HubSocket,
@@ -244,7 +245,7 @@ describe("Hub", () => {
 			]);
 		});
 
-		it("closes sockets past their lifetime and silent ones instead of sending", () => {
+		it("closes a socket past its lifetime after sending it the change, and a silent one instead", () => {
 			const { hub, connect, advance } = setup();
 			const old = connect({}, ["menus"]);
 			advance(CONNECTION_LIFETIME_MS - SILENT_HUB_SOCKET_MS);
@@ -258,8 +259,29 @@ describe("Hub", () => {
 			expect(old.closed?.code).toBe(CLOSE_CODES.rejoin);
 			expect(silent.closed?.code).toBe(1001);
 			expect(fresh.changes()).toHaveLength(1);
-			expect(old.changes()).toEqual([]);
+			expect(old.changes()).toEqual([{ t: "changes", changes: [{ topic: "menus" }] }]);
 			expect(silent.changes()).toEqual([]);
+		});
+
+		it("asks a socket near the end of its lifetime to renew, once", () => {
+			const { hub, connect, advance } = setup();
+			const old = connect({}, ["menus"]);
+			advance(CONNECTION_LIFETIME_MS - RENEW_HUB_SOCKET_MS - 1);
+			const young = connect({ userId: "bo" }, ["menus"]);
+			old.seen = young.state.connectedAt;
+
+			hub.publish([{ topic: "widgets" }]);
+			expect(old.frames.filter((frame) => frame.t === "renew")).toEqual([]);
+
+			advance(1);
+			old.seen = young.seen = young.state.connectedAt + 1;
+			hub.publish([{ topic: "widgets" }]);
+			hub.publish([{ topic: "menus" }]);
+
+			expect(old.frames.filter((frame) => frame.t === "renew")).toHaveLength(1);
+			expect(old.closed).toBeNull();
+			expect(old.changes()).toHaveLength(1);
+			expect(young.frames.filter((frame) => frame.t === "renew")).toEqual([]);
 		});
 	});
 

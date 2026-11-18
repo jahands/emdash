@@ -166,6 +166,26 @@ describe("LiveSyncProvider", () => {
 		expect(reads.menus).toBe(2);
 	});
 
+	it("moves to a new socket when the hub asks it to renew, without refetching", async () => {
+		const socket = await connect();
+
+		socket.push({ t: "renew" });
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
+		const next = FakeSocket.instances[1]!;
+		next.open();
+		expect(next.topics()).toEqual(["content/posts", "menus"]);
+		expect(socket.readyState).toBe(FakeSocket.OPEN);
+
+		next.presence([], true);
+		expect(socket.readyState).toBe(3);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(reads).toEqual({ menus: 1, posts: 1 });
+		expect(FakeSocket.instances).toHaveLength(2);
+
+		next.change("menus");
+		await vi.waitFor(() => expect(reads.menus).toBe(2));
+	});
+
 	it("opens no socket when the host runs no hub", async () => {
 		await render(
 			<QueryClientProvider client={queryClient}>
