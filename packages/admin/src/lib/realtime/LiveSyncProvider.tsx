@@ -24,11 +24,16 @@ import { openLiveConnection, type LivePlace, type PresenceActivity } from "./con
 import { PresenceStore, type PresenceAt } from "./presence.js";
 import { TAB_ID } from "./tab-id.js";
 
-/**
- * At most one round of invalidations this often. A co-edited entry saves every 2 to 10 seconds,
- * and each save would otherwise refetch every open list it appears in.
- */
+/** A query, or a screen's registration, refetches for live changes at most this often. */
 const THROTTLE_MS = 2000;
+/**
+ * The same, for a query reached only by updates to entries under its topic. A co-edited entry
+ * checkpoints every 2 to 10 seconds, and each checkpoint would otherwise refetch every open list
+ * it appears in.
+ */
+const ENTRY_UPDATE_THROTTLE_MS = 15_000;
+/** A timer can fire a little before the time it was set for. */
+const TIMER_SLACK_MS = 10;
 /** Navigation swaps many queries at once; the topics are sent once it settles. */
 const TOPICS_DELAY_MS = 100;
 
@@ -39,6 +44,8 @@ interface Pending {
 	arrival: Arrival;
 	/** Data from a fetch that started after this, in ms, already has the change. */
 	since: number;
+	/** How long after its last live refetch the query, or registration, may refetch again. */
+	throttle: number;
 }
 
 interface LiveRegistration {
@@ -285,61 +292,102 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	/** When each query's current fetch started, and when the fetch that gave its data did. */
 	const fetchStarted = new Map<string, number>();
 	const dataFetchStarted = new Map<string, number>();
-	let lastFlush = Number.NEGATIVE_INFINITY;
+	/** When each query, by hash, or registration last refetched or was told for a live change. */
+	const lastRun = new Map<string | LiveRegistration, number>();
 	let flushTimer: number | undefined;
+	let flushAt = Number.POSITIVE_INFINITY;
 	let topicsTimer: number | undefined;
 	let placeTimer: number | undefined;
 	let sentTopics = "";
 
-	const mark = (pending: Pending, matches: (topics: readonly string[]) => boolean) => {
+	/** `throttleFor` gives the throttle for topics the change reaches, or undefined for none. */
+	const mark = (
+		change: Omit<Pending, "throttle">,
+		throttleFor: (topics: readonly string[]) => number | undefined,
+	) => {
 		for (const query of cache.getAll()) {
 			const topics = liveTopics(query);
-			if (topics.length > 0 && matches(topics)) {
+			const throttle = topics.length > 0 ? throttleFor(topics) : undefined;
+			if (throttle !== undefined) {
 				pendingQueries.set(
 					query.queryHash,
-					mergePending(pendingQueries.get(query.queryHash), pending),
+					mergePending(pendingQueries.get(query.queryHash), { ...change, throttle }),
 				);
 			}
 		}
 		for (const registration of registry.registrations) {
-			if (registration.topics.length > 0 && matches(registration.topics)) {
+			const throttle =
+				registration.topics.length > 0 ? throttleFor(registration.topics) : undefined;
+			if (throttle !== undefined) {
 				pendingRegistrations.set(
 					registration,
-					mergePending(pendingRegistrations.get(registration), pending),
+					mergePending(pendingRegistrations.get(registration), { ...change, throttle }),
 				);
 			}
 		}
-		if ((pendingQueries.size > 0 || pendingRegistrations.size > 0) && flushTimer === undefined) {
-			flushTimer = window.setTimeout(flush, Math.max(0, lastFlush + THROTTLE_MS - Date.now()));
-		}
+		schedule();
 	};
+
+	const dueAt = (key: string | LiveRegistration, pending: Pending) =>
+		(lastRun.get(key) ?? Number.NEGATIVE_INFINITY) + pending.throttle;
+
+	function schedule(): void {
+		let due = Number.POSITIVE_INFINITY;
+		for (const [hash, pending] of pendingQueries) due = Math.min(due, dueAt(hash, pending));
+		for (const [registration, pending] of pendingRegistrations) {
+			due = Math.min(due, dueAt(registration, pending));
+		}
+		if (due === Number.POSITIVE_INFINITY || (flushTimer !== undefined && flushAt <= due)) return;
+		window.clearTimeout(flushTimer);
+		flushAt = due;
+		flushTimer = window.setTimeout(flush, Math.max(0, due - Date.now()));
+	}
 
 	const connection = openLiveConnection({
 		changes(changes) {
 			for (const change of changes) {
 				if (change.origin === TAB_ID) continue;
 				const reached = topicAndAncestors(change.topic);
-				mark({ arrival: "change", since: Date.now() }, (topics) =>
-					topics.some((topic) => reached.includes(topic)),
-				);
+				const bubbled = isEntryUpdate(change) ? ENTRY_UPDATE_THROTTLE_MS : THROTTLE_MS;
+				mark({ arrival: "change", since: Date.now() }, (topics) => {
+					if (topics.includes(change.topic)) return THROTTLE_MS;
+					return topics.some((topic) => reached.includes(topic)) ? bubbled : undefined;
+				});
 			}
 		},
 		resync(since) {
 			// React Query's own focus and reconnect refetches have often caught up already.
-			mark({ arrival: "gap", since }, () => true);
+			mark({ arrival: "gap", since }, () => THROTTLE_MS);
 		},
 		presence(places, all) {
 			registry.presence.apply(places, all);
 		},
 	});
 
+	function takeDue<K extends string | LiveRegistration>(
+		pending: Map<K, Pending>,
+		now: number,
+	): Map<K, Pending> {
+		const due = new Map<K, Pending>();
+		for (const [key, value] of pending) {
+			if (dueAt(key, value) > now + TIMER_SLACK_MS) continue;
+			pending.delete(key);
+			due.set(key, value);
+			lastRun.set(key, now);
+		}
+		return due;
+	}
+
 	function flush(): void {
 		flushTimer = undefined;
-		lastFlush = Date.now();
-		const queries = new Map(pendingQueries);
-		const registrations = new Map(pendingRegistrations);
-		pendingQueries.clear();
-		pendingRegistrations.clear();
+		flushAt = Number.POSITIVE_INFINITY;
+		const startedAt = Date.now();
+		const queries = takeDue(pendingQueries, startedAt);
+		const registrations = takeDue(pendingRegistrations, startedAt);
+		for (const [key, ranAt] of lastRun) {
+			if (ranAt + ENTRY_UPDATE_THROTTLE_MS < startedAt) lastRun.delete(key);
+		}
+		schedule();
 
 		const held = [...registry.registrations].filter((registration) => registration.held());
 		const told = new Map<LiveRegistration, Arrival>();
@@ -480,7 +528,17 @@ function mergePending(previous: Pending | undefined, next: Pending): Pending {
 	return {
 		arrival: merge(previous.arrival, next.arrival),
 		since: Math.max(previous.since, next.since),
+		throttle: Math.min(previous.throttle, next.throttle),
 	};
+}
+
+/** An update to one content entry, as a co-editing room's checkpoint publishes. */
+function isEntryUpdate(change: { topic: string; op?: string }): boolean {
+	return (
+		change.op === "update" &&
+		change.topic.startsWith("content/") &&
+		change.topic.split("/").length === 3
+	);
 }
 
 function liveTopics(query: Query): readonly string[] {

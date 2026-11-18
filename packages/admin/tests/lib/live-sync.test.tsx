@@ -104,6 +104,22 @@ describe("LiveSyncProvider", () => {
 		expect(reads.menus).toBe(1);
 	});
 
+	it("refetches a list less often for its entries' updates than for entries added or removed", async () => {
+		const socket = await connect();
+
+		socket.change("content/posts/01A", { op: "update" });
+		await vi.waitFor(() => expect(reads.posts).toBe(2));
+		await new Promise((resolve) => setTimeout(resolve, 2300));
+		socket.change("content/posts/01A", { op: "update" });
+		await new Promise((resolve) => setTimeout(resolve, 2300));
+		expect(reads.posts).toBe(2);
+
+		socket.change("content/posts/01B", { op: "create" });
+		await vi.waitFor(() => expect(reads.posts).toBe(3));
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(reads).toEqual({ menus: 1, posts: 3 });
+	});
+
 	it("lets a slow refetch finish, then refetches once for the changes that arrived during it", async () => {
 		const socket = await connect();
 		let release = () => {};
