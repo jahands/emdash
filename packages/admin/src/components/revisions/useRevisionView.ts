@@ -8,7 +8,7 @@ import {
 	type RevisionListItem,
 	type RevisionListResponse,
 } from "../../lib/api";
-import { diffRevisions, diffVersion, restoresNothing } from "../../lib/revision-diff/index.js";
+import { restoresNothing } from "../../lib/revision-diff/fingerprint.js";
 import type { DiffFieldDescriptor, RevisionDiff } from "../../lib/revision-diff/types.js";
 import { isolate } from "../../lib/utils.js";
 import {
@@ -101,6 +101,42 @@ export interface RevisionView {
 }
 
 const CHANGE_TOP_MARGIN_PX = 24;
+
+type DiffLibrary = typeof import("../../lib/revision-diff/index.js");
+
+let diffLibrary: DiffLibrary | null = null;
+let loadingDiffLibrary: Promise<DiffLibrary> | null = null;
+
+/** The diff code, which only the version view uses, loaded the first time a version opens. */
+function useDiffLibrary(load: boolean): DiffLibrary | "failed" | null {
+	const [library, setLibrary] = React.useState<DiffLibrary | "failed" | null>(diffLibrary);
+	React.useEffect(() => {
+		if (!load) {
+			// Opening a version again tries again.
+			if (library === "failed") setLibrary(null);
+			return;
+		}
+		if (library) return;
+		let active = true;
+		loadingDiffLibrary ??= import("../../lib/revision-diff/index.js");
+		loadingDiffLibrary.then(
+			(loaded) => {
+				diffLibrary = loaded;
+				if (active) setLibrary(loaded);
+				return undefined;
+			},
+			(error: unknown) => {
+				loadingDiffLibrary = null;
+				console.error("[revisions] Failed to load the version comparison:", error);
+				if (active) setLibrary("failed");
+			},
+		);
+		return () => {
+			active = false;
+		};
+	}, [load, library]);
+	return library;
+}
 
 type PendingFocus = "bar" | "opener" | "afterRestore" | null;
 
@@ -213,6 +249,9 @@ export function useRevisionView({
 	});
 	const list = query.data;
 
+	const library = useDiffLibrary(isViewing);
+	const diffing = library === "failed" ? null : library;
+
 	const comparing = isViewing && comparingLive;
 	const compareQuery = useQuery({
 		// The list changes whenever the draft does, including saves that keep the draft's id.
@@ -235,10 +274,11 @@ export function useRevisionView({
 	const liveDiff = React.useMemo(() => {
 		if (!compared) return null;
 		const current = compared.draft ?? compared.live;
-		if (!current) return { diff: null, failed: true };
+		if (!current || library === "failed") return { diff: null, failed: true };
+		if (!diffing) return null;
 		try {
 			return {
-				diff: diffRevisions(compared.live, current, fields, {
+				diff: diffing.diffRevisions(compared.live, current, fields, {
 					locale: locale ?? undefined,
 					titleField,
 				}),
@@ -248,7 +288,7 @@ export function useRevisionView({
 			console.error("[revisions] Failed to compare the draft with the live version:", error);
 			return { diff: null, failed: true };
 		}
-	}, [compared, fields, locale, titleField]);
+	}, [compared, diffing, library, fields, locale, titleField]);
 
 	const index = list && viewingId ? list.items.findIndex((item) => item.id === viewingId) : -1;
 	const visibleCount = list ? visibleRevisionCount(list) : 0;
@@ -280,7 +320,10 @@ export function useRevisionView({
 	if (!isViewing) shownRef.current = null;
 	let shown = null;
 	const comparedRevision = comparable ? list?.items[index] : undefined;
-	if (list && comparedRevision) {
+	if (list && comparedRevision && !diffing) {
+		shown = { revision: comparedRevision, diff: null, failed: library === "failed" };
+		shownRef.current = shown;
+	} else if (list && comparedRevision && diffing) {
 		const cached = diffCacheRef.current;
 		if (
 			cached &&
@@ -295,7 +338,7 @@ export function useRevisionView({
 			let diff: RevisionDiff | null = null;
 			let failed = false;
 			try {
-				diff = diffVersion({
+				diff = diffing.diffVersion({
 					revisions: list.items,
 					index,
 					total: list.total,

@@ -126,7 +126,6 @@ import {
 } from "./RequiredFieldError.js";
 import { RevisionViewProvider } from "./revisions/revision-view-context.js";
 import { RevisionViewBar } from "./revisions/RevisionViewBar.js";
-import { RevisionViewCanvas } from "./revisions/RevisionViewCanvas.js";
 import {
 	RevisionViewError,
 	RevisionViewErrorBoundary,
@@ -141,6 +140,11 @@ import type {
 import { isSettingsField, SettingsFieldLink } from "./SettingsFieldLink.js";
 import { SettingsPanelToggle, useSettingsPanel } from "./SettingsPanelToggle.js";
 import { UnsavedChangesGuard } from "./UnsavedChangesGuard.js";
+
+const loadRevisionViewCanvas = () => import("./revisions/RevisionViewCanvas.js");
+const RevisionViewCanvas = React.lazy(async () => ({
+	default: (await loadRevisionViewCanvas()).RevisionViewCanvas,
+}));
 
 /** Autosave debounce delay in milliseconds */
 const AUTOSAVE_DELAY = 2000;
@@ -1281,6 +1285,18 @@ export function ContentEditor({
 		onFocusFallback: focusAfterRevisionView,
 	});
 	const isViewing = revisionView.viewingId !== null;
+	React.useEffect(() => {
+		// Alongside the diff code and the versions, not after them.
+		if (isViewing) void loadRevisionViewCanvas();
+	}, [isViewing]);
+	const revisionLoading = (
+		<div>
+			<span role="status" className="sr-only">
+				{t`Loading revision...`}
+			</span>
+			<EditorFieldsPlaceholder />
+		</div>
+	);
 	const isViewingRef = React.useRef(isViewing);
 	isViewingRef.current = isViewing;
 	/** Advanced to remount the field editors after a restore, since the rich text editor reads its value once. */
@@ -2981,24 +2997,21 @@ export function ContentEditor({
 									{isViewing ? (
 										<RevisionViewErrorBoundary resetKey={revisionView.viewingId}>
 											{revisionView.diff ? (
-												<RevisionViewCanvas
-													diff={revisionView.diff}
-													fields={fields}
-													titleField={documentTitleField}
-													showChanges={revisionView.showChanges}
-													authorColor={revisionView.authorColor}
-													label={revisionView.label}
-													timezone={timezone}
-												/>
+												<React.Suspense fallback={revisionLoading}>
+													<RevisionViewCanvas
+														diff={revisionView.diff}
+														fields={fields}
+														titleField={documentTitleField}
+														showChanges={revisionView.showChanges}
+														authorColor={revisionView.authorColor}
+														label={revisionView.label}
+														timezone={timezone}
+													/>
+												</React.Suspense>
 											) : revisionView.diffFailed ? (
 												<RevisionViewError />
 											) : (
-												<div>
-													<span role="status" className="sr-only">
-														{t`Loading revision...`}
-													</span>
-													<EditorFieldsPlaceholder />
-												</div>
+												revisionLoading
 											)}
 										</RevisionViewErrorBoundary>
 									) : null}
