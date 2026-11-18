@@ -31,6 +31,7 @@ import {
 	fetchOrphanedTables,
 	fetchPlugins,
 	fetchSections,
+	fetchTranslations,
 	fetchUsers,
 	fetchWidgetAreas,
 	fetchWidgetComponents,
@@ -38,6 +39,7 @@ import {
 	type SectionSource,
 } from "./api.js";
 import { listBylineFields } from "./api/byline-fields.js";
+import { ApiResponseError } from "./api/client.js";
 import { fetchCommentCounts, fetchComments, type CommentStatus } from "./api/comments.js";
 import { fetchDashboardStats } from "./api/dashboard.js";
 import { fetchRedirects } from "./api/redirects.js";
@@ -141,6 +143,26 @@ export function contentEntryQueryOptions(
 	return queryOptions({
 		queryKey: ["content", collection, id, { locale }],
 		queryFn: () => fetchContent(collection, id, { locale, draftSlug: true }),
+		retry: (failureCount, error) =>
+			!(error instanceof ApiResponseError && error.status === 404) && failureCount < 1,
+	});
+}
+
+/**
+ * The bylines an entry's picker offers. Credits hydrate only in the entry's own locale, so the
+ * picker shows that locale's bylines alone.
+ */
+export function bylinePickerQueryOptions(locale: string | undefined) {
+	return queryOptions({
+		queryKey: ["bylines", "picker", locale ?? null],
+		queryFn: () => fetchBylines({ locale, limit: 100 }),
+	});
+}
+
+export function translationsQueryOptions(collection: string, id: string) {
+	return queryOptions({
+		queryKey: ["translations", collection, id],
+		queryFn: () => fetchTranslations(collection, id),
 	});
 }
 

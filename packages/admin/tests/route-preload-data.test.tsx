@@ -44,6 +44,9 @@ const POST = {
 };
 
 const RESPONSES: Array<[path: string, data: unknown]> = [
+	["/_emdash/api/content/posts/post_1/lock", { enabled: false, holder: null, heldByCaller: false }],
+	["/_emdash/api/content/posts/post_1?", { item: POST }],
+	["/_emdash/api/admin/bylines?", { items: [] }],
 	["/_emdash/api/dashboard", { collections: [], mediaCount: 0, userCount: 0, recentItems: [] }],
 	["/_emdash/api/widget-areas", { items: [{ id: "area_1", name: "main", label: "Main sidebar" }] }],
 	["/_emdash/api/widget-components", { items: [] }],
@@ -137,6 +140,25 @@ describe("hovering a sidebar link", () => {
 			// A second request would mean the screen's query missed the prefetched entry.
 			for (const path of data) expect(requestCount(path), `${link}: ${path}`).toBe(1);
 		}
+	});
+
+	it("loads an entry and its bylines when its row is hovered, so the editor opens with them", async () => {
+		mockApi();
+		window.history.replaceState(null, "", "/_emdash/admin/content/posts");
+		const screen = await renderAdmin();
+		const row = screen.getByRole("link", { name: "Preloaded post" });
+		await expect.element(row).toBeVisible();
+
+		await row.hover();
+		await expect.poll(() => requestCount("/_emdash/api/content/posts/post_1?")).toBe(1);
+		await expect.poll(() => requestCount("/_emdash/api/admin/bylines?")).toBe(1);
+		await row.click();
+		await expect.poll(() => window.location.pathname).toBe("/_emdash/admin/content/posts/post_1");
+		await expect.element(screen.getByRole("heading", { name: "Edit Post" })).toBeVisible();
+		await expect.element(screen.getByRole("textbox", { name: "Slug" })).toHaveValue("hello");
+
+		expect(requestCount("/_emdash/api/content/posts/post_1?")).toBe(1);
+		expect(requestCount("/_emdash/api/admin/bylines?")).toBe(1);
 	});
 
 	it("navigates in place and preloads when the link carries the URL's locale", async () => {

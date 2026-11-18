@@ -63,7 +63,6 @@ import {
 	createContent,
 	updateContent,
 	deleteContent,
-	fetchTranslations,
 	updateMedia,
 	uploadMedia,
 	createRelation,
@@ -84,7 +83,6 @@ import {
 	reorderCollections,
 	registerOrphanedTable,
 	fetchUsers,
-	fetchBylines,
 	createByline,
 	updateByline,
 	setSearchEnabled,
@@ -163,6 +161,7 @@ import { setScreenIdle } from "./lib/route-prefetch.js";
 import {
 	blockTypesQueryOptions,
 	bylineFieldsQueryOptions,
+	bylinePickerQueryOptions,
 	bylinesQueryOptions,
 	commentCountsQueryOptions,
 	commentsQueryOptions,
@@ -181,6 +180,7 @@ import {
 	sectionsQueryOptions,
 	taxonomyDefQueryOptions,
 	taxonomyTermsQueryOptions,
+	translationsQueryOptions,
 	usersQueryOptions,
 	widgetAreasQueryOptions,
 	widgetComponentsQueryOptions,
@@ -1157,8 +1157,7 @@ function ContentNewPage() {
 	// query key so switching locales fetches a fresh slice rather than
 	// reusing a stale cache.
 	const { data: bylinesData, isSuccess: bylinesLoaded } = useQuery({
-		queryKey: ["bylines", "picker", pickerLocale ?? null],
-		queryFn: () => fetchBylines({ locale: pickerLocale, limit: 100 }),
+		...bylinePickerQueryOptions(pickerLocale),
 		enabled: !!manifest,
 	});
 
@@ -1260,6 +1259,24 @@ const contentEditRoute = createRoute({
 		...(typeof search.field === "string" && { field: search.field }),
 		...(typeof search.locale === "string" && { locale: search.locale }),
 	}),
+	loaderDeps: ({ search }) => ({ locale: search.locale }),
+	loader: ({ context: { queryClient }, params: { collection, id }, deps }) => {
+		withCachedManifest(queryClient, (manifest) => {
+			if (!manifest.collections[collection]) return;
+			void queryClient
+				.fetchQuery(
+					contentEntryQueryOptions(collection, id, contentListLocale(manifest, deps.locale)),
+				)
+				.then((entry) => {
+					void queryClient.prefetchQuery(bylinePickerQueryOptions(entry.locale));
+					if (manifest.i18n)
+						void queryClient.prefetchQuery(translationsQueryOptions(collection, id));
+					return undefined;
+				})
+				// The screen reads the entry again and shows why it failed.
+				.catch(() => undefined);
+		});
+	},
 });
 
 // Role levels from @emdash-cms/auth
@@ -1319,8 +1336,6 @@ function ContentEditPage() {
 	} = useQuery({
 		...contentEntryQueryOptions(collection, id, activeLocale),
 		enabled: !i18n || !!activeLocale,
-		retry: (failureCount, queryError) =>
-			!(queryError instanceof ApiResponseError && queryError.status === 404) && failureCount < 1,
 	});
 	const { data: currentUser } = useCurrentUser();
 	const adminLayout = useAdminLayout();
@@ -1738,8 +1753,7 @@ function ContentEditPage() {
 
 	// Fetch translations when i18n is enabled
 	const translationsQuery = useQuery({
-		queryKey: ["translations", collection, id],
-		queryFn: () => fetchTranslations(collection, id),
+		...translationsQueryOptions(collection, id),
 		enabled: !!i18n && !!rawItem,
 	});
 	const translationsData = translationsQuery.data;
@@ -1811,8 +1825,7 @@ function ContentEditPage() {
 		setConflictedEntryIdState(conflictedEntryIdRef.current);
 	}, []);
 	const { data: bylinesData, isSuccess: bylinesLoaded } = useQuery({
-		queryKey: ["bylines", "picker", itemLocale ?? null],
-		queryFn: () => fetchBylines({ locale: itemLocale, limit: 100 }),
+		...bylinePickerQueryOptions(itemLocale),
 		enabled: !!itemLocale,
 	});
 
