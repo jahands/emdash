@@ -44,6 +44,7 @@ import {
 import {
 	createRevalidatingCache,
 	invalidateRevalidatingCache,
+	primeRevalidatingCache,
 	revalidatingCached,
 	type RevalidatingCache,
 } from "./utils/revalidating-cache.js";
@@ -393,18 +394,23 @@ const taxonomyNamesCache: RevalidatingCache<TaxonomyNames> =
 		return cache;
 	})();
 
+function taxonomyNamesOf(
+	defs: readonly { name: string; collections: string | null }[],
+): TaxonomyNames {
+	const namesByCollection: TaxonomyNames = new Map();
+	for (const def of defs) {
+		for (const collection of parseTaxonomyCollections(def.collections)) {
+			const names = namesByCollection.get(collection) ?? new Set<string>();
+			names.add(def.name);
+			namesByCollection.set(collection, names);
+		}
+	}
+	return namesByCollection;
+}
+
 async function fetchTaxonomyNames(db: Kysely<Database>): Promise<TaxonomyNames> {
 	try {
-		const defs = await selectTaxonomyDefs(db).execute();
-		const namesByCollection: TaxonomyNames = new Map();
-		for (const def of defs) {
-			for (const collection of parseTaxonomyCollections(def.collections)) {
-				const names = namesByCollection.get(collection) ?? new Set<string>();
-				names.add(def.name);
-				namesByCollection.set(collection, names);
-			}
-		}
-		return namesByCollection;
+		return taxonomyNamesOf(await selectTaxonomyDefs(db).execute());
 	} catch (error) {
 		if (!isMissingTableError(error) && !isMissingColumnError(error)) throw error;
 		return new Map();
@@ -419,6 +425,13 @@ async function getTaxonomyNames(db: Kysely<Database>, collection: string): Promi
 				console.error("[emdash:loader] revalidating taxonomy names failed:", error);
 			});
 	return names.get(collection) ?? new Set();
+}
+
+/** Cache mappings built from definitions a cold start read with its other reads. @internal */
+export function primeTaxonomyNames(
+	defs: readonly { name: string; collections: string | null }[],
+): void {
+	primeRevalidatingCache(taxonomyNamesCache, taxonomyNamesOf(defs));
 }
 
 /** Discard mappings after a local taxonomy-definition write. @internal */

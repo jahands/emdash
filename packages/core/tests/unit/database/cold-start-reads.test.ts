@@ -3,6 +3,7 @@ import { afterAll, afterEach, beforeEach, expect, it } from "vitest";
 import { readColdStartState } from "../../../src/database/cold-start-reads.js";
 import { getAppliedMigrationCount } from "../../../src/database/migrations/runner.js";
 import { OptionsRepository } from "../../../src/database/repositories/options.js";
+import { selectTaxonomyDefs } from "../../../src/database/repositories/taxonomy-def.js";
 import { rowToPluginState } from "../../../src/plugins/state.js";
 import { BylineSchemaRegistry } from "../../../src/schema/byline-registry.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
@@ -71,8 +72,48 @@ describeEachDialect("readColdStartState", (dialect) => {
 			validation: { options: ["a", "b"] },
 		});
 
+		const now = new Date().toISOString();
+		await db
+			.insertInto("_emdash_taxonomy_defs")
+			.values([
+				{
+					id: "tax_genre_fr",
+					name: "genre",
+					label: "Genres",
+					hierarchical: 0,
+					collections: JSON.stringify(["post"]),
+					locale: "fr",
+					translation_group: "tax_genre",
+					created_at: now,
+				},
+				{
+					id: "tax_genre",
+					name: "genre",
+					label: "Genres",
+					label_singular: "Genre",
+					hierarchical: 1,
+					collections: JSON.stringify([]),
+					locale: "en",
+					translation_group: "tax_genre",
+					created_at: now,
+				},
+			])
+			.execute();
+		await db
+			.insertInto("_emdash_taxonomy_def_groups")
+			.values({
+				id: "tax_genre",
+				name: "genre",
+				hierarchical: 1,
+				collections: JSON.stringify(["post"]),
+			})
+			.execute();
+
 		const state = await readColdStartState(db, NAMES, "site:");
 
+		expect(state.taxonomyDefs).toEqual(
+			await selectTaxonomyDefs(db).orderBy("d.name", "asc").orderBy("d.locale", "asc").execute(),
+		);
 		expect(state.appliedMigrationCount).toBe(await getAppliedMigrationCount(db));
 		const plugins = await db.selectFrom("_plugin_state").selectAll().execute();
 		expect(

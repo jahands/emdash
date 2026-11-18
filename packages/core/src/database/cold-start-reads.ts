@@ -38,6 +38,31 @@ type UnlistedBylineFieldColumn = Exclude<
 const bylineFieldColumnsComplete: [UnlistedBylineFieldColumn] extends [never] ? true : never = true;
 void bylineFieldColumnsComplete;
 
+/** A taxonomy definition row as `selectTaxonomyDefs` reads it. */
+export interface ColdStartTaxonomyDefRow {
+	id: string;
+	name: string;
+	label: string;
+	label_singular: string | null;
+	created_at: string;
+	locale: string;
+	translation_group: string | null;
+	hierarchical: number;
+	collections: string | null;
+}
+
+const TAXONOMY_DEF_COLUMNS = [
+	"id",
+	"name",
+	"label",
+	"label_singular",
+	"created_at",
+	"locale",
+	"translation_group",
+	"hierarchical",
+	"collections",
+] as const satisfies readonly (keyof ColdStartTaxonomyDefRow)[];
+
 /** What a runtime needs from the database before it can serve its first request. */
 export interface ColdStartState {
 	appliedMigrationCount: number;
@@ -51,6 +76,8 @@ export interface ColdStartState {
 	bylineFieldsVersion: number;
 	/** In `BylineSchemaRegistry.listFields()` order. */
 	bylineFields: BylineFieldDefinition[];
+	/** Every locale's taxonomy definitions, by name, then locale. */
+	taxonomyDefs: ColdStartTaxonomyDefRow[];
 }
 
 function escapeLike(value: string): string {
@@ -69,8 +96,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Read the applied-migration count, plugin states and their generation,
- * collection slugs, the given options and the byline field definitions in one
- * statement, so a cold start pays one round trip for them. Throws when any of the tables is missing, as on a database that has
+ * collection slugs, the given options, the byline field definitions and the
+ * taxonomy definitions in one statement, so a cold start pays one round trip for them. Throws when any of the tables is missing, as on a database that has
  * not been migrated; callers fall back to separate reads.
  */
 export async function readColdStartState(
@@ -91,6 +118,18 @@ export async function readColdStartState(
 	const bylineFields = pg
 		? sql`(select coalesce(json_agg(${bylineFieldObject} order by sort_order, created_at), '[]'::json)::text from ${sql.ref("_emdash_byline_fields")})`
 		: sql`(select json_group_array(${bylineFieldObject}) from (select * from ${sql.ref("_emdash_byline_fields")} order by sort_order, created_at))`;
+	// The columns and fallbacks of `selectTaxonomyDefs`.
+	const taxonomyDefRows = sql`(
+		select d.id, d.name, d.label, d.label_singular, d.created_at, d.locale, d.translation_group,
+			coalesce(g.hierarchical, d.hierarchical) as hierarchical,
+			coalesce(g.collections, d.collections) as collections
+		from ${sql.ref("_emdash_taxonomy_defs")} as d
+		left join ${sql.ref("_emdash_taxonomy_def_groups")} as g on g.name = d.name
+	)`;
+	const taxonomyDefObject = object(TAXONOMY_DEF_COLUMNS);
+	const taxonomyDefs = pg
+		? sql`(select coalesce(json_agg(${taxonomyDefObject} order by name, locale), '[]'::json)::text from ${taxonomyDefRows} as t)`
+		: sql`(select json_group_array(${taxonomyDefObject}) from (select * from ${taxonomyDefRows} order by name, locale))`;
 	const namedOptions =
 		optionNames.length > 0
 			? sql`(select ${agg(array(sql.ref("name"), sql.ref("value")))} from options where name in (${sql.join([...optionNames])}))`
@@ -105,6 +144,7 @@ export async function readColdStartState(
 		prefixed_options: unknown;
 		byline_fields_version: string | null;
 		byline_fields: unknown;
+		taxonomy_defs: unknown;
 	}>`select
 			(select count(*) from ${sql.ref("_emdash_migrations")}) as applied_migrations,
 			(select ${agg(object(PLUGIN_STATE_COLUMNS))} from ${sql.ref("_plugin_state")}) as plugin_states,
@@ -117,7 +157,8 @@ export async function readColdStartState(
 				where name like ${`${escapeLike(prefix)}%`} escape '\\'
 			) as prefixed_options,
 			(select value from options where name = ${BYLINE_FIELDS_VERSION_KEY}) as byline_fields_version,
-			${bylineFields} as byline_fields
+			${bylineFields} as byline_fields,
+			${taxonomyDefs} as taxonomy_defs
 	`.execute(db);
 	const row = result.rows[0];
 	if (!row) throw new Error("Cold-start read returned no row");
@@ -169,5 +210,12 @@ export async function readColdStartState(
 				sort_order: Number(field.sort_order),
 			}),
 		),
+		taxonomyDefs: parseJsonColumn(row.taxonomy_defs)
+			.filter(isRecord)
+			.map((def) => ({
+				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- built from TAXONOMY_DEF_COLUMNS
+				...(def as unknown as ColdStartTaxonomyDefRow),
+				hierarchical: Number(def.hierarchical),
+			})),
 	};
 }

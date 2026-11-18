@@ -34,6 +34,13 @@ export function invalidateRevalidatingCache<T>(cache: RevalidatingCache<T>): voi
 	invalidateSingleFlightCache(cache.refresh);
 }
 
+/** Install a value read elsewhere, unless the cache already holds one. */
+export function primeRevalidatingCache<T>(cache: RevalidatingCache<T>, value: T): void {
+	if (cache.snapshot) return;
+	cache.snapshot = { value };
+	cache.expiresAt = Date.now() + REVALIDATING_CACHE_TTL_MS;
+}
+
 /** Serve the last good snapshot while an expired value refreshes via after(). */
 export async function revalidatingCached<T>(
 	cache: RevalidatingCache<T>,

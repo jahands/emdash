@@ -44,6 +44,7 @@ import { isMissingTableError } from "../utils/db-errors.js";
 import {
 	createRevalidatingCache,
 	invalidateRevalidatingCache,
+	primeRevalidatingCache,
 	revalidatingCached,
 	type RevalidatingCache,
 } from "../utils/revalidating-cache.js";
@@ -168,6 +169,11 @@ export function invalidateTaxonomyDefsCache(): void {
 	invalidateRevalidatingCache(defsCache);
 	resetTaxonomyNamesCache();
 	invalidateTaxonomyObjectCache();
+}
+
+/** Cache every locale's definitions, read by a cold start with its other reads. @internal */
+export function primeTaxonomyDefs(rows: readonly Parameters<typeof rowToTaxonomyDef>[0][]): void {
+	primeRevalidatingCache(defsCache, rows.map(rowToTaxonomyDef));
 }
 
 /** @internal Clear the isolate snapshot between test databases. */
