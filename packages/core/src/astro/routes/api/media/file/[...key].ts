@@ -126,7 +126,8 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 
 		let content: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer> = result.body;
 		let cacheControl = IMMUTABLE_IMAGE_CACHE;
-		if (isImage && served) {
+		// A HEAD response sends no bytes, so it isn't worth reading them to verify the version.
+		if (isImage && (served || request.method === "HEAD")) {
 			cacheControl = MUTABLE_MEDIA_CACHE_CONTROL;
 		} else if (isImage) {
 			const original = await resolveOriginalBody(version, result.body, result.size);

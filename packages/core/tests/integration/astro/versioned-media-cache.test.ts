@@ -287,6 +287,47 @@ describeEachDialect("version-pinned media caching", (dialect) => {
 			}
 		});
 
+		it("answers HEAD for a pinned original without reading the file, revalidating", async () => {
+			let read = false;
+			const reading: Storage = {
+				...storage,
+				download: async (key, options) => {
+					const result = await storage.download(key, options);
+					const reader = result.body.getReader();
+					const body = new ReadableStream<Uint8Array>(
+						{
+							async pull(controller) {
+								read = true;
+								const chunk = await reader.read();
+								if (chunk.done) controller.close();
+								else controller.enqueue(chunk.value);
+							},
+							cancel: (reason) => reader.cancel(reason),
+						},
+						{ highWaterMark: 0 },
+					);
+					return { ...result, body };
+				},
+			};
+			const request = new Request(`http://localhost/_emdash/api/media/file/${KEY}?${pin(hash)}`, {
+				method: "HEAD",
+			});
+
+			const response = await fileGET({
+				params: { key: KEY },
+				locals: { emdash: { storage: reading } },
+				request,
+			} as never);
+
+			expect(response.status).toBe(200);
+			expect(response.body).toBeNull();
+			expect(response.headers.get("Cache-Control")).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+			expect(response.headers.get("Content-Length")).toBe(String(BYTES.length));
+			expect(response.headers.get("Content-Type")).toBe("image/png");
+			expect(response.headers.get("ETag")).toBeTruthy();
+			expect(read).toBe(false);
+		});
+
 		it("streams a pinned original too large to verify, revalidating", async () => {
 			const large = new Uint8Array(MAX_VERIFIED_MEDIA_BYTES + 1).fill(7);
 			await storage.upload({ key: KEY, body: large, contentType: "image/png" });
