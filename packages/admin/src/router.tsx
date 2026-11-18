@@ -97,7 +97,6 @@ import {
 	publishContent,
 	unpublishContent,
 	discardDraft,
-	fetchRevision,
 	fetchMediaFolder,
 	createMediaFolder,
 	renameMediaFolder,
@@ -168,6 +167,7 @@ import {
 	commentCountsQueryOptions,
 	commentsQueryOptions,
 	contentAuthorsQueryOptions,
+	contentEntryQueryOptions,
 	contentListQuery,
 	dashboardStatsQueryOptions,
 	MEDIA_PAGE_SIZE,
@@ -390,6 +390,10 @@ function patchAutosaveQueries(
 ) {
 	const { collection, id, savedItem, payload, referenceRows, fields, previousDraftId } = params;
 	const draftRevisionId = savedItem.draftRevisionId;
+	const contentKey = ["content", collection, id];
+	const cachedEntry = queryClient
+		.getQueriesData<ContentItem>({ queryKey: contentKey })
+		.find(([, entry]) => entry)?.[1];
 
 	if (draftRevisionId) {
 		const listsKey = ["revisions", collection, id];
@@ -399,7 +403,17 @@ function patchAutosaveQueries(
 		// staged references and slug.
 		const previousDraft = previousDraftId
 			? (queryClient.getQueryData<Revision>(["revision", previousDraftId]) ??
-				lists.flatMap(([, list]) => list?.items ?? []).find((item) => item.id === previousDraftId))
+				lists
+					.flatMap(([, list]) => list?.items ?? [])
+					.find((item) => item.id === previousDraftId) ??
+				(cachedEntry?.draftRevisionId === previousDraftId
+					? {
+							data: {
+								...cachedEntry.data,
+								...(cachedEntry.draftSlug !== undefined && { _slug: cachedEntry.draftSlug }),
+							},
+						}
+					: undefined))
 			: undefined;
 		const existing = queryClient.getQueryData<Revision>(["revision", draftRevisionId]);
 		const nextData: Record<string, unknown> = {
@@ -475,10 +489,14 @@ function patchAutosaveQueries(
 	// The save response carries no `references` (only the editor GET hydrates
 	// them), and an entry reopened from this cache would show its reference
 	// fields empty, so the cached pages are carried over.
-	const contentKey = ["content", collection, id];
 	const contentRead = queryClient.isFetching({ queryKey: contentKey }) > 0;
+	// The save response leaves out the staged slug, which the server keeps from the draft it
+	// replaces unless the save stages another.
+	const draftSlug =
+		savedItem.draftSlug ?? (draftRevisionId ? (payload.slug ?? cachedEntry?.draftSlug) : undefined);
 	queryClient.setQueriesData<ContentItem>({ queryKey: contentKey }, (cached) => ({
 		...savedItem,
+		...(draftSlug !== undefined && { draftSlug }),
 		references:
 			savedItem.references ?? withAutosavedReferences(cached?.references, referenceRows, fields),
 	}));
@@ -1299,8 +1317,7 @@ function ContentEditPage() {
 		isLoading,
 		error: itemError,
 	} = useQuery({
-		queryKey: ["content", collection, id, { locale: activeLocale }],
-		queryFn: () => fetchContent(collection, id, { locale: activeLocale }),
+		...contentEntryQueryOptions(collection, id, activeLocale),
 		enabled: !i18n || !!activeLocale,
 		retry: (failureCount, queryError) =>
 			!(queryError instanceof ApiResponseError && queryError.status === 404) && failureCount < 1,
@@ -1454,13 +1471,7 @@ function ContentEditPage() {
 	React.useEffect(() => {
 		if (!leavingRoom) return;
 		const identity = revisionIdentity;
-		const draftRevisionId = rawItem?.draftRevisionId;
-		void Promise.all([
-			queryClient.invalidateQueries({ queryKey: ["content", collection, id] }),
-			draftRevisionId
-				? queryClient.invalidateQueries({ queryKey: ["revision", draftRevisionId] })
-				: undefined,
-		]).then(() => {
+		void queryClient.invalidateQueries({ queryKey: ["content", collection, id] }).then(() => {
 			resetEditorItem(id);
 			setLeftRoomEntry((current) => (current === identity ? null : current));
 			return undefined;
@@ -1734,24 +1745,10 @@ function ContentEditPage() {
 	const translationsData = translationsQuery.data;
 	const translationsState = translationsLoadState(translationsQuery);
 
-	// When a draft revision exists, fetch its data for the editor form.
-	// The content table holds published data; the draft revision holds
-	// the editor's working copy.
-	const { data: draftRevision } = useQuery({
-		queryKey: ["revision", rawItem?.draftRevisionId],
-		queryFn: () => fetchRevision(rawItem!.draftRevisionId!),
-		enabled: !!rawItem?.draftRevisionId,
-	});
-
 	// A room keeps the entry current itself, and its checkpoints would refetch it under the editor.
 	const liveEntry = useLiveQueries({
 		topics: coEditing.mode === "single-editor" ? [`content/${collection}/${id}`] : [],
-		queryKeys: rawItem?.draftRevisionId
-			? [
-					["content", collection, id],
-					["revision", rawItem.draftRevisionId],
-				]
-			: [["content", collection, id]],
+		queryKeys: [["content", collection, id]],
 		dirty: editorDirty,
 	});
 	// Cursors and fields stay in the room; this tells lists and other screens who has the entry open.
@@ -1761,28 +1758,11 @@ function ContentEditPage() {
 		resetEditorItem(id, { discarded: true });
 	};
 
-	// Merge draft revision data into the item for the editor.
-	// The item's metadata (id, status, slug, etc.) comes from the content table;
-	// the data fields come from the draft revision if available.
-	const item = React.useMemo(() => {
-		if (!rawItem) return undefined;
-		if (!draftRevision?.data) return rawItem;
-		// Strip revision metadata keys (prefixed with _)
-		const draftData: Record<string, unknown> = {};
-		for (const [key, value] of Object.entries(draftRevision.data)) {
-			if (!key.startsWith("_")) {
-				draftData[key] = value;
-			}
-		}
-		// Draft slug override
-		const draftSlug =
-			typeof draftRevision.data._slug === "string" ? draftRevision.data._slug : rawItem.slug;
-		return {
-			...rawItem,
-			slug: draftSlug,
-			data: { ...rawItem.data, ...draftData },
-		};
-	}, [rawItem, draftRevision]);
+	// The read already carries the draft's data; the editor edits the slug the draft stages.
+	const item = React.useMemo(
+		() => (rawItem?.draftSlug === undefined ? rawItem : { ...rawItem, slug: rawItem.draftSlug }),
+		[rawItem],
+	);
 
 	// Fetch users list for author selector (only if user is editor+)
 	const { data: usersData, isLoading: usersLoading } = useQuery({
@@ -1866,15 +1846,9 @@ function ContentEditPage() {
 			void queryClient.invalidateQueries({
 				queryKey: ["revisions", collection, targetId],
 			});
-			// Invalidate the cached draft revision so stale data doesn't overwrite the form
-			if (rawItem?.draftRevisionId) {
-				await queryClient.invalidateQueries({
-					queryKey: ["revision", rawItem.draftRevisionId],
-				});
-			}
 			await contentRefresh;
 		},
-		[collection, queryClient, rawItem?.draftRevisionId],
+		[collection, queryClient],
 	);
 	const recoverFromSaveConflict = React.useCallback(
 		async (entryId: string) => {
@@ -2336,8 +2310,7 @@ function ContentEditPage() {
 					try {
 						// oxlint-disable-next-line no-await-in-loop -- a retry rebases on a fresh read
 						const latest = await queryClient.fetchQuery({
-							queryKey: ["content", collection, id, { locale: activeLocale }],
-							queryFn: () => fetchContent(collection, id, { locale: activeLocale }),
+							...contentEntryQueryOptions(collection, id, activeLocale),
 							staleTime: 0,
 						});
 						// oxlint-disable-next-line no-await-in-loop -- a retry rebases on a fresh read

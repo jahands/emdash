@@ -350,6 +350,8 @@ export interface EmDashHandlers {
 		referenceOptions?: { includeDrafts: boolean },
 		options?: {
 			includeStagedSlug?: boolean;
+			/** Adds the draft's staged slug as `item.draftSlug`, leaving `slug` the live one. */
+			includeDraftSlug?: boolean;
 			/** Return the stored row alone, without SEO, byline or draft hydration. */
 			rowOnly?: boolean;
 		},

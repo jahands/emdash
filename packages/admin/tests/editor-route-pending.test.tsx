@@ -115,7 +115,7 @@ describe("opening an entry", () => {
 		mockedFetch = globalThis.fetch;
 		globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-			if (url === "/_emdash/api/content/posts/post_2") await secondEntry;
+			if (url.startsWith("/_emdash/api/content/posts/post_2")) await secondEntry;
 			return mockedFetch(input, init);
 		}) as typeof fetch;
 	});

@@ -470,6 +470,9 @@ export const contentItemSchema = z
 		scheduledAt: z.string().nullable(),
 		liveRevisionId: z.string().nullable(),
 		draftRevisionId: z.string().nullable(),
+		draftSlug: z.string().optional().meta({
+			description: "The slug the draft stages, present only when `draftSlug=1` asks for it",
+		}),
 		version: z.number().int(),
 		locale: z.string().nullable(),
 		translationGroup: z.string().nullable(),

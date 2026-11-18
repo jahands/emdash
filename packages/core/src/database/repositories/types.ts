@@ -402,6 +402,11 @@ export interface ContentItem {
 	 */
 	liveData?: Record<string, unknown>;
 	/**
+	 * The slug the draft revision stages, which publishing makes the entry's `slug`. Only
+	 * populated when the caller asks for it, as `GET /content/{collection}/{id}?draftSlug=1` does.
+	 */
+	draftSlug?: string;
+	/**
 	 * First page of each reference field's resolved selection, keyed by field
 	 * slug. Only populated when the caller opts in via `handleContentGet`'s
 	 * `referenceOptions` param (see content.ts) — hydration is never

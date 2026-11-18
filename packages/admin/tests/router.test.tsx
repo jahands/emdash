@@ -1801,7 +1801,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 						status: "draft",
 						locale: "en",
 						translationGroup: null,
-						data: { title: "Published Title" },
+						data: { title: "Draft Title" },
 						authorId: null,
 						primaryBylineId: null,
 						createdAt: "2025-01-01T00:00:00Z",
@@ -1810,6 +1810,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 						scheduledAt: null,
 						liveRevisionId: "rev_live",
 						draftRevisionId: "rev_draft",
+						draftSlug: "draft-slug",
 					},
 				},
 			})
@@ -1834,18 +1835,6 @@ describe("ContentEditPage – autosave cache patching", () => {
 					},
 				},
 			})
-			.on("GET", "/_emdash/api/revisions/rev_draft", {
-				data: {
-					item: {
-						id: "rev_draft",
-						collection: "posts",
-						entryId: "post_1",
-						data: { title: "Draft Title", _slug: "draft-slug" },
-						authorId: null,
-						createdAt: "2025-01-01T00:00:00Z",
-					},
-				},
-			})
 			.on("PUT", "/_emdash/api/content/posts/post_1", {
 				data: {
 					item: {
@@ -1855,7 +1844,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 						status: "draft",
 						locale: "en",
 						translationGroup: null,
-						data: { title: "Published Title" },
+						data: { title: "Draft Title" },
 						authorId: null,
 						primaryBylineId: null,
 						createdAt: "2025-01-01T00:00:00Z",
@@ -1867,6 +1856,30 @@ describe("ContentEditPage – autosave cache patching", () => {
 					},
 				},
 			});
+		// The server keeps the draft: a save merges into it, and reads return it.
+		const draft = { data: { title: "Draft Title" } as Record<string, unknown>, slug: "draft-slug" };
+		const mockedFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			const url =
+				typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			const response = await mockedFetch(input, init);
+			if (!url.startsWith("/_emdash/api/content/posts/post_1") || !response.ok) return response;
+			const method = init?.method ?? "GET";
+			if (method === "PUT" && typeof init?.body === "string") {
+				const saved = JSON.parse(init.body) as { data?: Record<string, unknown>; slug?: string };
+				draft.data = { ...draft.data, ...saved.data };
+				if (saved.slug !== undefined) draft.slug = saved.slug;
+			} else if (method !== "GET" || url.includes("/lock")) {
+				return response;
+			}
+			const body = (await response.json()) as { data: { item: ContentItem } };
+			body.data.item.data = draft.data;
+			if (method === "GET") body.data.item.draftSlug = draft.slug;
+			else delete body.data.item.draftSlug;
+			return new Response(JSON.stringify(body), {
+				headers: { "Content-Type": "application/json" },
+			});
+		}) as typeof fetch;
 	});
 
 	afterEach(() => {
@@ -1894,6 +1907,33 @@ describe("ContentEditPage – autosave cache patching", () => {
 			expect(screen.getByTestId("mock-title").element().textContent).toBe("Autosaved Title");
 			expect(screen.getByTestId("mock-slug").element().textContent).toBe("autosaved-title");
 		});
+	});
+
+	it("opens an entry with a draft in one read, without reading the draft revision", async () => {
+		const fetchWithMocks = globalThis.fetch;
+		const reads: string[] = [];
+		globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+			const url =
+				typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if ((init?.method ?? "GET") === "GET") reads.push(url);
+			return fetchWithMocks(input, init);
+		}) as typeof fetch;
+		const { router, TestApp } = buildRouter();
+		await router.navigate({
+			to: "/content/$collection/$id",
+			params: { collection: "posts", id: "post_1" },
+		});
+
+		const screen = await render(<TestApp />);
+		await waitFor(() => {
+			expect(screen.getByTestId("mock-slug").element().textContent).toBe("draft-slug");
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		expect(reads.filter((url) => url.startsWith("/_emdash/api/content/posts/post_1"))).toEqual([
+			"/_emdash/api/content/posts/post_1?draftSlug=1",
+		]);
+		expect(reads.filter((url) => url.startsWith("/_emdash/api/revisions/"))).toEqual([]);
 	});
 
 	it("echoes the current revision token in editor and auxiliary writes", async () => {
@@ -2392,7 +2432,7 @@ describe("ContentEditPage – revision token synchronization", () => {
 			status: "draft",
 			locale: "en",
 			translationGroup: null,
-			data: { title: "Published Title" },
+			data: { title: "Draft Title" },
 			authorId: null,
 			primaryBylineId: null,
 			createdAt: "2025-01-01T00:00:00Z",
@@ -2433,19 +2473,6 @@ describe("ContentEditPage – revision token synchronization", () => {
 				return jsonResponse({ data: { id: "user_01", role: 30 } });
 			if (method === "GET" && url === "/_emdash/api/bylines")
 				return jsonResponse({ data: { items: [] } });
-			if (method === "GET" && url.startsWith("/_emdash/api/revisions/rev_draft"))
-				return jsonResponse({
-					data: {
-						item: {
-							id: "rev_draft",
-							collection: "posts",
-							entryId: "post_1",
-							data: { title: "Draft Title", _slug: "draft-slug" },
-							authorId: null,
-							createdAt: "2025-01-01T00:00:00Z",
-						},
-					},
-				});
 			if (method === "POST" && url.includes("/_emdash/api/content/posts/post_1/lock"))
 				return jsonResponse({ data: { enabled: false, holder: null, heldByCaller: false } });
 			if (method === "DELETE" && url.includes("/_emdash/api/content/posts/post_1/lock"))
@@ -2454,7 +2481,7 @@ describe("ContentEditPage – revision token synchronization", () => {
 				getCount++;
 				const revision = getCount === 1 ? rev1 : rev2;
 				return jsonResponse({
-					data: { _rev: revision, item: makeItem() },
+					data: { _rev: revision, item: makeItem({ draftSlug: "draft-slug" }) },
 				});
 			}
 			if (method === "PUT" && url.startsWith("/_emdash/api/content/posts/post_1")) {

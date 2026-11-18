@@ -4368,7 +4368,7 @@ export class EmDashRuntime {
 		id: string,
 		locale?: string,
 		referenceOptions?: { includeDrafts: boolean },
-		options: { includeStagedSlug?: boolean; rowOnly?: boolean } = {},
+		options: { includeStagedSlug?: boolean; includeDraftSlug?: boolean; rowOnly?: boolean } = {},
 	) {
 		const found = await handleContentGet(this.db, collection, id, locale, undefined, {
 			rowOnly: true,
@@ -4423,6 +4423,8 @@ export class EmDashRuntime {
 		result: T,
 		options: {
 			includeStagedSlug?: boolean;
+			/** Adds the draft's staged slug as `draftSlug`, leaving `slug` the live one. */
+			includeDraftSlug?: boolean;
 			strict?: boolean;
 			knownRevision?: Revision;
 			/** The draft revision, already being loaded by the caller. */
@@ -4479,6 +4481,9 @@ export class EmDashRuntime {
 						...item,
 						...(options.includeStagedSlug && typeof revision.data._slug === "string"
 							? { slug: revision.data._slug }
+							: {}),
+						...(options.includeDraftSlug && typeof revision.data._slug === "string"
+							? { draftSlug: revision.data._slug }
 							: {}),
 						data: mergedData,
 						liveData,

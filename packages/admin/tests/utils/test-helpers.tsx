@@ -74,8 +74,8 @@ export function createMockFetch() {
 		const method = init?.method ?? "GET";
 		const key = `${method.toUpperCase()} ${url}`;
 
-		// Check for exact match first
-		let handler = handlers.get(key);
+		// Check for exact match first, then the same method and path without the query string
+		let handler = handlers.get(key) ?? handlers.get(`${method.toUpperCase()} ${url.split("?")[0]}`);
 
 		// Then check for URL-only match (any method)
 		if (!handler) {

@@ -22,6 +22,7 @@ import {
 	fetchBlockTypes,
 	fetchBylines,
 	fetchCollections,
+	fetchContent,
 	fetchContentAuthors,
 	fetchContentList,
 	fetchMediaFolders,
@@ -128,6 +129,18 @@ export function contentAuthorsQueryOptions(collection: string) {
 	return queryOptions({
 		queryKey: ["content", collection, "authors"],
 		queryFn: () => fetchContentAuthors(collection),
+	});
+}
+
+/** The entry the editor opens, with its draft's data and staged slug. */
+export function contentEntryQueryOptions(
+	collection: string,
+	id: string,
+	locale: string | undefined,
+) {
+	return queryOptions({
+		queryKey: ["content", collection, id, { locale }],
+		queryFn: () => fetchContent(collection, id, { locale, draftSlug: true }),
 	});
 }
 

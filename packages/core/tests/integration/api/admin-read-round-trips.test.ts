@@ -167,6 +167,33 @@ describeEachDialect("admin read round trips", (dialect) => {
 		expect(result.spans.length).toBeLessThanOrEqual(ENTRY_MAX_QUERIES);
 	});
 
+	it("adds the slug the draft stages when asked, leaving slug the live one", async () => {
+		const staged = await createTestRuntime(ctx.db).handleContentUpdate("posts", draftEntryId, {
+			data: { title: "Pending title" },
+			slug: "pending-slug",
+		});
+		if (!staged.success) throw new Error(staged.error.message);
+		await runDeferred();
+		const params = { collection: "posts", id: draftEntryId };
+
+		const asked = await inRequest(() =>
+			getEntry(context(`/content/posts/${draftEntryId}?draftSlug=1`, params)),
+		);
+		const plain = await inRequest(() =>
+			getEntry(context(`/content/posts/${draftEntryId}`, params)),
+		);
+
+		expect(asked.response.status, asked.text).toBe(200);
+		const { item } = JSON.parse(asked.text).data;
+		expect(item).toMatchObject({ slug: "post-3", draftSlug: "pending-slug" });
+		expect(item.data.title).toBe("Pending title");
+		expect(sequentialWaves(asked.spans)).toBeLessThanOrEqual(ENTRY_MAX_WAVES);
+		expect(asked.spans.length).toBeLessThanOrEqual(ENTRY_MAX_QUERIES);
+		const plainItem = JSON.parse(plain.text).data.item;
+		expect(plainItem.slug).toBe("post-3");
+		expect(plainItem).not.toHaveProperty("draftSlug");
+	});
+
 	it("builds the manifest within the round-trip budget", async () => {
 		const result = await inRequest(() => getManifest(context("/manifest", {})));
 

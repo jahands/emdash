@@ -59,6 +59,8 @@ export interface ContentItem {
 	scheduledAt: string | null;
 	liveRevisionId: string | null;
 	draftRevisionId: string | null;
+	/** The slug the draft stages, when the read asked for it with `draftSlug`. */
+	draftSlug?: string;
 	seo?: ContentSeo;
 	/**
 	 * First page of reference-field edges, keyed by field slug.
@@ -277,10 +279,11 @@ export async function fetchContentAuthors(collection: string): Promise<ContentAu
 export async function fetchContent(
 	collection: string,
 	id: string,
-	options?: { locale?: string },
+	options?: { locale?: string; draftSlug?: boolean },
 ): Promise<ContentItem> {
 	const params = new URLSearchParams();
 	if (options?.locale) params.set("locale", options.locale);
+	if (options?.draftSlug) params.set("draftSlug", "1");
 	const query = params.toString() ? `?${params}` : "";
 	const response = await apiFetch(`${API_BASE}/content/${collection}/${id}${query}`);
 	const data = await parseApiResponse<{ item: ContentItem; _rev?: string }>(
