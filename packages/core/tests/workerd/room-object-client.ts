@@ -124,7 +124,8 @@ export class RoomClient {
 			throw new Error(`No token: ${String(result)}`);
 		}
 		await this.upgrade(stub, await signedToken(result.token, this.userId));
-		await vi.waitFor(() => expect(this.received.some((m) => m.type === "welcome")).toBe(true));
+		// The document arrives in the reply to the client's sync step 1, after the welcome.
+		await vi.waitFor(() => expect(this.received.some((m) => m.type === "sync-step-2")).toBe(true));
 	}
 
 	async upgrade(stub: DurableObjectStub<EmDashRoom>, token: string): Promise<void> {
