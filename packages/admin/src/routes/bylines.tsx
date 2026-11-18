@@ -148,7 +148,8 @@ export function BylinesPage() {
 
 	// Reset accumulated items when filters change. Done while rendering, as an effect would
 	// paint the empty state for a frame between the answer and the rows.
-	const [listedData, setListedData] = React.useState(data);
+	// Starts empty so a list the route's loader already read is listed on the first render.
+	const [listedData, setListedData] = React.useState<typeof data>(undefined);
 	if (data !== listedData) {
 		setListedData(data);
 		if (data) {

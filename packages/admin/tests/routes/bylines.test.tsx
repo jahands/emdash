@@ -1,4 +1,5 @@
 import { Toast } from "@cloudflare/kumo";
+import { QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { page, userEvent } from "vitest/browser";
@@ -12,10 +13,11 @@ import {
 	fetchUsers,
 } from "../../src/lib/api";
 import type { BylineSummary } from "../../src/lib/api/bylines";
+import { bylinesQueryOptions } from "../../src/lib/route-queries";
 import { BylinesPage } from "../../src/routes/bylines";
 import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.tsx";
-import { QueryWrapper } from "../utils/test-helpers.tsx";
+import { createTestQueryClient, QueryWrapper } from "../utils/test-helpers.tsx";
 
 // The bylines page reads the active locale from the URL and navigates on
 // locale switches; neither matters for the search-debounce behaviour, so we
@@ -238,6 +240,28 @@ describe("BylinesPage loading", () => {
 		}
 		expect(emptyStates).toEqual([]);
 		expect(table.getByRole("status").query()).toBeNull();
+	});
+
+	it("lists bylines the route's loader read before the page mounted", async () => {
+		const queryClient = createTestQueryClient();
+		await queryClient.prefetchQuery({
+			...bylinesQueryOptions({ search: "", guest: "all", locale: undefined }),
+			queryFn: () => ({ items: [guestByline], nextCursor: undefined }),
+			staleTime: 60_000,
+			gcTime: 60_000,
+		});
+		const screen = await render(
+			<QueryClientProvider client={queryClient}>
+				<Toast.Provider>
+					<BylinesPage />
+				</Toast.Provider>
+			</QueryClientProvider>,
+		);
+
+		await expect
+			.element(screen.getByRole("button", { name: "Edit Guest Contributor" }))
+			.toBeVisible();
+		expect(screen.getByText("No bylines yet").query()).toBeNull();
 	});
 
 	it("keeps its columns when bylines with a long website arrive in a 1000px table", async () => {
