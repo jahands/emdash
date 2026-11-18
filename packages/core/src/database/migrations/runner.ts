@@ -105,8 +105,9 @@ import * as m094 from "./094_media_usage_file_url_reindex.js";
 import * as m095 from "./095_plugin_storage_unique_scope.js";
 import * as m096 from "./096_revision_kind_and_editors.js";
 import * as m097 from "./097_room_storage.js";
-import * as m098 from "./098_content_live_list_indexes.js";
-import * as m099 from "./099_content_sitemap_indexes.js";
+import * as m098 from "./098_user_last_login.js";
+import * as m099 from "./099_content_live_list_indexes.js";
+import * as m100 from "./100_content_sitemap_indexes.js";
 import { applyMigrationBaseline } from "./baseline.js";
 import { CONTENT_SIZED_MIGRATIONS } from "./content-sized.js";
 
@@ -207,8 +208,9 @@ const MIGRATIONS: Readonly<Record<string, Migration>> = Object.freeze({
 	"095_plugin_storage_unique_scope": m095,
 	"096_revision_kind_and_editors": m096,
 	"097_room_storage": m097,
-	"098_content_live_list_indexes": m098,
-	"099_content_sitemap_indexes": m099,
+	"098_user_last_login": m098,
+	"099_content_live_list_indexes": m099,
+	"100_content_sitemap_indexes": m100,
 });
 
 /** Ordered names from the statically registered migration set. */

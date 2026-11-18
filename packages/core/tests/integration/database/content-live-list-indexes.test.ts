@@ -3,14 +3,14 @@
  *
  * Postgres can't order by the `deleted_at`-led composites because it doesn't
  * treat `deleted_at IS NULL` as an equality, so it relies on the partial
- * `live_*` indexes from migration 098. SQLite can, so it gets none. SQLite runs
+ * `live_*` indexes from migration 099. SQLite can, so it gets none. SQLite runs
  * without sqlite_stat1 here, matching D1's stats-blind planner.
  */
 
 import { CompiledQuery, Kysely, sql } from "kysely";
 import { afterAll, afterEach, beforeEach, expect, it } from "vitest";
 
-import * as migration098 from "../../../src/database/migrations/098_content_live_list_indexes.js";
+import * as migration099 from "../../../src/database/migrations/099_content_live_list_indexes.js";
 import { ContentRepository } from "../../../src/database/repositories/content.js";
 import type { Database } from "../../../src/database/types.js";
 import { emdashLoader } from "../../../src/loader.js";
@@ -125,7 +125,7 @@ describeEachDialect("content live list indexes", (dialect) => {
 			expect(await planOf(await adminListQuery())).toContain("Sort");
 		}
 
-		await migration098.up(ctx.db);
+		await migration099.up(ctx.db);
 
 		expect(await liveIndexes()).toEqual(dialect === "postgres" ? LIVE_INDEXES : []);
 		const after = await new ContentRepository(ctx.db).findMany("post", { limit: 20 });
@@ -139,14 +139,14 @@ describeEachDialect("content live list indexes", (dialect) => {
 		await sql`DROP INDEX IF EXISTS ${sql.ref("idx_ec_post_live_upd")}`.execute(ctx.db);
 		await sql`DROP INDEX IF EXISTS ${sql.ref("idx_ec_post_live_pub")}`.execute(ctx.db);
 
-		await migration098.up(ctx.db);
-		await migration098.up(ctx.db);
+		await migration099.up(ctx.db);
+		await migration099.up(ctx.db);
 
 		expect(await liveIndexes()).toEqual(dialect === "postgres" ? LIVE_INDEXES : []);
 	});
 
 	it("removes the indexes on rollback", async () => {
-		await migration098.down(ctx.db);
+		await migration099.down(ctx.db);
 		expect(await liveIndexes()).toEqual([]);
 	});
 
@@ -160,7 +160,7 @@ describeEachDialect("content live list indexes", (dialect) => {
 			).rejects.toThrow();
 			expect(await invalidIndexes()).toEqual(["idx_ec_post_live_crt"]);
 
-			await migration098.up(ctx.db);
+			await migration099.up(ctx.db);
 
 			expect(await invalidIndexes()).toEqual([]);
 			await expectOrderedByIndex(await adminListQuery());

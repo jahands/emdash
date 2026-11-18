@@ -2030,7 +2030,7 @@ export class SchemaRegistry {
 
 		// Postgres can't order by the `deleted_at`-led composites above, because
 		// `IS NULL` isn't an equality to its planner; SQLite can. Keep these names
-		// and definitions identical to migration 098.
+		// and definitions identical to migration 099.
 		if (isPostgres(conn)) {
 			await sql`
 				${createIndex} ${sql.ref(`idx_${tableName}_live_crt`)}
@@ -2051,7 +2051,7 @@ export class SchemaRegistry {
 			`.execute(conn);
 
 			// Sitemaps read indexable entries in ID order from this index alone.
-			// Keep the name and definition identical to migration 099.
+			// Keep the name and definition identical to migration 100.
 			await sql`
 				${createIndex} ${sql.ref(`idx_${tableName}_sitemap`)}
 				ON ${sql.ref(tableName)} (id)

@@ -2,7 +2,7 @@
 import type { MigrationBaseline } from "../baseline.js";
 
 export const POSTGRES_BASELINE: MigrationBaseline = {
-	through: "099_content_sitemap_indexes",
+	through: "100_content_sitemap_indexes",
 	statements: [
 		`CREATE TABLE "revisions" (
 	"id" text NOT NULL,
@@ -239,6 +239,7 @@ export const POSTGRES_BASELINE: MigrationBaseline = {
 	"created_at" text DEFAULT CURRENT_TIMESTAMP,
 	"updated_at" text DEFAULT CURRENT_TIMESTAMP,
 	"disabled" integer DEFAULT 0 NOT NULL,
+	"last_login_at" text,
 	CONSTRAINT "users_new_pkey" PRIMARY KEY (id),
 	CONSTRAINT "users_new_email_key" UNIQUE (email)
 )`,

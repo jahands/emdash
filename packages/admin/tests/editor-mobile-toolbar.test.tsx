@@ -109,6 +109,11 @@ function actionRects(toolbar: HTMLElement) {
 	return rects(actionGrid(toolbar));
 }
 
+function gridCell(grid: HTMLElement) {
+	const gap = Number.parseFloat(getComputedStyle(grid).columnGap);
+	return { gap, width: (grid.clientWidth - gap * 3) / 4 };
+}
+
 function expectFourColumnGrid(toolbar: HTMLElement) {
 	const grid = actionGrid(toolbar);
 	const columnWidth = grid.clientWidth / 4;
@@ -144,16 +149,14 @@ describe("ContentEditor mobile action bar", () => {
 		const grid = expectFourColumnGrid(toolbar);
 		const buttons = actionRects(toolbar);
 		const publish = buttons.find(({ name }) => name === "Publish now" || name === "Publish");
-		const settings = buttons.find(({ name }) => name === "Settings");
-		const distraction = buttons.find(({ name }) => name?.startsWith("Enter distraction-free"));
+		const settings = buttons.find(({ name }) => name === "Show settings");
 		expect(publish).toBeDefined();
 		expect(settings).toBeDefined();
-		expect(distraction).toBeDefined();
 		expect(toolbar.innerText).not.toContain("Saved");
 		expect(toolbar.scrollWidth).toBeLessThanOrEqual(toolbar.clientWidth);
-		const gap = parseFloat(getComputedStyle(grid).columnGap);
-		expect(publish!.rect.width).toBeCloseTo(settings!.rect.width * 2 + gap, 0);
-		expect(settings!.rect.width).toBeCloseTo(distraction!.rect.width, 0);
+		const cell = gridCell(grid);
+		expect(settings!.rect.width).toBeCloseTo(cell.width, 0);
+		expect(publish!.rect.width).toBeCloseTo(cell.width * 2 + cell.gap, 0);
 		expect(publish!.rect.top).toBeCloseTo(settings!.rect.top, 0);
 		expect(grid.clientWidth).toBeGreaterThanOrEqual(toolbar.clientWidth - 24);
 	});
@@ -175,7 +178,7 @@ describe("ContentEditor mobile action bar", () => {
 		expect(
 			actionRects(toolbar).map(({ rect }) => [rect.x, rect.y, rect.width, rect.height]),
 		).toEqual(before);
-		expect(actionRects(toolbar)).toHaveLength(3);
+		expect(actionRects(toolbar)).toHaveLength(2);
 	});
 
 	it.each(["published-with-changes", "scheduled"])(
@@ -255,6 +258,8 @@ describe("ContentEditor mobile action bar", () => {
 		const { toolbar, screen } = await renderDirectEditor(item(true), "en", {
 			supportsPreview: true,
 		});
+		await screen.getByRole("textbox", { name: "Title" }).fill("Unsaved title");
+		await expect.element(screen.getByRole("button", { name: "Save", exact: true })).toBeVisible();
 		expectFourColumnGrid(toolbar);
 		const buttons = actionRects(toolbar);
 		expect(new Set(buttons.map(({ rect }) => Math.round(rect.top))).size).toBe(2);
@@ -263,14 +268,13 @@ describe("ContentEditor mobile action bar", () => {
 		const unpublish = buttons.find(({ name }) => name === "Unpublish Post")!;
 		const gap = parseFloat(getComputedStyle(actionGrid(toolbar)).columnGap);
 		expect(unpublish.rect.width).toBeCloseTo(singles[0]!.rect.width * 2 + gap, 0);
-		const settings = screen.getByRole("button", { name: "Settings", exact: true }).first();
+		const settings = screen.getByRole("button", { name: "Show settings", exact: true }).first();
 		await settings.click();
 		await expect.element(screen.getByRole("button", { name: "Close settings" })).toBeVisible();
 		await screen.getByRole("button", { name: "Close settings" }).click();
-		await screen.getByRole("button", { name: /Enter distraction-free/ }).click();
 		await expect
-			.element(screen.getByRole("button", { name: /Exit distraction-free/ }))
-			.toBeVisible();
+			.element(screen.getByRole("navigation", { name: "Settings" }))
+			.not.toBeInTheDocument();
 	});
 
 	it("keeps a narrow tablet toolbar horizontal with square secondary actions", async () => {
@@ -280,7 +284,7 @@ describe("ContentEditor mobile action bar", () => {
 		await expect.poll(() => toolbar.clientWidth).toBe(600);
 		expectSingleRow(toolbar);
 		const settings = screen
-			.getByRole("button", { name: "Settings", exact: true })
+			.getByRole("button", { name: "Show settings", exact: true })
 			.first()
 			.element()
 			.getBoundingClientRect();

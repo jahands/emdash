@@ -18,15 +18,22 @@ describe("BlockKitMediaPickerField layout", () => {
 				/>
 			</div>,
 		);
-		const preview = () =>
-			document.querySelector("img") ??
-			screen.getByText("Image not found").element().closest("div.flex");
+		const image = await vi.waitFor(() => {
+			const found = document.querySelector("img");
+			expect(found).toBeTruthy();
+			return found!;
+		});
+		const frame = image.parentElement!;
+		const size = () => {
+			const { width, height } = frame.getBoundingClientRect();
+			return { width, height };
+		};
+		const loading = size();
+		expect(loading.height).toBe(64);
 
-		await vi.waitFor(() => expect(preview()).toBeTruthy());
-		expect(preview()!.getBoundingClientRect().height).toBe(160);
-
-		document.querySelector("img")?.dispatchEvent(new Event("error"));
+		image.dispatchEvent(new Event("error"));
 		await expect.element(screen.getByText("Image not found")).toBeVisible();
-		expect(preview()!.getBoundingClientRect().height).toBe(160);
+		expect(frame.isConnected).toBe(true);
+		expect(size()).toEqual(loading);
 	});
 });

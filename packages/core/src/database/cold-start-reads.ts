@@ -1,6 +1,11 @@
 import { sql, type Kysely, type RawBuilder } from "kysely";
 
-import { PLUGIN_STATE_COLUMNS, type PluginStateRow } from "../plugins/state.js";
+import {
+	parseGeneration,
+	PLUGIN_STATE_COLUMNS,
+	PLUGIN_STATE_GENERATION_OPTION,
+	type PluginStateRow,
+} from "../plugins/state.js";
 import type { VersionedValue } from "../plugins/types.js";
 import {
 	BYLINE_FIELDS_VERSION_KEY,
@@ -37,6 +42,7 @@ void bylineFieldColumnsComplete;
 export interface ColdStartState {
 	appliedMigrationCount: number;
 	pluginStates: PluginStateRow[];
+	pluginStateGeneration: bigint;
 	collectionSlugs: string[];
 	/** The requested options that are set, parsed. */
 	options: Map<string, unknown>;
@@ -62,9 +68,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /**
- * Read the applied-migration count, plugin states, collection slugs, the
- * given options and the byline field definitions in one statement, so a
- * cold start pays one round trip for them. Throws when any of the tables is missing, as on a database that has
+ * Read the applied-migration count, plugin states and their generation,
+ * collection slugs, the given options and the byline field definitions in one
+ * statement, so a cold start pays one round trip for them. Throws when any of the tables is missing, as on a database that has
  * not been migrated; callers fall back to separate reads.
  */
 export async function readColdStartState(
@@ -93,6 +99,7 @@ export async function readColdStartState(
 	const result = await sql<{
 		applied_migrations: number | string;
 		plugin_states: unknown;
+		plugin_state_generation: string | null;
 		collections: unknown;
 		named_options: unknown;
 		prefixed_options: unknown;
@@ -101,6 +108,7 @@ export async function readColdStartState(
 	}>`select
 			(select count(*) from ${sql.ref("_emdash_migrations")}) as applied_migrations,
 			(select ${agg(object(PLUGIN_STATE_COLUMNS))} from ${sql.ref("_plugin_state")}) as plugin_states,
+			(select value from options where name = ${PLUGIN_STATE_GENERATION_OPTION}) as plugin_state_generation,
 			(select ${agg(sql.ref("slug"))} from ${sql.ref("_emdash_collections")}) as collections,
 			${namedOptions} as named_options,
 			(
@@ -147,6 +155,7 @@ export async function readColdStartState(
 	return {
 		appliedMigrationCount: Number(row.applied_migrations),
 		pluginStates,
+		pluginStateGeneration: parseGeneration(row.plugin_state_generation),
 		collectionSlugs,
 		options,
 		prefixedOptions,
