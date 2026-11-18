@@ -19,6 +19,7 @@
 import type { LayoutRead, LayoutReadLog } from "../layout-reads.js";
 import { replayLayoutRead } from "../layout-reads.js";
 import type { EmDashRequestContext } from "../request-context.js";
+import { prefetchWidgetAreas, WIDGET_AREA_READ } from "../widgets/index.js";
 import { wrapResponseForScopedClose } from "./middleware/scoped-db.js";
 
 interface RouteReads {
@@ -99,8 +100,22 @@ export function startLayoutPrefetch(
 
 	const started = new Set<string>();
 	const pending: Promise<unknown>[] = [];
-	for (const [id, read] of candidateReads(route)) {
+	const reads = candidateReads(route);
+	// A layout with a sidebar and a footer reads both areas: one query instead of one each.
+	const areaNames = reads.flatMap(([id]) =>
+		id.startsWith(WIDGET_AREA_READ) ? [id.slice(WIDGET_AREA_READ.length)] : [],
+	);
+	const batchAreas = areaNames.length > 1;
+	if (batchAreas) {
+		try {
+			pending.push(prefetchWidgetAreas(areaNames).catch(() => undefined));
+		} catch {
+			// The helpers run on demand.
+		}
+	}
+	for (const [id, read] of reads) {
 		started.add(id);
+		if (batchAreas && id.startsWith(WIDGET_AREA_READ)) continue;
 		try {
 			pending.push(replayLayoutRead(read).catch(() => undefined));
 		} catch {

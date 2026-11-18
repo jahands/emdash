@@ -82,7 +82,7 @@ describeEachDialect("widget area request cache", (dialect) => {
 		vi.clearAllMocks();
 	});
 
-	it("shares in-flight prefetched reads with concurrent named reads, including missing areas", async () => {
+	it("prefetches a layout's areas in one query, shared with concurrent named reads, including missing areas", async () => {
 		const footer = await getWidgetArea("footer");
 		const sidebar = await getWidgetArea("sidebar");
 		expect(footer?.widgets.map((widget) => widget.id)).toEqual(["search", "links"]);
@@ -104,7 +104,8 @@ describeEachDialect("widget area request cache", (dialect) => {
 		expect(actualSidebar).toEqual(sidebar);
 		expect(empty?.widgets).toEqual([]);
 		expect(missing).toBeNull();
-		expect(queries).toHaveLength(4);
+		expect(queries).toHaveLength(1);
+		expect(queries[0]).toContain(" in (");
 	});
 
 	it("loads every area in creation order with its ordered widgets in one query", async () => {
@@ -202,6 +203,35 @@ describeEachDialect("widget area request cache", (dialect) => {
 				expect(queries).toHaveLength(1);
 				await waitForDeferredTasks();
 			}
+		} finally {
+			__setObjectCacheBackendForTests(null);
+		}
+	});
+
+	it("prefetches a layout's areas through the object cache when it is on", async () => {
+		const store = new Map<string, string>();
+		__setObjectCacheBackendForTests(
+			{
+				get: (key) => Promise.resolve(store.get(key) ?? null),
+				set: (key, value) => {
+					store.set(key, value);
+					return Promise.resolve();
+				},
+				delete: (key) => {
+					store.delete(key);
+					return Promise.resolve();
+				},
+			},
+			{ revalidate: 60_000, defaultTtl: 3600 },
+		);
+		try {
+			const render = () => Promise.all([getWidgetArea("footer"), getWidgetArea("sidebar")]);
+			const cold = await renderWithLayoutPrefetch("/", render);
+			await waitForDeferredTasks();
+
+			queries = [];
+			expect(await renderWithLayoutPrefetch("/", render)).toEqual(cold);
+			expect(queries).toHaveLength(0);
 		} finally {
 			__setObjectCacheBackendForTests(null);
 		}
