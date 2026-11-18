@@ -1725,32 +1725,6 @@ function ContentEditPage() {
 		void navigate({ search: preservedSearch as never, replace: true });
 	}, [searchParams, navigate]);
 
-	React.useEffect(() => {
-		if (typeof searchParams.field !== "string" || isLoading) return;
-		const rootField = searchParams.field.split(".")[0] ?? "";
-		const rootDefinition = (roomView?.manifest?.collections[collection]?.fields ??
-			collectionFields)[rootField];
-		// Blocks fields reveal and focus their own nested controls after mounting them.
-		if (searchParams.field.includes(".") && rootDefinition?.kind === "blocks") return;
-
-		const timeoutId = requestIdleCallback(() => {
-			const el = document.getElementById(`field-${searchParams.field}`);
-			if (el) {
-				el.scrollIntoView({ behavior: "smooth", block: "center" });
-				el.focus();
-				handleFieldFocused();
-			}
-		});
-		return () => cancelIdleCallback(timeoutId);
-	}, [
-		searchParams,
-		isLoading,
-		handleFieldFocused,
-		roomView?.manifest,
-		collection,
-		collectionFields,
-	]);
-
 	// Fetch translations when i18n is enabled
 	const translationsQuery = useQuery({
 		queryKey: ["translations", collection, id],

@@ -1186,23 +1186,45 @@ export function ContentEditor({
 			? focusField
 			: undefined;
 
-	// Fields that showed before the room went live mount again inside it, with every block closed
-	// and the link already taken off the URL, so the room's fields get the link once more.
-	const [linkFocusedOutsideRoom, setLinkFocusedOutsideRoom] = React.useState<{
+	// Fields that showed before the room went live mount again inside it, with every block closed,
+	// focus lost and the link already taken off the URL, so the room's fields follow it once more.
+	const [followedLink, setFollowedLink] = React.useState<{
 		itemId: string | undefined;
 		field: string;
 	} | null>(null);
 	const linkedField =
-		focusField ??
-		(room && linkFocusedOutsideRoom?.itemId === item?.id
-			? linkFocusedOutsideRoom?.field
-			: undefined);
+		focusField ?? (room && followedLink?.itemId === item?.id ? followedLink?.field : undefined);
+	// Blocks fields reveal and focus their own nested controls after mounting them.
+	const linkedInBlocks =
+		!!linkedField &&
+		linkedField.includes(".") &&
+		fields[linkedField.split(".")[0] ?? ""]?.kind === "blocks";
 	const handleLinkedFieldFocused = useStableCallback(() => {
-		setLinkFocusedOutsideRoom(
-			!room && linkedField ? { itemId: item?.id, field: linkedField } : null,
-		);
+		setFollowedLink(!room && linkedField ? { itemId: item?.id, field: linkedField } : null);
 		if (focusField) onFieldFocused?.();
 	});
+	// Focus moving elsewhere means the person has moved on, so the room doesn't take it back.
+	React.useEffect(() => {
+		if (!followedLink || room) return;
+		const onFocusIn = (event: FocusEvent) => {
+			const linked = document.getElementById(`field-${followedLink.field}`);
+			if (linked && event.target instanceof Node && linked.contains(event.target)) return;
+			setFollowedLink(null);
+		};
+		document.addEventListener("focusin", onFocusIn);
+		return () => document.removeEventListener("focusin", onFocusIn);
+	}, [followedLink, room]);
+	React.useEffect(() => {
+		if (!linkedField || linkedInBlocks || fieldsLoading) return;
+		const idleId = requestIdleCallback(() => {
+			const element = document.getElementById(`field-${linkedField}`);
+			if (!element) return;
+			element.scrollIntoView({ behavior: "smooth", block: "center" });
+			element.focus();
+			handleLinkedFieldFocused();
+		});
+		return () => cancelIdleCallback(idleId);
+	}, [linkedField, linkedInBlocks, fieldsLoading, room, handleLinkedFieldFocused]);
 
 	// Autosave with debounce
 	// Track pending autosave to cancel on manual save
@@ -2554,6 +2576,7 @@ export function ContentEditor({
 			}
 			editorGenerationRef.current++;
 			markDirty();
+			setFollowedLink(null);
 			setFormData((prev) => ({ ...prev, [name]: value }));
 			if (name === (titleField ?? "title") && !slugTouched && typeof value === "string" && value) {
 				setSlug(slugify(value));
@@ -2571,6 +2594,7 @@ export function ContentEditor({
 			}
 			editorGenerationRef.current++;
 			markDirty();
+			setFollowedLink(null);
 			setSlug(value);
 			setSlugTouched(true);
 		},

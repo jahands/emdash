@@ -1684,4 +1684,56 @@ describe("ContentEditor's block links when the room goes live", () => {
 		await expect.poll(() => document.activeElement === heading()).toBe(true);
 		expect(onFieldFocused).toHaveBeenCalledOnce();
 	});
+	it("focuses a linked top-level field again in the room's fields", async () => {
+		const onFieldFocused = vi.fn();
+		const props = { item: makeItem(), onFieldFocused };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "summary"));
+		unmounts.push(() => screen.unmount());
+		const summary = () => document.getElementById("field-summary");
+
+		await expect.poll(() => document.activeElement === summary()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+
+		await screen.rerender(editor(null));
+		const fake = createRoom({ title: "My Post", summary: "Room summary", slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+
+		await expect
+			.element(screen.getByRole("textbox", { name: "Summary" }))
+			.toHaveValue("Room summary");
+		await expect.poll(() => document.activeElement === summary()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		["moves focus", async () => document.getElementById("field-title")?.focus()],
+		["types in the field", async () => userEvent.keyboard(" more")],
+	])("leaves focus alone once the person %s before the room goes live", async (_label, act) => {
+		const props = { item: makeItem(), onFieldFocused: vi.fn() };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "summary"));
+		unmounts.push(() => screen.unmount());
+		const summary = () => document.getElementById("field-summary");
+		await expect.poll(() => document.activeElement === summary()).toBe(true);
+		await screen.rerender(editor(null));
+
+		await act();
+		const fake = createRoom({ title: "My Post", summary: "Room summary", slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+		await expect
+			.element(screen.getByRole("textbox", { name: "Summary" }))
+			.toHaveValue("Room summary");
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		expect(document.activeElement).not.toBe(summary());
+	});
 });
