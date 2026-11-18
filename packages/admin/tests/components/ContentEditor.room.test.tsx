@@ -1684,6 +1684,32 @@ describe("ContentEditor's block links when the room goes live", () => {
 		await expect.poll(() => document.activeElement === heading()).toBe(true);
 		expect(onFieldFocused).toHaveBeenCalledOnce();
 	});
+	it("focuses a linked settings field again once the editor moves into the room", async () => {
+		const onFieldFocused = vi.fn();
+		const props = { item: makeItem(), onFieldFocused };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "slug"));
+		unmounts.push(() => screen.unmount());
+		const slug = () => document.querySelector<HTMLElement>('input[data-settings-field="slug"]');
+
+		await expect.poll(() => document.activeElement === slug()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+
+		await screen.rerender(editor(null));
+		const fake = createRoom({ title: "My Post", summary: "Room summary", slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+
+		await expect
+			.element(screen.getByRole("textbox", { name: "Summary" }))
+			.toHaveValue("Room summary");
+		await expect.poll(() => document.activeElement === slug()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+	});
+
 	it("focuses a linked top-level field again in the room's fields", async () => {
 		const onFieldFocused = vi.fn();
 		const props = { item: makeItem(), onFieldFocused };

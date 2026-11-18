@@ -1185,11 +1185,6 @@ export function ContentEditor({
 		handleBlockSidebarClose();
 		if (!isBelowLg) settingsPanel.reveal();
 	});
-	const settingsField =
-		focusField && !Object.hasOwn(fields, focusField) && isSettingsField(focusField)
-			? focusField
-			: undefined;
-
 	// Fields that showed before the room went live mount again inside it, with every block closed,
 	// focus lost and the link already taken off the URL, so the room's fields follow it once more.
 	const [followedLink, setFollowedLink] = React.useState<{
@@ -1198,6 +1193,10 @@ export function ContentEditor({
 	} | null>(null);
 	const linkedField =
 		focusField ?? (room && followedLink?.itemId === item?.id ? followedLink?.field : undefined);
+	const settingsField =
+		linkedField && !Object.hasOwn(fields, linkedField) && isSettingsField(linkedField)
+			? linkedField
+			: undefined;
 	// Blocks fields reveal and focus their own nested controls after mounting them.
 	const linkedInBlocks =
 		!!linkedField &&
@@ -1211,15 +1210,19 @@ export function ContentEditor({
 	React.useEffect(() => {
 		if (!followedLink || room) return;
 		const onFocusIn = (event: FocusEvent) => {
-			const linked = document.getElementById(`field-${followedLink.field}`);
+			const linked =
+				document.getElementById(`field-${followedLink.field}`) ??
+				document
+					.getElementById(settingsPanelId)
+					?.querySelector(`[data-settings-field="${followedLink.field}"]`);
 			if (linked && event.target instanceof Node && linked.contains(event.target)) return;
 			setFollowedLink(null);
 		};
 		document.addEventListener("focusin", onFocusIn);
 		return () => document.removeEventListener("focusin", onFocusIn);
-	}, [followedLink, room]);
+	}, [followedLink, room, settingsPanelId]);
 	React.useEffect(() => {
-		if (!linkedField || linkedInBlocks || fieldsLoading) return;
+		if (!linkedField || linkedInBlocks || settingsField || fieldsLoading) return;
 		const idleId = requestIdleCallback(() => {
 			const element = document.getElementById(`field-${linkedField}`);
 			if (!element) return;
@@ -1228,7 +1231,7 @@ export function ContentEditor({
 			handleLinkedFieldFocused();
 		});
 		return () => cancelIdleCallback(idleId);
-	}, [linkedField, linkedInBlocks, fieldsLoading, room, handleLinkedFieldFocused]);
+	}, [linkedField, linkedInBlocks, settingsField, fieldsLoading, room, handleLinkedFieldFocused]);
 
 	// Autosave with debounce
 	// Track pending autosave to cancel on manual save
@@ -3180,12 +3183,12 @@ export function ContentEditor({
 				<MobileSidebarPortalGuard />
 				{settingsField && (
 					<SettingsFieldLink
-						key={`${item?.id ?? "new"}:${item?.locale ?? entryLocale ?? ""}:${settingsField}`}
+						key={`${item?.id ?? "new"}:${item?.locale ?? entryLocale ?? ""}:${settingsField}:${room ? "room" : ""}`}
 						field={settingsField}
 						panelId={settingsPanelId}
 						openToken={settingsOpenToken}
 						onReveal={revealSettings}
-						onFocused={onFieldFocused}
+						onFocused={handleLinkedFieldFocused}
 					/>
 				)}
 				<RevisionViewSheetSync sheetRef={revisionView.sheetRef} />
