@@ -46,8 +46,10 @@ import {
 
 class RecordingPublisher {
 	readonly changes: Change[] = [];
+	calls = 0;
 
 	publish(changes: Change[]): Promise<void> {
+		this.calls++;
 		this.changes.push(...changes);
 		return Promise.resolve();
 	}
@@ -125,6 +127,7 @@ describeEachDialect("Realtime publishes from admin writers", (dialect) => {
 			{ topic: "taxonomies/genre", op: "create" },
 			{ topic: "schema", op: "update" },
 		]);
+		expect(publisher.calls).toBe(1);
 
 		const { term } = ok(await handleTermCreate(ctx.db, "genre", { label: "Jazz" }));
 		expect(await publisher.take()).toEqual([
