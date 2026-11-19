@@ -8,10 +8,10 @@ import { render } from "../../utils/render.tsx";
 
 vi.mock("../../../src/lib/api", async () => {
 	const actual = await vi.importActual("../../../src/lib/api");
-	return { ...actual, fetchRevisions: vi.fn() };
+	return { ...actual, fetchRevisions: vi.fn(), compareRevisions: vi.fn() };
 });
 
-import { fetchRevisions } from "../../../src/lib/api";
+import { compareRevisions, fetchRevisions } from "../../../src/lib/api";
 
 const FIELDS: Record<string, DiffFieldDescriptor> = { title: { kind: "string", label: "Title" } };
 
@@ -139,5 +139,64 @@ describe("useRevisionView", () => {
 		await screen.getByRole("button", { name: "Restored" }).click();
 		await expect.element(screen.getByText("Editing", { exact: true })).toBeInTheDocument();
 		await expect.poll(() => canvas.scrollTop).toBe(500);
+	});
+});
+
+function DraftChanges() {
+	const canvasRef = React.useRef<HTMLDivElement>(null);
+	const view = useRevisionView({
+		collection: "posts",
+		entryId: "entry-1",
+		locale: "en",
+		enabled: true,
+		draftRevisionId: "rev-30",
+		liveRevisionId: "rev-1",
+		fields: FIELDS,
+		listVisible: true,
+		canvasRef,
+	});
+	return (
+		<>
+			<button type="button" onClick={() => view.context.viewDraftChanges()}>
+				View changes
+			</button>
+			<button type="button" onClick={() => view.context.showOlderVersions()}>
+				Show older versions
+			</button>
+			<output>{view.diff ? "Compared" : "Loading"}</output>
+			<div ref={canvasRef} />
+		</>
+	);
+}
+
+describe("useRevisionView's comparison with the live version", () => {
+	it("isn't read again when showing older versions first lists the live one", async () => {
+		const all = Array.from({ length: 30 }, (_, index) =>
+			revision(
+				`rev-${30 - index}`,
+				`Version ${30 - index}`,
+				`2026-10-01 12:${String(59 - index).padStart(2, "0")}:00`,
+			),
+		);
+		(fetchRevisions as Mock).mockImplementation(
+			async (_collection: string, _entry: string, options?: { limit?: number }) => ({
+				items: all.slice(0, options?.limit ?? all.length),
+				total: all.length,
+			}),
+		);
+		(compareRevisions as Mock).mockResolvedValue({
+			hasChanges: true,
+			live: { title: "Version 1" },
+			draft: { title: "Version 30" },
+		});
+		const screen = await render(<DraftChanges />);
+
+		await screen.getByRole("button", { name: "View changes" }).click();
+		await expect.element(screen.getByText("Compared")).toBeInTheDocument();
+		await screen.getByRole("button", { name: "Show older versions" }).click();
+		await expect.poll(() => (fetchRevisions as Mock).mock.calls.length).toBeGreaterThan(1);
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		expect(compareRevisions).toHaveBeenCalledOnce();
 	});
 });
