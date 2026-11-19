@@ -373,6 +373,22 @@ function revisionListLimit(queryKey: readonly unknown[]): number {
 		: Number.POSITIVE_INFINITY;
 }
 
+/**
+ * `next` with the slug its draft stages. Write responses leave it out; the server keeps the
+ * staged slug of the draft a write replaces unless the write stages another.
+ */
+function withDraftSlug(
+	next: ContentItem,
+	previous: ContentItem | undefined,
+	stagedSlug?: string,
+): ContentItem {
+	if (next.draftSlug !== undefined) return next;
+	const { draftSlug: _, ...item } = next;
+	const hasDraft = !!item.draftRevisionId && item.draftRevisionId !== item.liveRevisionId;
+	const draftSlug = hasDraft ? (stagedSlug ?? previous?.draftSlug) : undefined;
+	return draftSlug === undefined ? item : { ...item, draftSlug };
+}
+
 function patchAutosaveQueries(
 	queryClient: QueryClient,
 	params: {
@@ -491,13 +507,8 @@ function patchAutosaveQueries(
 	// them), and an entry reopened from this cache would show its reference
 	// fields empty, so the cached pages are carried over.
 	const contentRead = queryClient.isFetching({ queryKey: contentKey }) > 0;
-	// The save response leaves out the staged slug, which the server keeps from the draft it
-	// replaces unless the save stages another.
-	const draftSlug =
-		savedItem.draftSlug ?? (draftRevisionId ? (payload.slug ?? cachedEntry?.draftSlug) : undefined);
 	queryClient.setQueriesData<ContentItem>({ queryKey: contentKey }, (cached) => ({
-		...savedItem,
-		...(draftSlug !== undefined && { draftSlug }),
+		...withDraftSlug(savedItem, cached ?? cachedEntry, payload.slug),
 		references:
 			savedItem.references ?? withAutosavedReferences(cached?.references, referenceRows, fields),
 	}));
@@ -2074,7 +2085,7 @@ function ContentEditPage() {
 			queryClient.setQueriesData<ContentItem>(
 				{ queryKey: ["content", collection, id] },
 				(cached) => ({
-					...publishedItem,
+					...withDraftSlug(publishedItem, cached),
 					references:
 						publishedItem.references ?? (savedReferences ? undefined : cached?.references),
 				}),
@@ -2142,7 +2153,7 @@ function ContentEditPage() {
 		async (
 			changedItem: ContentItem,
 			savedItem?: ContentItem,
-			savedPayload?: { references?: Record<string, string[]> },
+			savedPayload?: { slug?: string; references?: Record<string, string[]> },
 		) => {
 			await queryClient.cancelQueries({ queryKey: ["content", collection, id] });
 			const currentChangedItem = changedItem._rev
@@ -2153,7 +2164,7 @@ function ContentEditPage() {
 				{ queryKey: ["content", collection, id] },
 				(existing) => {
 					const currentItem = savedItem ?? existing;
-					return currentItem
+					const merged = currentItem
 						? {
 								...currentItem,
 								...currentChangedItem,
@@ -2166,6 +2177,11 @@ function ContentEditPage() {
 									: (currentItem.references ?? existing?.references),
 							}
 						: currentChangedItem;
+					return withDraftSlug(
+						{ ...merged, draftSlug: currentChangedItem.draftSlug },
+						existing,
+						savedItem ? savedPayload?.slug : undefined,
+					);
 				},
 			);
 			// The save's own refetch was cancelled above, so a selection it sent is

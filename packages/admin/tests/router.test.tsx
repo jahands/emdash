@@ -62,6 +62,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		onAuthorChange,
 		onSeoChange,
 		onPublishedAtChange,
+		onUnschedule,
 		onDirtyChange,
 		isSaving,
 		isAutosaving,
@@ -79,6 +80,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		onAuthorChange?: (authorId: string | null) => void;
 		onSeoChange?: (seo: { title: string }) => void;
 		onPublishedAtChange?: (publishedAt: string) => void | Promise<void>;
+		onUnschedule?: (payload?: { data: Record<string, unknown> }) => Promise<void>;
 		onDirtyChange?: (isDirty: boolean) => void;
 		isSaving?: boolean;
 		isAutosaving?: boolean;
@@ -150,6 +152,12 @@ vi.mock("../src/components/ContentEditor", () => ({
 					}}
 				>
 					Trigger Publish Date Sync
+				</button>
+				<button
+					type="button"
+					onClick={() => void onUnschedule?.({ data: { title: "Saved Title" } })}
+				>
+					Trigger Save And Unschedule
 				</button>
 				<button
 					type="button"
@@ -1910,6 +1918,49 @@ describe("ContentEditPage – autosave cache patching", () => {
 			expect(screen.getByTestId("mock-title").element().textContent).toBe("Autosaved Title");
 			expect(screen.getByTestId("mock-slug").element().textContent).toBe("autosaved-title");
 		});
+	});
+
+	it("keeps the staged slug when a save and unschedule replace the cached entry", async () => {
+		mockFetch
+			.on("GET", "/_emdash/api/auth/me", { data: { id: "user_01", role: 50 } })
+			.on("DELETE", "/_emdash/api/content/posts/post_1/schedule", {
+				data: {
+					_rev: "revision-token-2",
+					item: {
+						id: "post_1",
+						type: "posts",
+						slug: "published-slug",
+						status: "draft",
+						locale: "en",
+						translationGroup: null,
+						data: { title: "Saved Title" },
+						authorId: null,
+						primaryBylineId: null,
+						createdAt: "2025-01-01T00:00:00Z",
+						updatedAt: "2025-01-02T00:00:00Z",
+						publishedAt: "2025-01-01T00:00:00Z",
+						scheduledAt: null,
+						liveRevisionId: "rev_live",
+						draftRevisionId: "rev_draft",
+					},
+				},
+			});
+		const { router, TestApp } = buildRouter();
+		await router.navigate({
+			to: "/content/$collection/$id",
+			params: { collection: "posts", id: "post_1" },
+		});
+		const screen = await render(<TestApp />);
+		await waitFor(() => {
+			expect(screen.getByTestId("mock-slug").element().textContent).toBe("draft-slug");
+		});
+
+		await screen.getByRole("button", { name: "Trigger Save And Unschedule" }).click();
+
+		await waitFor(() => {
+			expect(screen.getByTestId("mock-title").element().textContent).toBe("Saved Title");
+		});
+		expect(screen.getByTestId("mock-slug").element().textContent).toBe("draft-slug");
 	});
 
 	it("opens an entry with a draft in one read, without reading the draft revision", async () => {

@@ -24,7 +24,6 @@ import * as React from "react";
 
 import type { AdminManifest } from "../../lib/api/client.js";
 import {
-	fetchContent,
 	fetchTranslations,
 	getPreviewUrl,
 	publishContent,
@@ -42,6 +41,7 @@ import {
 import { canPublishEntry, hasContentPermission } from "../../lib/content-permissions.js";
 import { invalidateContentViews } from "../../lib/invalidate-content-views.js";
 import { openPreviewWindow } from "../../lib/preview-window.js";
+import { contentEntryQueryOptions } from "../../lib/route-queries.js";
 import { contentUrl } from "../../lib/url.js";
 import { cn } from "../../lib/utils.js";
 import { getLocaleLabel } from "../../locales/index.js";
@@ -190,9 +190,9 @@ function CalendarEntryPanelContent({
 	const [previewing, setPreviewing] = React.useState(false);
 
 	const locale = i18n ? item.locale : undefined;
+	// The editor reads the entry under the same key, so the panel reads it the editor's way.
 	const details = useQuery({
-		queryKey: ["content", item.collection, item.id, { locale }],
-		queryFn: () => fetchContent(item.collection, item.id, { locale }),
+		...contentEntryQueryOptions(item.collection, item.id, locale),
 		staleTime: 0,
 	});
 	const translations = useQuery({

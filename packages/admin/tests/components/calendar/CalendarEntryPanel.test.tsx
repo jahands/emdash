@@ -148,6 +148,16 @@ describe("CalendarEntryPanel", () => {
 		expect(unscheduleContent).toHaveBeenCalledWith("posts", "launch", { locale: "en" });
 	});
 
+	it("reads the entry with its staged slug, as the editor that shares its cache entry does", async () => {
+		const { screen } = renderPanel(scheduledItem("2026-10-20T09:00:00.000Z"), editor);
+		await expect.element((await screen).getByText("Maya Chen")).toBeVisible();
+
+		expect(fetchContent).toHaveBeenCalledWith("posts", "launch", {
+			locale: undefined,
+			draftSlug: true,
+		});
+	});
+
 	it("holds the details' rows and an editor's actions in place while the details load", async () => {
 		let resolveDetails!: (item: ContentItem) => void;
 		vi.mocked(fetchContent).mockReturnValue(
