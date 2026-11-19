@@ -194,6 +194,7 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 	// One-shot gates: the next list read, entry read or save waits until its gate is released.
 	const gates = {
 		list: [] as Promise<void>[],
+		compare: [] as Promise<void>[],
 		entry: [] as Promise<void>[],
 		autosave: [] as Promise<void>[],
 	};
@@ -230,7 +231,9 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 		}
 		if (method === "GET" && url === "/_emdash/api/content/posts/post_1/compare") {
 			const [draft] = revisions;
-			return jsonResponse({
+			const gate = gates.compare.shift();
+			// The comparison as the server holds it when the read arrives.
+			const response = jsonResponse({
 				data: {
 					hasChanges: true,
 					live: LIVE_DATA,
@@ -241,6 +244,8 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 					},
 				},
 			});
+			await gate;
+			return response;
 		}
 		if (method === "GET" && url.startsWith("/_emdash/api/content/posts/post_1/revisions")) {
 			const gate = gates.list.shift();
@@ -323,6 +328,7 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 		requests,
 		releaseRestoredEntry,
 		holdNextListRead: () => hold("list"),
+		holdNextCompareRead: () => hold("compare"),
 		holdNextEntryRead: () => hold("entry"),
 		holdNextAutosave: () => hold("autosave"),
 		/** Changes the draft's content without giving it a new id, as a co-editing checkpoint does. */
@@ -478,6 +484,30 @@ describe("ContentEditPage revision view", () => {
 		server.checkpointDraft({ title: "Checkpointed title" });
 		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
 		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
+	});
+
+	it("reads the comparison again when it arrives after a newer list it was requested before", async () => {
+		server = createMockServer();
+		const screen = await renderEditPage();
+		await vi.waitFor(() => expect(listReads().length).toBeGreaterThan(0));
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+		const releaseCompare = server.holdNextCompareRead();
+		await screen.getByRole("button", { name: "View changes" }).click();
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(1));
+
+		server.checkpointDraft({ title: "Checkpointed title" });
+		const lists = listReads().length;
+		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
+		await vi.waitFor(() => expect(listReads().length).toBeGreaterThan(lists));
+		await vi.waitFor(() =>
+			expect(screen.queryClient.isFetching({ queryKey: ["revisions"] })).toBe(0),
+		);
+		releaseCompare();
+
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(compareReads()).toHaveLength(2);
 	});
 
 	it("reads the comparison again when the first list it sees has the draft changed since", async () => {

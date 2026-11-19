@@ -261,22 +261,25 @@ export function useRevisionView({
 			draftRevisionId ?? null,
 			liveRevisionId ?? null,
 		] as const,
-		queryFn: () => compareRevisions(collection, entryId ?? ""),
+		queryFn: async () => {
+			const requestedAt = Date.now();
+			return { ...(await compareRevisions(collection, entryId ?? "")), requestedAt };
+		},
 		enabled: comparing && Boolean(entryId),
 		placeholderData: (previous, previousQuery) =>
 			previousQuery?.queryKey[1] === collection && previousQuery.queryKey[2] === entryId
 				? previous
 				: undefined,
 	});
-	// A save that keeps the draft's id leaves the comparison's key as it was. When a list read after
-	// the comparison shows either revision changed in place since, the comparison is read again; a
-	// list older than the comparison, such as a cached one, can't say.
+	// A save that keeps the draft's id leaves the comparison's key as it was. When the list that
+	// arrived after the comparison was requested shows a compared revision changed in place, the
+	// comparison is requested again, which then comes after that list and settles it. A list that
+	// arrived before the request, such as a cached one, decides nothing.
 	const queryClient = useQueryClient();
 	const comparison = compareQuery.data;
-	const compareReadAt = compareQuery.dataUpdatedAt;
-	const listReadAt = query.dataUpdatedAt;
+	const listArrivedAt = query.dataUpdatedAt;
 	React.useEffect(() => {
-		if (!comparison?.revisions || !list || listReadAt <= compareReadAt) return;
+		if (!comparison?.revisions || !list || listArrivedAt <= comparison.requestedAt) return;
 		const changed = [comparison.revisions.draft, comparison.revisions.live].some((compared) => {
 			const listed = compared && list.items.find((item) => item.id === compared.id);
 			return listed?.fingerprint !== undefined && listed.fingerprint !== compared?.fingerprint;
@@ -285,7 +288,7 @@ export function useRevisionView({
 		void queryClient.invalidateQueries({
 			queryKey: ["contentCompare", collection, entryId ?? ""],
 		});
-	}, [comparison, compareReadAt, list, listReadAt, queryClient, collection, entryId]);
+	}, [comparison, list, listArrivedAt, queryClient, collection, entryId]);
 	const compared = comparing ? compareQuery.data : undefined;
 	const liveDiff = React.useMemo(() => {
 		if (!compared) return null;
