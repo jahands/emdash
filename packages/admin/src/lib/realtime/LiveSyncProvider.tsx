@@ -279,8 +279,15 @@ export function useLiveQueries({
 		return () => {
 			if (registrationRef.current === registration) registrationRef.current = null;
 			remove();
+			// A change held back under unsaved edits the screen is leaving: the next screen to show
+			// these queries reads them again.
+			if (missedSinceRef.current !== Number.NEGATIVE_INFINITY) {
+				for (const queryKey of registration.queryKeys) {
+					void queryClient.invalidateQueries({ queryKey, refetchType: "none" });
+				}
+			}
 		};
-	}, [registry, topicsKey, queryKeysKey]);
+	}, [registry, topicsKey, queryKeysKey, queryClient]);
 
 	const refetch = React.useCallback(
 		() =>
