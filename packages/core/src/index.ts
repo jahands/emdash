@@ -237,6 +237,7 @@ export type {
 	UploadResult,
 	DownloadResult,
 	DownloadOptions,
+	StoredFileInfo,
 	ByteRange,
 	ListResult,
 	ListOptions,

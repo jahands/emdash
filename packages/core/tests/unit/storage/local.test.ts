@@ -73,3 +73,28 @@ describe("LocalStorage ranged download", () => {
 		expect(await new Response(result.body).text()).toBe("0123456789");
 	});
 });
+
+describe("LocalStorage stat", () => {
+	let directory: string | undefined;
+
+	afterEach(async () => {
+		if (directory) await rm(directory, { recursive: true, force: true });
+	});
+
+	it("describes a stored file without reading it, and nothing for a missing one", async () => {
+		directory = await mkdtemp(join(tmpdir(), "emdash-local-storage-"));
+		const storage = new LocalStorage({ directory, baseUrl: "/media" });
+		await storage.upload({
+			key: "hero.png",
+			body: new Uint8Array([1, 2, 3]),
+			contentType: "image/png",
+		});
+
+		expect(await storage.stat("hero.png")).toMatchObject({
+			contentType: "image/png",
+			size: 3,
+			lastModified: expect.any(Date),
+		});
+		expect(await storage.stat("missing.png")).toBeNull();
+	});
+});

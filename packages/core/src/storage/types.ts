@@ -112,6 +112,16 @@ export interface DownloadResult {
 	lastModified?: Date;
 }
 
+/** What a stored file is, without its content. */
+export interface StoredFileInfo {
+	/** MIME type */
+	contentType: string;
+	/** Size in bytes */
+	size: number;
+	/** Last modification time, when the backend can provide it. */
+	lastModified?: Date;
+}
+
 /**
  * Signed URL for direct upload
  */
@@ -197,6 +207,12 @@ export interface Storage {
 	 * Download a file from storage, or part of it with `options.range`
 	 */
 	download(key: string, options?: DownloadOptions): Promise<DownloadResult>;
+
+	/**
+	 * Describe a file without reading it, or null when there is no file at `key`. Optional: the
+	 * media route answers `HEAD` with it, and downloads the file without it.
+	 */
+	stat?(key: string): Promise<StoredFileInfo | null>;
 
 	/**
 	 * Delete a file from storage

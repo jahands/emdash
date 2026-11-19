@@ -89,17 +89,24 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
 	const version = new URL(request.url).searchParams.get(MEDIA_VERSION_PARAM);
 	try {
+		// A HEAD answered from the file's details reads none of it.
+		const details =
+			request.method === "HEAD" && emdash.storage.stat ? await emdash.storage.stat(key) : undefined;
+		if (details === null) return apiError("NOT_FOUND", "File not found", 404);
 		// Range requests that include If-Range are served as whole-file responses
 		// because this route does not compare If-Range validators.
-		const range = request.headers.has("If-Range")
-			? null
-			: parseRangeHeader(request.headers.get("Range"));
+		const range =
+			details || request.headers.has("If-Range")
+				? null
+				: parseRangeHeader(request.headers.get("Range"));
 		// The route cache keys entries by URL alone, so a cached partial
 		// response would be served to requests for the whole file.
 		if (range && cache?.enabled) cache.set(false);
-		const result = range
-			? await emdash.storage.download(key, { range })
-			: await emdash.storage.download(key);
+		const result = details
+			? { ...details, body: undefined, range: undefined }
+			: range
+				? await emdash.storage.download(key, { range })
+				: await emdash.storage.download(key);
 		unusedBody = result.body;
 		const served = range ? result.range : undefined;
 
@@ -124,10 +131,10 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 			});
 		}
 
-		let content: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer> = result.body;
+		let content: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer> | undefined = result.body;
 		let cacheControl = IMMUTABLE_IMAGE_CACHE;
 		// A HEAD response sends no bytes, so it isn't worth reading them to verify the version.
-		if (isImage && (served || request.method === "HEAD")) {
+		if (isImage && (served || request.method === "HEAD" || !result.body)) {
 			cacheControl = MUTABLE_MEDIA_CACHE_CONTROL;
 		} else if (isImage) {
 			const original = await resolveOriginalBody(version, result.body, result.size);
@@ -167,7 +174,7 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 		}
 		headers["Content-Disposition"] = contentDisposition(disposition, filename);
 
-		const body = request.method === "HEAD" ? null : content;
+		const body = request.method === "HEAD" ? null : (content ?? null);
 
 		if (served) {
 			const end = served.offset + served.length - 1;

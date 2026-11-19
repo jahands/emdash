@@ -29,6 +29,7 @@ import type {
 	ListOptions,
 	SignedUploadUrl,
 	SignedUploadOptions,
+	StoredFileInfo,
 } from "./types.js";
 import { EmDashStorageError } from "./types.js";
 
@@ -284,6 +285,24 @@ export class S3Storage implements Storage {
 			if (!hasErrorName(error) || error.name !== "NoSuchKey") {
 				throw new EmDashStorageError(`Failed to delete file: ${key}`, "DELETE_FAILED", error);
 			}
+		}
+	}
+
+	async stat(key: string): Promise<StoredFileInfo | null> {
+		try {
+			const response = await this.client.send(
+				new HeadObjectCommand({ Bucket: this.bucket, Key: key }),
+			);
+			return {
+				contentType: response.ContentType || "application/octet-stream",
+				size: response.ContentLength || 0,
+				lastModified: response.LastModified,
+			};
+		} catch (error) {
+			if (hasErrorName(error) && (error.name === "NotFound" || error.name === "NoSuchKey")) {
+				return null;
+			}
+			throw new EmDashStorageError(`Failed to read file details: ${key}`, "HEAD_FAILED", error);
 		}
 	}
 

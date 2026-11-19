@@ -420,3 +420,37 @@ describe("S3Storage ranged download", () => {
 		expect(await new Response(result.body).text()).toBe("0123456789");
 	});
 });
+
+describe("S3Storage stat", () => {
+	afterEach(() => s3Send.mockReset());
+
+	function storage() {
+		return createStorage({
+			endpoint: "https://bucket.s3.example.com",
+			bucket: "my-bucket",
+			accessKeyId: "key",
+			secretAccessKey: "secret",
+		});
+	}
+
+	it("describes an object from one HEAD request, and nothing for a missing one", async () => {
+		const uploaded = new Date("2026-01-01T00:00:00Z");
+		s3Send.mockResolvedValueOnce({
+			ContentType: "image/png",
+			ContentLength: 3,
+			LastModified: uploaded,
+		});
+
+		expect(await storage().stat!("hero.png")).toEqual({
+			contentType: "image/png",
+			size: 3,
+			lastModified: uploaded,
+		});
+		expect(s3Send).toHaveBeenCalledTimes(1);
+		expect(s3Send.mock.calls[0]![0]).toMatchObject({ input: { Key: "hero.png" } });
+		expect(s3Send.mock.calls[0]![0]).not.toHaveProperty("input.Range");
+
+		s3Send.mockRejectedValueOnce(Object.assign(new Error("missing"), { name: "NotFound" }));
+		expect(await storage().stat!("missing.png")).toBeNull();
+	});
+});

@@ -328,6 +328,30 @@ describeEachDialect("version-pinned media caching", (dialect) => {
 			expect(read).toBe(false);
 		});
 
+		it("answers HEAD from the file's details when the storage can give them", async () => {
+			const lastModified = new Date("2026-01-01T00:00:00Z");
+			const described: Storage = {
+				...storage,
+				stat: async () => ({ contentType: "image/png", size: BYTES.length, lastModified }),
+				download: () => Promise.reject(new Error("HEAD downloaded the file")),
+			};
+			const request = new Request(`http://localhost/_emdash/api/media/file/${KEY}?${pin(hash)}`, {
+				method: "HEAD",
+			});
+
+			const response = await fileGET({
+				params: { key: KEY },
+				locals: { emdash: { storage: described } },
+				request,
+			} as never);
+
+			expect(response.status).toBe(200);
+			expect(response.body).toBeNull();
+			expect(response.headers.get("Content-Length")).toBe(String(BYTES.length));
+			expect(response.headers.get("Last-Modified")).toBe(lastModified.toUTCString());
+			expect(response.headers.get("Cache-Control")).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		});
+
 		it("streams a pinned original too large to verify, revalidating", async () => {
 			const large = new Uint8Array(MAX_VERIFIED_MEDIA_BYTES + 1).fill(7);
 			await storage.upload({ key: KEY, body: large, contentType: "image/png" });
