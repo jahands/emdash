@@ -8,6 +8,7 @@ import type { MediaPickerModalProps } from "../../src/components/MediaPickerModa
 import { SeoImageField } from "../../src/components/SeoImageField.js";
 import type { ContentSeoInput } from "../../src/lib/api/index.js";
 import { render } from "../utils/render.js";
+import { renditionWidth, shownFile } from "../utils/rendition.js";
 import { actionStates, loadedPreview, solidImage } from "../utils/seo-image-field.js";
 
 const picker = vi.hoisted(() => ({ finishClosing: () => {} }));
@@ -241,13 +242,11 @@ describe("SeoImageField", () => {
 		).toHaveLength(0);
 
 		resolveMetadata(Response.json({ success: true, data: { item: metadata } }));
-		await loadedPreview(screen);
-		await vi.waitFor(() => {
-			expect(
-				performance.getEntriesByName(new URL(publicFileUrl, window.location.origin).href).length,
-			).toBeGreaterThan(0);
-		});
-		expect(screen.getByRole("note")).toHaveTextContent(SHARING_URL_TITLE);
+		expect(shownFile(await loadedPreview(screen))).toBe(publicFileUrl);
+		expect(
+			performance.getEntriesByName(new URL(idFileUrl, window.location.origin).href),
+		).toHaveLength(0);
+		await expect.element(screen.getByRole("note")).toHaveTextContent(SHARING_URL_TITLE);
 		expect(screen.getByRole("note")).toHaveTextContent(SHARING_URL_DESCRIPTION);
 		await expect.element(button(screen, SAVE_IMAGE_URL)).toBeVisible();
 		expect(onChange).not.toHaveBeenCalled();
@@ -361,7 +360,7 @@ describe("SeoImageField", () => {
 		vi.spyOn(globalThis, "fetch").mockResolvedValue(
 			Response.json({
 				success: true,
-				data: { item: { id, storageKey: "objects/unserved.jpg", status: "ready" } },
+				data: { item: { id, storageKey: "missing/unserved.jpg", status: "ready" } },
 			}),
 		);
 		const onChange = vi.fn();
@@ -385,14 +384,47 @@ describe("SeoImageField", () => {
 		await expect.element(button(screen, SAVE_IMAGE_URL)).not.toBeInTheDocument();
 	});
 
+	it("previews a local image as a rendition sized to its box, without loading the original", async () => {
+		const fileUrl = "/_emdash/api/media/file/objects/og-image.jpg";
+		performance.clearResourceTimings();
+		const screen = await render(<Field image={fileUrl} />);
+
+		const image = await loadedPreview(screen);
+		expect(shownFile(image)).toBe(fileUrl);
+		const width = renditionWidth(image);
+		expect(width).toBeGreaterThanOrEqual(image.getBoundingClientRect().width);
+		expect(width).toBeLessThanOrEqual(
+			Math.ceil(image.getBoundingClientRect().width * window.devicePixelRatio) + 64,
+		);
+		expect(
+			performance.getEntriesByName(new URL(fileUrl, window.location.origin).href),
+		).toHaveLength(0);
+	});
+
 	it.each([
 		["uploads/og.png", "/_emdash/api/media/file/uploads/og.png"],
 		["/images/og.png", "/images/og.png"],
 		["https://cdn.example.com/og.png", "https://cdn.example.com/og.png"],
 		["data:image/png;base64,AAAA", "data:image/png;base64,AAAA"],
 	])("preserves or normalizes a non-ID image reference (%s)", async (image, expected) => {
+		const requested = new Set<string>();
+		const recordRequested = () => {
+			for (const preview of document.querySelectorAll("img")) {
+				const file = shownFile(preview);
+				if (file) requested.add(file);
+			}
+		};
+		const observer = new MutationObserver(recordRequested);
+		observer.observe(document.body, {
+			attributes: true,
+			attributeFilter: ["src"],
+			childList: true,
+			subtree: true,
+		});
 		const screen = await render(<Field image={image} />);
-		expect(screen.container.querySelector("img")?.getAttribute("src")).toBe(expected);
+		recordRequested();
+		observer.disconnect();
+		expect([...requested]).toEqual([expected]);
 		await expect.element(button(screen, SAVE_IMAGE_URL)).not.toBeInTheDocument();
 	});
 
@@ -464,7 +496,7 @@ describe("SeoImageField", () => {
 	});
 
 	it("says when the image can't be loaded and shows its actions", async () => {
-		const screen = await render(<Field image="/_emdash/api/media/file/deleted.png" />);
+		const screen = await render(<Field image="/_emdash/api/media/file/missing/deleted.png" />);
 
 		await expect.element(screen.getByText("Image not found", { exact: true })).toBeVisible();
 		await movePointerOffPreview(screen);

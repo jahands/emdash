@@ -7,13 +7,13 @@
 
 import {
 	Banner,
-	Button,
 	ClipboardText,
 	Combobox,
 	Dialog,
 	Input,
 	InputArea,
 	Select,
+	SkeletonLine,
 	Tabs,
 	inputVariants,
 } from "@cloudflare/kumo";
@@ -35,7 +35,13 @@ import {
 	Ruler,
 	WarningCircle,
 } from "@phosphor-icons/react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 import { flushSync } from "react-dom";
@@ -74,6 +80,7 @@ import {
 	type MediaFocalPoint,
 } from "../lib/media-utils";
 import { formatDate } from "../lib/utils.js";
+import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { HelpTooltip } from "./FieldHelpLabel.js";
@@ -145,6 +152,8 @@ function cropAspectRatio(mode: CropAspectMode, source: CropViewportSize | null):
 interface MediaLocationOption {
 	id: string | null;
 	name: string;
+	/** The folder's name is still loading. */
+	pending?: boolean;
 }
 
 export interface MediaDetailPanelProps {
@@ -567,6 +576,7 @@ export function MediaDetailPanel({
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastPage) => lastPage.nextCursor,
 		enabled: open && canMoveLocation && locationOpen,
+		placeholderData: keepPreviousData,
 	});
 	const locationFolders = React.useMemo(
 		() => locationListQuery.data?.pages.flatMap((page) => page.items) ?? [],
@@ -600,13 +610,10 @@ export function MediaDetailPanel({
 	const selectedLocation = React.useMemo<MediaLocationOption>(() => {
 		if (folderId === null) return mainLocation;
 		return (
-			locationOptions.find((option) => option.id === folderId) ?? {
-				id: folderId,
-				name:
-					currentFolderQuery.isLoading || currentFolderMissing
-						? t`Loading...`
-						: t`Location unavailable`,
-			}
+			locationOptions.find((option) => option.id === folderId) ??
+			(currentFolderQuery.isLoading || currentFolderMissing
+				? { id: folderId, name: "", pending: true }
+				: { id: folderId, name: t`Location unavailable` })
 		);
 	}, [
 		currentFolderMissing,
@@ -616,13 +623,13 @@ export function MediaDetailPanel({
 		mainLocation,
 		t,
 	]);
+	const currentLocationPending =
+		localItem?.folderId !== null &&
+		(currentFolderMissing || (!currentFolderQuery.data && currentFolderQuery.isLoading));
 	const currentLocationName =
 		localItem?.folderId === null
 			? mainLocation.name
-			: currentFolderMissing
-				? t`Loading...`
-				: (currentFolderQuery.data?.name ??
-					(currentFolderQuery.isLoading ? t`Loading...` : t`Location unavailable`));
+			: (currentFolderQuery.data?.name ?? t`Location unavailable`);
 	const recoveryPendingRef = React.useRef(false);
 	const recoveredFolderRef = React.useRef<string | null>(null);
 	const recoverMediaMutation = useMutation({
@@ -1489,8 +1496,10 @@ export function MediaDetailPanel({
 												className={`${inputVariants()} relative flex w-full items-center pe-8 text-start`}
 											>
 												<Combobox.Value>
-													{(option) =>
-														option ? (
+													{(option: MediaLocationOption | null) =>
+														option?.pending ? (
+															<LocationNamePlaceholder />
+														) : option ? (
 															<span className="flex min-w-0 items-center gap-2">
 																<MediaLocationIcon folderId={option.id} />
 																<span className="truncate" dir="auto">
@@ -1511,16 +1520,9 @@ export function MediaDetailPanel({
 													aria-label={t`Search folders`}
 													placeholder={t`Search folders`}
 												/>
-												<div
-													className={
-														locationListQuery.isFetching
-															? "p-2 text-center text-sm text-kumo-subtle"
-															: "sr-only"
-													}
-													role="status"
-												>
+												<div className="sr-only" role="status">
 													{locationListQuery.isFetching
-														? t`Loading folders...`
+														? t`Loading folders`
 														: locationListQuery.data
 															? plural(locationFolders.length, {
 																	one: "# folder loaded",
@@ -1544,6 +1546,9 @@ export function MediaDetailPanel({
 														</Combobox.Item>
 													)}
 												</Combobox.List>
+												{locationListQuery.isLoading && (
+													<LocationOptionPlaceholders rows={locationOptions.length > 1 ? 1 : 2} />
+												)}
 												{locationListQuery.error && (
 													<div
 														className="space-y-2 border-t border-kumo-line p-2 text-sm text-kumo-danger"
@@ -1577,12 +1582,18 @@ export function MediaDetailPanel({
 									) : (
 										<div className="w-full space-y-2">
 											<span className="text-[14px] font-medium text-kumo-default">{t`Location`}</span>
-											<Input
-												aria-label={t`Location`}
-												value={currentLocationName}
-												disabled
-												className="w-full bg-kumo-tint text-kumo-subtle"
-											/>
+											{currentLocationPending ? (
+												<div className={`${inputVariants()} flex w-full items-center bg-kumo-tint`}>
+													<LocationNamePlaceholder />
+												</div>
+											) : (
+												<Input
+													aria-label={t`Location`}
+													value={currentLocationName}
+													disabled
+													className="w-full bg-kumo-tint text-kumo-subtle"
+												/>
+											)}
 										</div>
 									))}
 
@@ -1726,9 +1737,13 @@ export function MediaDetailPanel({
 														aria-label={t`Crop output dimensions`}
 														className="shrink-0 font-medium tabular-nums text-kumo-default"
 													>
-														{cropPixels
-															? `${cropPixels.width} × ${cropPixels.height}`
-															: t`Loading...`}
+														{cropPixels ? (
+															`${cropPixels.width} × ${cropPixels.height}`
+														) : (
+															<span className="block w-20" aria-hidden="true">
+																<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+															</span>
+														)}
 													</output>
 												</div>
 												{canReplaceOriginal && cropAspectMode !== "original" ? (
@@ -2021,3 +2036,34 @@ function MediaLocationIcon({ folderId }: { folderId: string | null }) {
 }
 
 export default MediaDetailPanel;
+
+/** Stands in for a folder's name in the Location field while it loads. */
+function LocationNamePlaceholder() {
+	const { t } = useLingui();
+	return (
+		<span className="block w-32">
+			<span className="sr-only">{t`Loading...`}</span>
+			<span aria-hidden="true">
+				<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+			</span>
+		</span>
+	);
+}
+
+const LOCATION_PLACEHOLDER_WIDTHS = [55, 40];
+
+/** Folder options in outline, below the ones already known, while the first folders load. */
+function LocationOptionPlaceholders({ rows }: { rows: number }) {
+	return (
+		<div aria-hidden="true" data-location-option-placeholder>
+			{LOCATION_PLACEHOLDER_WIDTHS.slice(0, rows).map((width) => (
+				<div key={width} className="mx-1.5 flex items-center gap-2 px-2 py-1.5">
+					<div className="skeleton-line size-4 shrink-0 rounded-sm" />
+					<div className="min-w-0 flex-1">
+						<SkeletonLine blockHeight={24} minWidth={width} maxWidth={width} />
+					</div>
+				</div>
+			))}
+		</div>
+	);
+}

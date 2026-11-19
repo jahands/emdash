@@ -23,6 +23,8 @@ export interface RevisionViewBarProps {
 	authorColor: AuthorColor;
 	isCurrent: boolean;
 	isPublished: boolean;
+	/** The version is the draft, compared with the live version. */
+	comparingLive?: boolean;
 	/** The version holds the same content as the current one, so there is nothing to restore. */
 	sameAsCurrent: boolean;
 	/** The entry has a draft, which restoring replaces. */
@@ -60,6 +62,7 @@ export function RevisionViewBar({
 	authorColor,
 	isCurrent,
 	isPublished,
+	comparingLive = false,
 	sameAsCurrent,
 	hasDraft,
 	scheduled,
@@ -94,6 +97,7 @@ export function RevisionViewBar({
 			: null;
 	const canRestore = !nothingToRestore && !readOnly;
 	const when = format.when(revisionDate(revision.createdAt));
+	const status = comparingLive ? t`Compared with published` : isPublished ? t`Published` : null;
 	const olderRef = React.useRef<HTMLButtonElement>(null);
 	const newerRef = React.useRef<HTMLButtonElement>(null);
 	const lastStepRef = React.useRef<RevisionStepDirection | null>(null);
@@ -156,8 +160,10 @@ export function RevisionViewBar({
 							/>
 							<bdi className="truncate">{format.people(revisionNamed(revision))}</bdi>
 						</span>
-						{isPublished && (
-							<span className="flex shrink-0 items-center gap-1.5">
+						{status && (
+							<span
+								className={cn("flex items-center gap-1.5", comparingLive ? "min-w-0" : "shrink-0")}
+							>
 								<span aria-hidden="true">·</span>
 								<span className="sr-only">
 									{t({
@@ -165,7 +171,7 @@ export function RevisionViewBar({
 										context: "Read aloud between a version's author and status",
 									})}
 								</span>
-								<span>{t`Published`}</span>
+								<span className="truncate">{status}</span>
 							</span>
 						)}
 					</p>

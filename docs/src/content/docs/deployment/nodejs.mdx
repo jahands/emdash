@@ -52,6 +52,14 @@ export default defineConfig({
 });
 ```
 
+Astro resizes images on Node.js with [sharp](https://sharp.pixelplumbing.com/). Add it to the site's dependencies:
+
+```bash
+npm install sharp
+```
+
+Without it, `/_image` returns `500` and pages show broken images. npm installs sharp as an optional dependency of Astro, but pnpm does not make that copy available to the site.
+
 ## Reverse proxies and HTTPS
 
 When the Node process sits behind a reverse proxy that terminates TLS, internal requests arrive over HTTP while visitors reach the site over HTTPS. Set the public origin with `EMDASH_SITE_URL` or `SITE_URL` so EmDash builds correct absolute URLs:
@@ -60,9 +68,34 @@ When the Node process sits behind a reverse proxy that terminates TLS, internal 
 export EMDASH_SITE_URL=https://example.com
 ```
 
-Set the variable both where `npm run build` runs and where the server runs. The build uses it to enable image optimization for locally stored media. If it is missing at build time, images are served as unoptimized originals instead of through Astro's `/_image` endpoint. See [`siteUrl`](/reference/configuration/#siteurl) for how EmDash resolves the public origin.
+Set the variable where the server runs. See [`siteUrl`](/reference/configuration/#siteurl) for how EmDash resolves the public origin.
 
 The proxy must also forward WebSocket upgrades for co-editing. See [Forward WebSocket upgrades](#forward-websocket-upgrades).
+
+## Compression
+
+The standalone server compresses responses for browsers that send `Accept-Encoding`. It uses Brotli when the browser accepts it and gzip otherwise:
+
+- JavaScript, CSS and other text assets in `dist/client/_astro/` are compressed during `npm run build`. The build writes a `.br` and a `.gz` copy next to each file, and the server sends the copy that matches the request.
+- Pages, API responses and other text responses are compressed as the server sends them.
+
+Images, fonts in WOFF formats, responses smaller than 1 KiB, event streams, range requests and responses marked `Cache-Control: no-transform` are sent as they are. Compressible responses carry `Vary: Accept-Encoding`, so caches keep the compressed and uncompressed versions apart.
+
+A reverse proxy or CDN in front of the server passes these responses through without compressing them again. To leave compression entirely to the proxy, set `compression: false`:
+
+```js title="astro.config.mjs"
+emdash({
+	database: sqlite({ url: "file:./data/emdash.db" }),
+	storage: local({ directory: "./data/uploads", baseUrl: "/_emdash/api/media/file" }),
+	compression: false,
+}),
+```
+
+With `node({ mode: "middleware" })`, your own server sends the responses, so EmDash does not compress them. Add compression in that server, for example with Express's [`compression`](https://expressjs.com/en/resources/middleware/compression.html) middleware.
+
+## Page caching
+
+Without a route cache, every on-demand page renders again for each request. EmDash sends these pages without a `Cache-Control` header, so browsers and CDNs fetch them again on each visit. To serve repeat visits from memory, register Astro's `memoryCache()` provider and give each public route a rule. EmDash invalidates cached pages when content is published. [Route Caching](/deployment/route-caching/) covers the configuration and what stays stale until a page expires. Each Node.js process keeps its own cache, so read [Node.js with `memoryCache()`](/deployment/route-caching/#nodejs-with-memorycache) before you run several processes.
 
 ## Build and run
 
@@ -97,7 +130,7 @@ Marketplace plugins and the plugins listed under `sandboxed: []` need a sandbox 
 
 ## Co-editing
 
-[Co-editing](/guides/working-with-content/#edit-with-other-people) is off by default. Set [`coEditing: true`](/reference/configuration/#coediting) to turn it on. On Node.js, each entry's room runs inside a site process. EmDash takes WebSocket upgrades on the room path, `/_emdash/api/content/{collection}/{id}/room` after any base path, from the HTTP server that serves Astro. Rooms store their state in the site database, in the `_emdash_rooms` and `_emdash_room_updates` tables, and the process keeps each open room's document in memory.
+[Co-editing](/guides/working-with-content/#edit-with-other-people) is off by default. Set [`coEditing: true`](/reference/configuration/#coediting) to turn it on. On Node.js, each entry's room runs inside a site process. EmDash takes WebSocket upgrades on the room path, `/_emdash/api/content/{collection}/{id}/room` after any base path, from the HTTP server that serves Astro. It also takes them on `/_emdash/api/realtime`, which carries [live updates](/reference/configuration/#coediting) to admin tabs. Rooms store their state in the site database, in the `_emdash_rooms` and `_emdash_room_updates` tables, and the process keeps each open room's document in memory.
 
 Rooms run when the site uses `@astrojs/node` with an HTTP/1.1 `node:http` or `node:https` server:
 
@@ -110,9 +143,9 @@ Sites on other adapters, and [`node:cluster` workers](#run-several-processes), u
 
 ### Forward WebSocket upgrades
 
-A reverse proxy in front of the site must forward WebSocket upgrades on room paths. Otherwise, each browser session switches to single-editor mode after its first three connections fail, and the server logs a warning such as `[co-editing] posts:01JV5Z7Q3W8E2N6R4T9Y0A1B2C: a client's sockets didn't open, so it edits in single-editor mode`.
+A reverse proxy in front of the site must forward WebSocket upgrades on room paths and on `/_emdash/api/realtime`. Otherwise, each browser session switches to single-editor mode after its first three connections fail, and the server logs a warning such as `[co-editing] posts:01JV5Z7Q3W8E2N6R4T9Y0A1B2C: a client's sockets didn't open, so it edits in single-editor mode`. Without the live updates path, admin tabs stop trying after three failed connections and refresh their lists only when you return to the tab.
 
-The following nginx configuration forwards room paths, with their upgrades, to a site on port 4321. In the room location, also set any headers that the rest of the site gets, such as `X-Forwarded-Proto`:
+The following nginx configuration forwards both paths, with their upgrades, to a site on port 4321. In the room location, also set any headers that the rest of the site gets, such as `X-Forwarded-Proto`:
 
 ```nginx title="/etc/nginx/conf.d/emdash.conf"
 map $http_upgrade $connection_upgrade {
@@ -123,7 +156,7 @@ map $http_upgrade $connection_upgrade {
 server {
 	# listen, server_name and TLS settings
 
-	location ~ ^/_emdash/api/content/[^/]+/[^/]+/room$ {
+	location ~ ^/_emdash/api/(content/[^/]+/[^/]+/room|realtime)$ {
 		proxy_pass http://127.0.0.1:4321;
 		proxy_http_version 1.1;
 		proxy_set_header Host $host;
@@ -140,7 +173,7 @@ server {
 
 Add the site's base path to the start of the room location if it has one. nginx's [WebSocket proxying guide](https://nginx.org/en/docs/http/websocket.html) explains the upgrade headers; other proxies need equivalent settings.
 
-EmDash pings each room socket every 30 seconds, so a proxy that closes idle connections must wait longer than that. nginx waits 60 seconds by default.
+EmDash pings each room socket every 30 seconds, and admin tabs ping their live updates socket as often, so a proxy that closes idle connections must wait longer than that. nginx waits 60 seconds by default.
 
 ### Run several processes
 
@@ -163,6 +196,8 @@ upstream emdash_rooms {
 
 With these upstreams, the room location from [Forward WebSocket upgrades](#forward-websocket-upgrades) uses `proxy_pass http://emdash_rooms;`, and `location /` uses `proxy_pass http://emdash;`.
 
+Live updates reach the admin tabs connected to the process that handled the change. With these upstreams, every live updates socket goes to one process, so changes that the other process handles reach no tab, and its lists refresh when you return to the tab. Because every tab connects to that one process, the admin still shows everyone who has an entry or screen open.
+
 Without routing by path, people whose requests reach another process wait read-only, without **Take over**, while the room is open in the first one. With round-robin routing, someone editing alone can need several tries to join, because a missed upgrade holds the room's claim for up to a minute.
 
 Writes that another process handles reach the room late, at its next save or join, even with routing by path:
@@ -174,7 +209,7 @@ Writes that another process handles reach the room late, at its next save or joi
 
 ### Other WebSocket handlers
 
-EmDash adds one `upgrade` listener to the site's server. Any other upgrade handler on that server must leave room paths alone. Handlers that answer every upgrade, such as a `ws` server created with `{ server }`, `express-ws` and `@fastify/websocket`, don't. Replace such a handler with a `ws` server created with `noServer: true` that you hand only your own paths, or leave co-editing off.
+EmDash adds one `upgrade` listener to the site's server. Any other upgrade handler on that server must leave room paths and `/_emdash/api/realtime` alone. Handlers that answer every upgrade, such as a `ws` server created with `{ server }`, `express-ws` and `@fastify/websocket`, don't. Replace such a handler with a `ws` server created with `noServer: true` that you hand only your own paths, or leave co-editing off.
 
 The following Express server runs a site built with `node({ mode: "middleware" })` and passes upgrades on `/live` to its own `ws` server, leaving room paths to EmDash:
 

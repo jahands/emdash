@@ -1,4 +1,4 @@
-import { Badge, Button, Checkbox, Input, Popover, Switch } from "@cloudflare/kumo";
+import { Badge, Button, Checkbox, Input, Popover, SkeletonLine, Switch } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { CaretDown } from "@phosphor-icons/react";
@@ -34,6 +34,8 @@ export function isBylineFilterActive(filter: BylineFilterState): boolean {
 
 /** Server-side cap on how many bylines one filter may name. */
 const MAX_SELECTED = 25;
+// Fixed, so placeholders shown again after a remount don't change shape.
+const BYLINE_PLACEHOLDER_WIDTHS = [55, 40, 65, 48];
 
 /** The junction stores translation groups, so a filter matches every locale. */
 const groupOf = (byline: BylineSummary) => byline.translationGroup ?? byline.id;
@@ -57,7 +59,7 @@ export function BylineFilter({ value, onChange, locale }: BylineFilterProps) {
 	const debouncedSearch = useDebouncedValue(search, 300);
 	const trimmedSearch = debouncedSearch.trim();
 
-	const { data, isLoading } = useQuery({
+	const { data, isLoading, isError, isPlaceholderData } = useQuery({
 		queryKey: ["bylines", "content-filter", locale ?? null, trimmedSearch],
 		queryFn: () => fetchBylines({ search: trimmedSearch || undefined, locale, limit: 20 }),
 		enabled: open,
@@ -143,10 +145,35 @@ export function BylineFilter({ value, onChange, locale }: BylineFilterProps) {
 					className="mt-2 max-h-64 space-y-0.5 overflow-y-auto"
 					role="group"
 					aria-label={t`Bylines`}
+					aria-busy={isPlaceholderData || undefined}
 				>
-					{isLoading && <p className="py-2 text-base text-kumo-subtle">{t`Loading…`}</p>}
+					{isLoading && (
+						<>
+							<span role="status" className="sr-only">
+								{t`Loading…`}
+							</span>
+							{BYLINE_PLACEHOLDER_WIDTHS.map((width) => (
+								<div
+									key={width}
+									className="flex items-start gap-2 rounded px-1 py-2 text-base"
+									aria-hidden="true"
+								>
+									<div className="skeleton-line mt-0.5 size-4 shrink-0 rounded-sm" />
+									<div className="flex-1">
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+									</div>
+								</div>
+							))}
+						</>
+					)}
 
-					{!isLoading && options.length === 0 && (
+					{isError && !data && (
+						<p role="alert" className="py-2 text-base text-kumo-danger">
+							{t`Bylines couldn't be loaded.`}
+						</p>
+					)}
+
+					{!isLoading && !isError && options.length === 0 && (
 						<p className="py-2 text-base text-kumo-subtle">{t`No bylines found`}</p>
 					)}
 

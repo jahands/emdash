@@ -5,7 +5,7 @@
  * configuring the active email provider and sending a test email.
  */
 
-import { Banner, Button, Input, Loader, Select, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Input, Select, useKumoToastManager } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -19,8 +19,15 @@ import {
 	sendTestEmail,
 	type EmailSettings as EmailSettingsData,
 } from "../../lib/api/email-settings.js";
+import { Button } from "../Button.js";
 import { getMutationError } from "../DialogError.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsFieldPlaceholder,
+	SettingsPlaceholderRows,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 const SMTP_PROVIDER_ID = "emdash-builtin-smtp";
 const PROVIDER_LABELS: Record<string, MessageDescriptor> = {
@@ -181,20 +188,6 @@ export function EmailSettings() {
 	const title = t`Email Settings`;
 	const description = t`Configure the email provider, view pipeline status, and send test emails`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
-			</SettingsFrame>
-		);
-	}
-
 	if (fetchError) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -214,7 +207,7 @@ export function EmailSettings() {
 	);
 
 	return (
-		<SettingsFrame title={title} description={description}>
+		<SettingsFrame title={title} description={description} loading={isLoading}>
 			<div className="grid gap-8">
 				<SettingsSection
 					title={t`Email Provider`}
@@ -222,15 +215,19 @@ export function EmailSettings() {
 				>
 					<SettingRow>
 						<div className="grid gap-4">
-							<Select
-								label={t`Provider`}
-								value={provider}
-								onValueChange={(value) => setProvider(value ?? "")}
-								items={[
-									{ value: "smtp", label: t`SMTP` },
-									...pluginProviders.map((p) => ({ value: p.pluginId, label: p.pluginId })),
-								]}
-							/>
+							{isLoading ? (
+								<SettingsFieldPlaceholder label={t`Provider`} />
+							) : (
+								<Select
+									label={t`Provider`}
+									value={provider}
+									onValueChange={(value) => setProvider(value ?? "")}
+									items={[
+										{ value: "smtp", label: t`SMTP` },
+										...pluginProviders.map((p) => ({ value: p.pluginId, label: p.pluginId })),
+									]}
+								/>
+							)}
 
 							{provider === "smtp" && (
 								<div className="grid gap-4">
@@ -330,7 +327,11 @@ export function EmailSettings() {
 				</SettingsSection>
 
 				<SettingsSection title={t`Email Pipeline`}>
-					<PipelineStatus settings={settings} />
+					{isLoading ? (
+						<SettingsPlaceholderRows rows={1} />
+					) : (
+						<PipelineStatus settings={settings} />
+					)}
 				</SettingsSection>
 
 				{settings?.smtp.configured && settings.selectedProviderId === SMTP_PROVIDER_ID && (

@@ -1,4 +1,4 @@
-import { Badge, Button, Checkbox, Input, InputArea, Label, Select, Switch } from "@cloudflare/kumo";
+import { Badge, Checkbox, Input, InputArea, Label, Select, Switch } from "@cloudflare/kumo";
 import {
 	DndContext,
 	closestCenter,
@@ -40,6 +40,7 @@ import type {
 import { useConfirmedRequest } from "../lib/dialog-form.js";
 import { cn, slugifyIdentifier } from "../lib/utils";
 import { ArrowPrev } from "./ArrowIcons.js";
+import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { EditorHeader } from "./EditorHeader";
 import { FieldEditor } from "./FieldEditor";
@@ -404,7 +405,7 @@ export function ContentTypeEditor({
 		queryKey: ["relations"],
 		queryFn: () => fetchRelations(),
 	});
-	const { data: allCollections = [] } = useQuery({
+	const { data: allCollections = [], isPending: collectionsPending } = useQuery({
 		queryKey: ["schema", "collections"],
 		queryFn: fetchCollections,
 	});
@@ -881,7 +882,7 @@ export function ContentTypeEditor({
 								collectionSlug={collection.slug}
 								relations={relations}
 								collections={allCollections}
-								isLoading={relationsLoading}
+								isLoading={relationsLoading || collectionsPending}
 								onCreateRelation={onCreateRelation}
 								onUpdateRelation={onUpdateRelation}
 								onDeleteRelation={onDeleteRelation}

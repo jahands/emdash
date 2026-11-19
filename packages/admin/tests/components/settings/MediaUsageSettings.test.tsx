@@ -274,7 +274,7 @@ describe("MediaUsageSettings", () => {
 		const { screen } = await renderPage();
 
 		await vi.waitFor(() => expect(activationMocks.fetchProgress).toHaveBeenCalledOnce());
-		await expect.element(screen.getByText("Loading media usage tracking settings…")).toBeVisible();
+		await expect.element(screen.getByText("Loading settings...")).toBeInTheDocument();
 		expect(screen.getByRole("heading", { name: "Indexing existing content" }).query()).toBeNull();
 		expect(activationMocks.advanceProgress).not.toHaveBeenCalled();
 

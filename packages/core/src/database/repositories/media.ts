@@ -8,7 +8,9 @@ import {
 import { ulid } from "ulidx";
 
 import { normalizeFocalPoint, type FocalPointUpdate } from "../../media/focal-point.js";
+import { publishChange, type ChangeOp } from "../../realtime/publish.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
+import { settleAll } from "../../utils/settle.js";
 import { jsonTextValues } from "../json-recordset.js";
 import type { Database, MediaRow } from "../types.js";
 import { chunkJsonRows } from "./media-usage.js";
@@ -136,6 +138,12 @@ const UPLOAD_ATTEMPT_CLEANUP_BATCH_SIZE = 100;
 /**
  * Media repository for database operations
  */
+/** Pending uploads aren't in the library, so only a ready item's change is published. */
+function mediaChanged(item: MediaItem, op: ChangeOp = "update"): MediaItem {
+	if (item.status === "ready") publishChange(`media/${item.id}`, { op });
+	return item;
+}
+
 export class MediaRepository {
 	constructor(private db: Kysely<Database>) {}
 
@@ -169,7 +177,7 @@ export class MediaRepository {
 
 		await this.db.insertInto("media").values(row).execute();
 
-		return this.rowToItem(row);
+		return mediaChanged(this.rowToItem(row), "create");
 	}
 
 	/**
@@ -380,7 +388,7 @@ export class MediaRepository {
 
 		const row = await query.returningAll().executeTakeFirst();
 
-		return row ? this.rowToItem(row) : null;
+		return row ? mediaChanged(this.rowToItem(row), "create") : null;
 	}
 
 	/**
@@ -421,6 +429,24 @@ export class MediaRepository {
 			.executeTakeFirst();
 
 		return row ? this.rowToItem(row) : null;
+	}
+
+	/**
+	 * Find media items by id, in one query per JSON bind's worth of ids.
+	 * Unknown ids are left out.
+	 */
+	async findByIds(ids: readonly string[]): Promise<MediaItem[]> {
+		const items: MediaItem[] = [];
+		for (const batch of chunkJsonRows([...new Set(ids)])) {
+			const result = await sql<MediaRow>`
+				WITH requested AS (${jsonTextValues(this.db, batch)})
+				SELECT media.*
+				FROM media
+				INNER JOIN requested ON requested.value = media.id
+			`.execute(this.db);
+			for (const row of result.rows) items.push(this.rowToItem(row));
+		}
+		return items;
 	}
 
 	/**
@@ -560,16 +586,16 @@ export class MediaRepository {
 		const limit = normalizeListLimit(options.limit);
 		const offset = (options.page - 1) * limit;
 		const filtered = this.applyListFilters(this.db.selectFrom("media"), options);
-		const rows = await filtered
-			.selectAll()
-			.orderBy("created_at", "desc")
-			.orderBy("id", "desc")
-			.limit(limit)
-			.offset(offset)
-			.execute();
-		const count = await filtered
-			.select((eb) => eb.fn.count<number>("id").as("count"))
-			.executeTakeFirst();
+		const [rows, count] = await settleAll([
+			filtered
+				.selectAll()
+				.orderBy("created_at", "desc")
+				.orderBy("id", "desc")
+				.limit(limit)
+				.offset(offset)
+				.execute(),
+			filtered.select((eb) => eb.fn.count<number>("id").as("count")).executeTakeFirst(),
+		]);
 
 		return {
 			items: rows.map((row) => this.rowToItem(row)),
@@ -599,6 +625,7 @@ export class MediaRepository {
 
 		if (Object.keys(updates).length > 0) {
 			await this.db.updateTable("media").set(updates).where("id", "=", id).execute();
+			mediaChanged(existing);
 		}
 
 		return this.findById(id);
@@ -627,7 +654,7 @@ export class MediaRepository {
 			.where("status", "=", "ready")
 			.returningAll()
 			.executeTakeFirst();
-		return row ? this.rowToItem(row) : null;
+		return row ? mediaChanged(this.rowToItem(row)) : null;
 	}
 
 	async replaceReadyFile(
@@ -653,7 +680,7 @@ export class MediaRepository {
 			.returningAll()
 			.executeTakeFirst();
 
-		return row ? this.rowToItem(row) : null;
+		return row ? mediaChanged(this.rowToItem(row)) : null;
 	}
 
 	/**
@@ -663,10 +690,11 @@ export class MediaRepository {
 		const deleted = await this.db
 			.deleteFrom("media")
 			.where("id", "=", id)
-			.returning("storage_key")
+			.returning(["storage_key", "status"])
 			.executeTakeFirst();
-		if (deleted) return deleted.storage_key;
-		return null;
+		if (!deleted) return null;
+		if (deleted.status === "ready") publishChange(`media/${id}`, { op: "delete" });
+		return deleted.storage_key;
 	}
 
 	async isStorageKeyReferenced(storageKey: string): Promise<boolean> {

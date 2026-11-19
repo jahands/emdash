@@ -1488,6 +1488,13 @@ describe("ContentList", () => {
 			);
 		}
 
+		function bodyRowCellCounts() {
+			return Array.from(
+				document.querySelectorAll<HTMLTableRowElement>("tbody > tr"),
+				(row) => row.cells.length,
+			);
+		}
+
 		function renderWithColumns(
 			columns: readonly ContentListColumnExtension[],
 			props: Partial<React.ComponentProps<typeof ContentList>> = {},
@@ -1737,9 +1744,8 @@ describe("ContentList", () => {
 			await expect.element(screen.getByText("Needs review")).toBeVisible();
 
 			await screen.rerender(listWithColumns(columns, { items: [], isLoading: true, listColumns }));
-			await expect
-				.element(screen.getByRole("cell", { name: "Loading..." }))
-				.toHaveAttribute("colspan", "6");
+			await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+			expect(new Set(bodyRowCellCounts())).toEqual(new Set([6]));
 		});
 
 		it("isolates broken headers and cells while healthy columns and core rows remain", async () => {
@@ -1789,7 +1795,7 @@ describe("ContentList", () => {
 			error.mockRestore();
 		});
 
-		it("extends loading and empty-state colspans", async () => {
+		it("gives loading rows a cell for each column", async () => {
 			function Cell(): React.ReactNode {
 				return null;
 			}
@@ -1801,9 +1807,8 @@ describe("ContentList", () => {
 				},
 			);
 
-			await expect
-				.element(screen.getByRole("cell", { name: "Loading..." }))
-				.toHaveAttribute("colspan", "5");
+			await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+			expect(new Set(bodyRowCellCounts())).toEqual(new Set([5]));
 		});
 
 		it("does not render contributed columns in Trash", async () => {

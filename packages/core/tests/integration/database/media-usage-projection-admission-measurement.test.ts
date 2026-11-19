@@ -178,6 +178,7 @@ it("reports representative projection costs below the approved boundary", async 
 			{ data: mediaData(draftOccurrences, `${slug}-draft-initial`) },
 		);
 		expect(initial.success).toBe(true);
+		await waitForDeferredTasks();
 
 		const triggerName = `measure_admission_conflict_${draftOccurrences}`;
 		const draftSourceKey = buildContentMediaUsageSourceKey({

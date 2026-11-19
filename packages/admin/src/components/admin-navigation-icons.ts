@@ -141,7 +141,9 @@ function isIconComponent(value: unknown): value is React.ComponentType<{ classNa
 
 /**
  * Resolve a declared icon name while keeping uncommon Phosphor icons
- * code-split. Missing or unknown names render `fallback`.
+ * code-split. Missing names, names that are not Phosphor icons, and names
+ * whose icon set fails to load (offline, or after a deploy), render
+ * `fallback`. Only a real Phosphor icon name loads the full icon set.
  */
 export function resolveNavIcon(
 	name?: string,
@@ -162,8 +164,12 @@ export function resolveNavIcon(
 	let icon = perFallback.get(componentName);
 	if (!icon) {
 		icon = React.lazy(async () => {
-			const mod = await import("@phosphor-icons/react");
-			const candidate: unknown = (mod as Record<string, unknown>)[componentName];
+			const known = await import("./phosphor-icon-names.js").catch(() => null);
+			if (!known?.PHOSPHOR_ICON_NAMES.has(componentName)) return { default: fallback };
+			// Not the main entry: the admin imports that one statically, which
+			// would pull every icon into the initial bundle.
+			const mod = await import("@phosphor-icons/react/ssr").catch(() => null);
+			const candidate: unknown = mod ? (mod as Record<string, unknown>)[componentName] : undefined;
 			return { default: isIconComponent(candidate) ? candidate : fallback };
 		});
 		perFallback.set(componentName, icon);

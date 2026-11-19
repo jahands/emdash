@@ -4,6 +4,18 @@ export { AdminApp, default as App } from "./App";
 // Router
 export { createAdminRouter, Link, useNavigate, useParams } from "./router";
 
+// Live updates for native plugin pages. Queries made with these hooks share the admin's cache, so
+// a query's `meta: { live: [topic] }` refetches it when the topic changes.
+export { useQuery, useQueryClient } from "@tanstack/react-query";
+export {
+	useAnnouncePresence,
+	useLiveTopic,
+	usePresence,
+	type PresentPerson,
+} from "./lib/realtime/LiveSyncProvider";
+export type { PresenceActivity } from "./lib/realtime/connection";
+export { pluginTopic } from "./lib/realtime/plugin-topic";
+
 // Components
 export * from "./components";
 

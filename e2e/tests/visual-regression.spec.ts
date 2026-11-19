@@ -320,8 +320,12 @@ test.describe("visual regression", () => {
 				await expect(admin.page).toHaveScreenshot(`${pageCase.name}-${locale.name}.png`, {
 					fullPage: true,
 					animations: "disabled",
-					// The version/commit string changes every build; always mask it.
-					mask: [admin.page.getByTestId("admin-version")],
+					// The version/commit string changes every build; always mask it. The user
+					// menu's generated avatar follows the dev user's id, which each run creates afresh.
+					mask: [
+						admin.page.getByTestId("admin-version"),
+						admin.page.locator("header").getByRole("button", { name: "Dev Admin" }),
+					],
 				});
 			});
 		}

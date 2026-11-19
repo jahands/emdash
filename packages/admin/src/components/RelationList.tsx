@@ -23,7 +23,9 @@ import { cn } from "../lib/utils.js";
 import { ArrowPrev } from "./ArrowIcons.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	RowTitleButton,
@@ -97,23 +99,24 @@ export function RelationList({
 				<thead>
 					<tr>
 						<th scope="col">{t`Slug`}</th>
-						<th scope="col" {...secondaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-48" {...secondaryColumn}>
 							{t`Connects`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-48" {...tertiaryColumn}>
 							{t`Fields`}
 						</th>
-						<th scope="col" {...secondaryColumn}>
+						<th scope="col" className="w-32" {...secondaryColumn}>
 							{t`Links`}
 						</th>
-						<th scope="col" className="w-0">
-							<span className="sr-only">{t`Actions`}</span>
-						</th>
+						<DataTableActionsHeader />
 					</tr>
 				</thead>
 				<tbody>
 					{isLoading ? (
-						<DataTableMessage colSpan={5}>{t`Loading relations...`}</DataTableMessage>
+						<DataTablePlaceholderRows
+							cells={["title", "secondary", "tertiary", "secondary", "actions"]}
+						/>
 					) : relations.length === 0 ? (
 						<DataTableMessage colSpan={5}>{t`No relations yet.`}</DataTableMessage>
 					) : (

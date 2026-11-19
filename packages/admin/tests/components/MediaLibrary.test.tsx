@@ -217,6 +217,7 @@ function makePagination(
 describe("MediaLibrary", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		localStorage.clear();
 		dndState.props = null;
 		setupMocks.role = 40;
 		setupMocks.fetchStatus.mockResolvedValue({ state: "active" });
@@ -438,6 +439,7 @@ describe("MediaLibrary", () => {
 				onOpenFolder,
 			});
 
+			await expect.element(screen.getByRole("button", { name: "photo.jpg" })).toBeVisible();
 			const gridSource = screen.getByRole("button", { name: "photo.jpg" }).element();
 			expect(gridSource.querySelector("img")).toHaveAttribute("draggable", "false");
 			const gridTarget = screen
@@ -504,6 +506,7 @@ describe("MediaLibrary", () => {
 				canMoveMedia: () => true,
 				onMoveMedia,
 			});
+			await expect.element(screen.getByRole("button", { name: "photo.jpg" })).toBeVisible();
 			const source = screen.getByRole("button", { name: "photo.jpg" }).element();
 
 			source.click();
@@ -666,20 +669,83 @@ describe("MediaLibrary", () => {
 			expect(rows[2]?.element()).toHaveTextContent("photo.jpg");
 		});
 
-		it("renders the initial folder loader and error inside the list table", async () => {
-			const onRetryFolders = vi.fn();
+		it("waits for the first folder page before showing the library", async () => {
 			const screen = await renderLibrary({
 				foldersLoading: true,
+				items: [makeMediaItem({ filename: "photo.jpg" })],
+				pagination: makePagination(),
+			});
+
+			await new Promise((resolve) => setTimeout(resolve, 50));
+			expect(screen.getByAltText("photo.jpg").query()).toBeNull();
+			const search = screen.getByRole("searchbox", { name: "Search media" });
+			await expect.element(search).toBeInTheDocument();
+			expect(search.element().closest("[inert]")).toBeNull();
+			expect(
+				screen.getByRole("heading", { name: "Media Library" }).element().closest("[aria-busy]"),
+			).not.toBeNull();
+
+			await screen.rerender(
+				<QueryWrapper>
+					<MediaLibrary
+						items={[makeMediaItem({ filename: "photo.jpg" })]}
+						pagination={makePagination()}
+					/>
+				</QueryWrapper>,
+			);
+			await expect.element(screen.getByAltText("photo.jpg")).toBeVisible();
+			expect(screen.getByRole("heading", { name: "Folders" }).query()).toBeNull();
+			expect(search.element().closest("[inert]")).toBeNull();
+		});
+
+		it("holds the folder name's place with the same outline each time it loads", async () => {
+			const widths: number[] = [];
+			for (let visit = 0; visit < 3; visit++) {
+				const screen = await renderLibrary({
+					folderId: "folder-1",
+					currentFolderLoading: true,
+					isLoading: true,
+				});
+				const nav = screen.getByRole("navigation", { name: "Folders navigation" });
+				await expect.element(nav).toBeInTheDocument();
+				const placeholders = nav.element().querySelectorAll(".skeleton-line");
+				expect(placeholders.length).toBeGreaterThan(0);
+				for (const placeholder of placeholders) {
+					expect(placeholder.closest("[aria-hidden='true']")).not.toBeNull();
+					widths.push(placeholder.getBoundingClientRect().width);
+				}
+				await screen.unmount();
+			}
+			expect(new Set(widths).size).toBe(1);
+		});
+
+		it("renders later folder placeholders and error inside the list table", async () => {
+			const onRetryFolders = vi.fn();
+			const screen = await renderLibrary({
 				items: [makeMediaItem({ filename: "photo.jpg" })],
 				pagination: makePagination(),
 				onRetryFolders,
 			});
 
 			await screen.getByRole("tab", { name: "List view" }).click();
-			let rows = screen.getByRole("row").all();
-			expect(rows[1]?.element()).toHaveTextContent("Loading folders");
-			expect(rows[1]?.element().querySelector("td")).toHaveAttribute("colspan", "5");
-			expect(rows[2]?.element()).toHaveTextContent("photo.jpg");
+			await screen.rerender(
+				<QueryWrapper>
+					<MediaLibrary
+						foldersLoading
+						items={[makeMediaItem({ filename: "photo.jpg" })]}
+						pagination={makePagination()}
+						onRetryFolders={onRetryFolders}
+					/>
+				</QueryWrapper>,
+			);
+			const placeholderRows = screen
+				.getByRole("table")
+				.element()
+				.querySelectorAll("tbody tr[aria-hidden='true']");
+			expect(placeholderRows).toHaveLength(2);
+			expect(placeholderRows[1]?.nextElementSibling).toHaveTextContent("photo.jpg");
+			expect(screen.getByRole("table").element().querySelector("svg[role='status']")).toBeNull();
+			await expect.element(screen.getByText("Loading folders")).toBeInTheDocument();
 
 			await screen.rerender(
 				<QueryWrapper>
@@ -691,7 +757,7 @@ describe("MediaLibrary", () => {
 					/>
 				</QueryWrapper>,
 			);
-			rows = screen.getByRole("row").all();
+			const rows = screen.getByRole("row").all();
 			expect(rows[1]?.element()).toHaveTextContent("Folders could not be loaded.");
 			expect(rows[1]?.element().querySelector("td")).toHaveAttribute("colspan", "5");
 			await screen.getByRole("button", { name: "Retry" }).click();
@@ -739,6 +805,7 @@ describe("MediaLibrary", () => {
 				onLoadMoreFolders: vi.fn(),
 			});
 
+			await expect.element(screen.getByRole("heading", { name: "Folders" })).toBeVisible();
 			const folderSection = screen
 				.getByRole("heading", { name: "Folders" })
 				.element()
@@ -1377,9 +1444,13 @@ describe("MediaLibrary", () => {
 	});
 
 	describe("loading state", () => {
-		it("displays loading state", async () => {
+		it("shows placeholder tiles, not a spinner or the empty state, while loading", async () => {
 			const screen = await renderLibrary({ isLoading: true });
-			// When loading, neither empty state nor items are shown
+			await expect.element(screen.getByRole("status")).toHaveTextContent("Loading media");
+			await vi.waitFor(() =>
+				expect(document.querySelectorAll("[data-media-placeholder]")).toHaveLength(12),
+			);
+			expect(document.querySelector("svg[role='status']")).toBeNull();
 			expect(screen.getByText("Your media library is empty").query()).toBeNull();
 		});
 	});
@@ -1641,6 +1712,45 @@ describe("MediaLibrary", () => {
 			await expect.element(providerCard).toBeInTheDocument();
 			expect(providerCard.element()).not.toHaveAttribute("data-media-draggable");
 			expect(screen.getByRole("heading", { name: "Folders" }).query()).toBeNull();
+		});
+
+		it("keeps a provider's results on screen while a new search loads", async () => {
+			const api = await import("../../src/lib/api");
+			(api.fetchMediaProviders as any).mockResolvedValueOnce([
+				{
+					id: "cloudflare-images",
+					name: "Cloudflare Images",
+					capabilities: { browse: true, search: true, upload: false, delete: false },
+				},
+			]);
+			const providerItem = (id: string) => ({
+				id,
+				filename: `${id}.jpg`,
+				mimeType: "image/jpeg",
+				previewUrl: `https://example.com/${id}.jpg`,
+				size: 100,
+			});
+			let resolveSearch!: (page: { items: ReturnType<typeof providerItem>[] }) => void;
+			(api.fetchProviderMedia as any)
+				.mockResolvedValueOnce({ items: [providerItem("first")] })
+				.mockImplementationOnce(() => new Promise((resolve) => (resolveSearch = resolve)));
+
+			const screen = await renderLibrary({
+				items: [makeMediaItem()],
+				pagination: makePagination(),
+			});
+			await screen.getByRole("tab", { name: "Cloudflare Images" }).click();
+			await expect.element(screen.getByRole("button", { name: "first.jpg" })).toBeVisible();
+
+			await screen.getByRole("searchbox", { name: "Search media" }).fill("s");
+			await vi.waitFor(() => expect(api.fetchProviderMedia).toHaveBeenCalledTimes(2));
+			await expect.element(screen.getByRole("button", { name: "first.jpg" })).toBeVisible();
+			expect(document.querySelector("[data-media-placeholder]")).toBeNull();
+			expect(document.querySelector("[data-media-grid]")).toHaveAttribute("inert");
+
+			resolveSearch({ items: [providerItem("second")] });
+			await expect.element(screen.getByRole("button", { name: "second.jpg" })).toBeVisible();
+			expect(screen.getByRole("button", { name: "first.jpg" }).query()).toBeNull();
 		});
 
 		it("does not keep the local filter toolbar visible on empty provider tabs", async () => {

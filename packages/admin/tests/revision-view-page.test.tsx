@@ -14,6 +14,7 @@ import {
 import { useRevisionViewContext } from "../src/components/revisions/revision-view-context";
 import { ThemeProvider } from "../src/components/ThemeProvider";
 import type { AdminManifest, ContentItem, RevisionListResponse } from "../src/lib/api";
+import type { RevisionDiff } from "../src/lib/revision-diff/types";
 import { createAdminRouter } from "../src/router";
 import { render } from "./utils/render.tsx";
 import { createTestQueryClient } from "./utils/test-helpers.tsx";
@@ -51,7 +52,15 @@ vi.mock("../src/components/RevisionHistory", () => ({
 }));
 
 vi.mock("../src/components/revisions/RevisionViewCanvas", () => ({
-	RevisionViewCanvas: ({ label }: { label: string }) => <article aria-label={label} />,
+	// Names the fields the diff marks as changed.
+	RevisionViewCanvas: ({ label, diff }: { label: string; diff: RevisionDiff }) => (
+		<article aria-label={label}>
+			{diff.fields
+				.filter((field) => field.status !== "unchanged")
+				.map((field) => field.slug)
+				.join(" ")}
+		</article>
+	),
 }));
 
 vi.mock("../src/lib/revision-diff/index.js", async (importOriginal) => ({
@@ -94,6 +103,8 @@ function textBlocks(text: string) {
 
 const DRAFT_DATA = { title: "Draft title", content: textBlocks("Draft body") };
 const OLD_DATA = { title: "Old title", content: textBlocks("Old body") };
+/** The published version: only its title differs from the draft. */
+const LIVE_DATA = { title: "Live title", content: textBlocks("Draft body") };
 const DRAFT_INTERNALS = { _references: { related: ["tg_1"] } };
 
 function makeItem(overrides: Partial<ContentItem> = {}): ContentItem {
@@ -183,6 +194,7 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 	// One-shot gates: the next list read, entry read or save waits until its gate is released.
 	const gates = {
 		list: [] as Promise<void>[],
+		compare: [] as Promise<void>[],
 		entry: [] as Promise<void>[],
 		autosave: [] as Promise<void>[],
 	};
@@ -217,6 +229,24 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 		if (url.startsWith("/_emdash/api/content/posts/post_1/lock")) {
 			return jsonResponse({ data: { enabled: false, holder: null, heldByCaller: false } });
 		}
+		if (method === "GET" && url === "/_emdash/api/content/posts/post_1/compare") {
+			const [draft] = revisions;
+			const gate = gates.compare.shift();
+			// The comparison as the server holds it when the read arrives.
+			const response = jsonResponse({
+				data: {
+					hasChanges: true,
+					live: LIVE_DATA,
+					draft: draft?.data ?? null,
+					revisions: {
+						live: null,
+						draft: draft ? { id: draft.id, fingerprint: JSON.stringify(draft.data) } : null,
+					},
+				},
+			});
+			await gate;
+			return response;
+		}
 		if (method === "GET" && url.startsWith("/_emdash/api/content/posts/post_1/revisions")) {
 			const gate = gates.list.shift();
 			// The list as the server holds it when the read arrives.
@@ -227,6 +257,7 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 						collection: "posts",
 						entryId: "post_1",
 						data,
+						fingerprint: JSON.stringify(data),
 						authorId: null,
 						author: null,
 						createdAt,
@@ -297,8 +328,14 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 		requests,
 		releaseRestoredEntry,
 		holdNextListRead: () => hold("list"),
+		holdNextCompareRead: () => hold("compare"),
 		holdNextEntryRead: () => hold("entry"),
 		holdNextAutosave: () => hold("autosave"),
+		/** Changes the draft's content without giving it a new id, as a co-editing checkpoint does. */
+		checkpointDraft(data: Record<string, unknown>) {
+			const [draft] = revisions;
+			if (draft) draft.data = { ...draft.data, ...data };
+		},
 		restore() {
 			globalThis.fetch = originalFetch;
 		},
@@ -399,6 +436,99 @@ describe("ContentEditPage revision view", () => {
 			.element(screen.getByRole("button", { name: "View the old version" }))
 			.toHaveFocus();
 	});
+	it("shows the draft against the live version from the Publish panel", async () => {
+		server = createMockServer();
+		const screen = await renderEditPage();
+
+		await screen.getByRole("button", { name: "View changes" }).click();
+
+		// The version before the draft differs in both fields; the live one only in the title.
+		const changes = screen.getByRole("article", { name: "Changes since the published version" });
+		await expect.element(changes).toHaveTextContent(/^title$/);
+		await expect.element(screen.getByText("Compared with published")).toBeVisible();
+		await expect.element(screen.getByText("Current version", { exact: true })).toBeVisible();
+	});
+
+	it("asks for the comparison with the live version without waiting for the version list", async () => {
+		server = createMockServer();
+		const releaseList = server.holdNextListRead();
+		const screen = await renderEditPage();
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+
+		await screen.getByRole("button", { name: "View changes" }).click();
+
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(1));
+		expect(listReads()).toHaveLength(1);
+		releaseList();
+		const changes = screen.getByRole("article", { name: "Changes since the published version" });
+		await expect.element(changes).toHaveTextContent(/^title$/);
+		expect(compareReads()).toHaveLength(1);
+	});
+
+	it("reads the comparison again for a draft changed under the same id, not for a reread list", async () => {
+		server = createMockServer();
+		const screen = await renderEditPage();
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+		await screen.getByRole("button", { name: "View changes" }).click();
+		const changes = screen.getByRole("article", { name: "Changes since the published version" });
+		await expect.element(changes).toHaveTextContent(/^title$/);
+		const lists = listReads().length;
+
+		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
+		await vi.waitFor(() => expect(listReads().length).toBeGreaterThan(lists));
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(compareReads()).toHaveLength(1);
+
+		server.checkpointDraft({ title: "Checkpointed title" });
+		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
+	});
+
+	it("reads the comparison again when it arrives after a newer list it was requested before", async () => {
+		server = createMockServer();
+		const screen = await renderEditPage();
+		await vi.waitFor(() => expect(listReads().length).toBeGreaterThan(0));
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+		const releaseCompare = server.holdNextCompareRead();
+		await screen.getByRole("button", { name: "View changes" }).click();
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(1));
+
+		server.checkpointDraft({ title: "Checkpointed title" });
+		const lists = listReads().length;
+		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
+		await vi.waitFor(() => expect(listReads().length).toBeGreaterThan(lists));
+		await vi.waitFor(() =>
+			expect(screen.queryClient.isFetching({ queryKey: ["revisions"] })).toBe(0),
+		);
+		releaseCompare();
+
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(compareReads()).toHaveLength(2);
+	});
+
+	it("reads the comparison again when the first list it sees has the draft changed since", async () => {
+		server = createMockServer();
+		server.holdNextListRead();
+		const screen = await renderEditPage();
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+		await screen.getByRole("button", { name: "View changes" }).click();
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(1));
+		await vi.waitFor(() =>
+			expect(screen.queryClient.isFetching({ queryKey: ["contentCompare"] })).toBe(0),
+		);
+
+		server.checkpointDraft({ title: "Checkpointed title" });
+		await screen.queryClient.cancelQueries({ queryKey: ["revisions"] });
+		await screen.queryClient.refetchQueries({ queryKey: ["revisions"] });
+
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
+	});
+
 	it("follows the autosave it sent on the way in to the new current version, dated now", async () => {
 		server = createMockServer();
 		const screen = await renderEditPage();

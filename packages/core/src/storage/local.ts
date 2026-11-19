@@ -27,6 +27,7 @@ import type {
 	ListOptions,
 	SignedUploadUrl,
 	SignedUploadOptions,
+	StoredFileInfo,
 } from "./types.js";
 import { EmDashStorageError } from "./types.js";
 
@@ -147,6 +148,22 @@ export class LocalStorage implements Storage {
 		} catch (error) {
 			if (error instanceof EmDashStorageError) throw error;
 			throw new EmDashStorageError(`Failed to download file: ${key}`, "DOWNLOAD_FAILED", error);
+		}
+	}
+
+	async describeStoredFile(key: string): Promise<StoredFileInfo | null> {
+		try {
+			const stat = await fs.stat(this.getFilePath(key));
+			if (!stat.isFile()) return null;
+			return {
+				contentType: getContentType(path.extname(key).toLowerCase()),
+				size: stat.size,
+				lastModified: stat.mtime,
+			};
+		} catch (error) {
+			if (error instanceof EmDashStorageError) throw error;
+			if (isNodeError(error) && error.code === "ENOENT") return null;
+			throw new EmDashStorageError(`Failed to read file details: ${key}`, "HEAD_FAILED", error);
 		}
 	}
 

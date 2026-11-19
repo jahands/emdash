@@ -7,16 +7,19 @@
  * Image.astro), falling back to Astro's Image component when dimensions are
  * available for locally-stored media.
  */
-import { Image as AstroImage, getImage } from "astro:assets";
+import { getImage, imageConfig } from "astro:assets";
+import virtualConfig from "virtual:emdash/config";
 import type { ImageEmbed } from "../media/types.js";
 import { getMediaProvider } from "../media/provider-loader.js";
 import { buildRenderMediaUrl } from "../media/url.js";
 import {
-	canOptimizeImage,
+	mediaImageOrigin,
+	optimizeImage,
 	toAbsoluteMediaUrl,
 	gallerySizes,
 	GALLERY_DEFAULT_COLUMNS,
 	responsiveWidths,
+	type OptimizedImage,
 } from "../media/responsive.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { sanitizeGalleryImages } from "../content/converters/gallery.js";
@@ -96,7 +99,7 @@ const resolvedImages = await Promise.all(
 		let src = "";
 		let srcset: string | undefined;
 		let sizes: string | undefined;
-		let astroImageSrc = "";
+		let optimized: OptimizedImage | null = null;
 		const providerId = asset.provider;
 
 		if (providerId && providerId !== "local") {
@@ -139,11 +142,22 @@ const resolvedImages = await Promise.all(
 			if (width && height) {
 				const absoluteSrc = toAbsoluteMediaUrl(
 					src,
-					getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
+					mediaImageOrigin({
+						internalOrigin: virtualConfig?.internalMediaOrigin,
+						isPrerendered: Astro.isPrerendered,
+						publicOrigin: () => getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
+					}),
 				);
-				if (await canOptimizeImage(getImage, { src: absoluteSrc, width, height })) {
-					astroImageSrc = absoluteSrc;
-				}
+				optimized = await optimizeImage(getImage, imageConfig, {
+					src: absoluteSrc,
+					width,
+					height,
+					originalWidth: width,
+					layout: "constrained",
+					alt,
+					sizes: cellSizes,
+					style: objectPosition ? `object-position: ${objectPosition};` : undefined,
+				});
 			}
 		}
 
@@ -166,7 +180,7 @@ const resolvedImages = await Promise.all(
 			src,
 			srcset,
 			sizes,
-			astroImageSrc,
+			optimized,
 			placeholderStyle,
 			objectPosition,
 		};
@@ -178,15 +192,11 @@ const resolvedImages = await Promise.all(
 	{
 		resolvedImages.map((image) => (
 			<figure class="emdash-gallery-item" style={image.placeholderStyle || undefined}>
-				{image.astroImageSrc ? (
-					<AstroImage
-						src={image.astroImageSrc}
-						alt={image.alt}
-						width={image.width!}
-						height={image.height!}
-						layout="constrained"
-						sizes={cellSizes}
-						style={image.objectPosition ? `object-position: ${image.objectPosition};` : undefined}
+				{image.optimized ? (
+					<img
+						src={image.optimized.src}
+						srcset={image.optimized.srcset}
+						{...image.optimized.attributes}
 					/>
 				) : (
 					<img

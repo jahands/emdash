@@ -58,6 +58,14 @@ export async function getChosenSiteOrigin(
 	);
 }
 
+/** `getChosenSiteOrigin`, given the stored `site:url` option value. */
+export function chosenSiteOrigin(
+	config: SiteUrlConfig | undefined,
+	siteUrlSetting: unknown,
+): string | undefined {
+	return getConfiguredOrigin(config) ?? siteUrlSettingOrigin(siteUrlSetting);
+}
+
 export async function getSiteBaseUrl(
 	db: Kysely<Database>,
 	request: Request,

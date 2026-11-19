@@ -4,16 +4,16 @@
  * Displays all menus with ability to create, edit, and delete.
  */
 
-import { Button, Input, LayerCard, LayerDialog, Toast } from "@cloudflare/kumo";
+import { Banner, Input, LayerCard, LayerDialog, SkeletonLine, Toast } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { Plus } from "@phosphor-icons/react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 
-import { fetchMenus, createMenu, deleteMenu, type CreateMenuInput } from "../lib/api";
+import { createMenu, deleteMenu, type CreateMenuInput } from "../lib/api";
 import { ApiResponseError, fetchManifest } from "../lib/api/client.js";
 import {
 	guardUnsavedInput,
@@ -21,7 +21,9 @@ import {
 	useSingleFlight,
 	useTakenValue,
 } from "../lib/dialog-form.js";
+import { menusQueryOptions } from "../lib/route-queries.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
+import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { HelpLabel } from "./FieldHelpLabel.js";
@@ -29,6 +31,8 @@ import { LocaleSwitcher, useI18nConfig } from "./LocaleSwitcher.js";
 import { MenuCard } from "./MenuCard.js";
 
 const MENU_NAME_PATTERN = /^[a-z0-9-]+$/;
+// Fixed, so placeholders shown again after a remount don't change shape.
+const MENU_PLACEHOLDER_WIDTHS = [45, 60];
 
 type CreateMenuField = "label" | "name";
 
@@ -69,14 +73,21 @@ export function MenuList() {
 		queryFn: fetchManifest,
 	});
 	const i18n = useI18nConfig(manifest);
-	const [activeLocale, setActiveLocale] = React.useState<string | undefined>(undefined);
+	const [activeLocale, setActiveLocale] = React.useState(() => i18n?.defaultLocale);
 	React.useEffect(() => {
 		if (i18n && !activeLocale) setActiveLocale(i18n.defaultLocale);
 	}, [i18n, activeLocale]);
 
-	const { data: menus, isLoading } = useQuery({
-		queryKey: ["menus", activeLocale],
-		queryFn: () => fetchMenus({ locale: activeLocale }),
+	const {
+		data: menus,
+		isLoading,
+		error: menusError,
+		refetch: refetchMenus,
+		isRefetching: menusRefetching,
+		isPlaceholderData: menusPlaceholder,
+	} = useQuery({
+		...menusQueryOptions(activeLocale),
+		placeholderData: keepPreviousData,
 	});
 
 	const createMutation = useMutation({
@@ -143,14 +154,6 @@ export function MenuList() {
 		}
 		submitCreate({ name: createName.trim(), label: createLabel.trim(), locale: activeLocale });
 	};
-
-	if (isLoading) {
-		return (
-			<div className="flex items-center justify-center h-64">
-				<div className="text-kumo-subtle">{t`Loading menus...`}</div>
-			</div>
-		);
-	}
 
 	return (
 		<div className="space-y-6">
@@ -249,7 +252,52 @@ export function MenuList() {
 				</div>
 			</header>
 
-			{!menus || menus.length === 0 ? (
+			{isLoading ? (
+				<div>
+					<span role="status" className="sr-only">
+						{t`Loading menus...`}
+					</span>
+					<ul className="grid gap-4 lg:grid-cols-2" aria-hidden="true">
+						{MENU_PLACEHOLDER_WIDTHS.map((width) => (
+							<li key={width}>
+								<LayerCard className="flex h-full min-w-0 flex-col gap-4 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+									<div className="min-w-0 flex-1">
+										<div className="text-base leading-6">
+											<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+										</div>
+										<div className="mt-1 flex text-sm">
+											<div className="w-1/3 text-xs">
+												<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+											</div>
+										</div>
+									</div>
+									<div className="flex shrink-0 items-center justify-end gap-2">
+										<div className="skeleton-line h-9 w-20 rounded-lg" />
+										<div className="skeleton-line size-9 rounded-lg" />
+									</div>
+								</LayerCard>
+							</li>
+						))}
+					</ul>
+				</div>
+			) : menusError && !menus ? (
+				<Banner
+					variant="error"
+					role="alert"
+					title={t`Menus could not be loaded`}
+					description={getMutationError(menusError) ?? undefined}
+					action={
+						<Button
+							variant="secondary"
+							size="sm"
+							loading={menusRefetching}
+							onClick={() => void refetchMenus()}
+						>
+							{t`Retry`}
+						</Button>
+					}
+				/>
+			) : !menus || menus.length === 0 ? (
 				<LayerCard className="flex flex-col items-center px-6 py-16 text-center">
 					<span className="mb-5 flex size-14 items-center justify-center rounded-xl bg-kumo-tint text-kumo-brand">
 						<ADMIN_NAV_ICONS.menus size={28} aria-hidden="true" />
@@ -267,7 +315,7 @@ export function MenuList() {
 					</Button>
 				</LayerCard>
 			) : (
-				<ul className="grid gap-4 lg:grid-cols-2">
+				<ul className="grid gap-4 lg:grid-cols-2" aria-busy={menusPlaceholder || undefined}>
 					{menus.map((menu) => (
 						<li key={menu.id}>
 							<MenuCard

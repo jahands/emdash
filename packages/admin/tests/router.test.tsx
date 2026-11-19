@@ -26,7 +26,7 @@ import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 import type { AdminManifest, ContentItem } from "../src/lib/api";
-import { ConfigurationLoadingScreen, createAdminRouter } from "../src/router";
+import { createAdminRouter } from "../src/router";
 import { render } from "./utils/render.tsx";
 import { createTestQueryClient, createMockFetch, waitFor } from "./utils/test-helpers";
 
@@ -62,6 +62,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		onAuthorChange,
 		onSeoChange,
 		onPublishedAtChange,
+		onUnschedule,
 		onDirtyChange,
 		isSaving,
 		isAutosaving,
@@ -71,6 +72,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		autosaveRejectionToken,
 		onQuickCreateByline,
 		onQuickEditByline,
+		saveError,
 	}: {
 		item?: { data?: { title?: string }; slug?: string | null };
 		onSave?: (payload: { data: Record<string, unknown> }) => void;
@@ -78,6 +80,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		onAuthorChange?: (authorId: string | null) => void;
 		onSeoChange?: (seo: { title: string }) => void;
 		onPublishedAtChange?: (publishedAt: string) => void | Promise<void>;
+		onUnschedule?: (payload?: { data: Record<string, unknown> }) => Promise<void>;
 		onDirtyChange?: (isDirty: boolean) => void;
 		isSaving?: boolean;
 		isAutosaving?: boolean;
@@ -87,6 +90,7 @@ vi.mock("../src/components/ContentEditor", () => ({
 		autosaveRejectionToken?: number;
 		onQuickCreateByline?: (input: typeof MOCK_BYLINE_VALUES) => Promise<unknown>;
 		onQuickEditByline?: (bylineId: string, input: typeof MOCK_BYLINE_VALUES) => Promise<unknown>;
+		saveError?: { title?: string; message: string };
 	}) => {
 		const [isDirty, setIsDirty] = React.useState(false);
 		const onDirtyChangeRef = React.useRef(onDirtyChange);
@@ -104,6 +108,12 @@ vi.mock("../src/components/ContentEditor", () => ({
 				<div data-testid="autosave-blocked">{isSaving || isAutosaving ? "blocked" : "ready"}</div>
 				<div data-testid="autosave-completion-token">{autosaveCompletionToken ?? 0}</div>
 				<div data-testid="autosave-rejection-token">{autosaveRejectionToken ?? 0}</div>
+				{saveError ? (
+					<div data-testid="save-error">
+						<p>{saveError.title}</p>
+						<p>{saveError.message}</p>
+					</div>
+				) : null}
 				<form
 					onSubmit={(e) => {
 						e.preventDefault();
@@ -142,6 +152,12 @@ vi.mock("../src/components/ContentEditor", () => ({
 					}}
 				>
 					Trigger Publish Date Sync
+				</button>
+				<button
+					type="button"
+					onClick={() => void onUnschedule?.({ data: { title: "Saved Title" } })}
+				>
+					Trigger Save And Unschedule
 				</button>
 				<button
 					type="button"
@@ -367,18 +383,54 @@ function buildRouter() {
 	return { router, queryClient, TestApp };
 }
 
-describe("ConfigurationLoadingScreen", () => {
-	it("matches the centered EmDash boot loading view", async () => {
-		const screen = await render(<ConfigurationLoadingScreen />);
-		const loader = screen.getByRole("status", { name: "Loading" });
-		const label = screen.getByText("Loading configuration...");
-		const loadingView = label.element().parentElement?.parentElement;
+describe("CommentsPage – counts embedded in the admin page", () => {
+	let mockedFetch: typeof fetch;
+	let requests: string[];
+	let holdComments: Promise<void>;
+	let releaseComments: () => void;
 
-		expect(loadingView).toHaveClass("emdash-configuration-loader");
-		expect(loader.element().tagName).toBe("DIV");
-		await expect.element(loader).toHaveClass("emdash-configuration-spinner");
-		await expect.element(label).toHaveClass("emdash-configuration-label");
-		expect(label.element().parentElement).toHaveClass("loader-inner");
+	beforeEach(() => {
+		requests = [];
+		holdComments = new Promise((resolve) => {
+			releaseComments = resolve;
+		});
+		mockedFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: RequestInfo | URL) => {
+			const href =
+				typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			const url = new URL(href, location.origin);
+			requests.push(url.pathname);
+			if (url.pathname === "/_emdash/api/manifest") return Response.json({ data: MANIFEST });
+			if (url.pathname === "/_emdash/api/auth/me") {
+				return Response.json({ data: { id: "user_01", role: 60 } });
+			}
+			if (url.pathname === "/_emdash/api/admin/comments") {
+				await holdComments;
+				return Response.json({ data: { items: [] } });
+			}
+			if (url.pathname === "/_emdash/api/admin/comments/counts") {
+				return Response.json({ data: { pending: 0, approved: 0, spam: 0, trash: 0 } });
+			}
+			throw new Error(`Unexpected request: ${url.pathname}`);
+		}) as typeof fetch;
+	});
+
+	afterEach(() => {
+		releaseComments();
+		globalThis.fetch = mockedFetch;
+	});
+
+	it("shows the embedded counts on the tabs before the comments load, without requesting them", async () => {
+		const { router, queryClient, TestApp } = buildRouter();
+		queryClient.setQueryDefaults(["commentCounts"], { gcTime: Infinity });
+		queryClient.setQueryData(["commentCounts"], { pending: 3, approved: 7, spam: 2, trash: 0 });
+		await router.navigate({ to: "/comments" });
+		const screen = await render(<TestApp />);
+
+		await expect.element(screen.getByRole("tab", { name: /Pending/ })).toHaveTextContent("3");
+		await expect.element(screen.getByRole("tab", { name: /Spam/ })).toHaveTextContent("2");
+		expect(screen.container.querySelectorAll("tbody tr")).toHaveLength(3);
+		expect(requests).not.toContain("/_emdash/api/admin/comments/counts");
 	});
 });
 
@@ -787,7 +839,10 @@ describe("MediaPage – upload completion", () => {
 			return mockedFetch(input, init);
 		};
 
-		const { router, TestApp } = buildRouter();
+		const { router, queryClient, TestApp } = buildRouter();
+		// The route's loader reads the first page before the screen mounts. The admin's client keeps
+		// it fresh for a minute; the test client would drop it, or refetch it on mount.
+		queryClient.setQueryDefaults(["media-folders"], { gcTime: Infinity, staleTime: 60_000 });
 		await router.navigate({ to: "/media" });
 		const screen = await render(<TestApp />);
 
@@ -1113,7 +1168,7 @@ describe("ContentListPage – hook order is stable when a refetch errors (#1415)
 		mockFetch.restore();
 	});
 
-	it("renders the ErrorScreen instead of crashing when a content refetch fails", async () => {
+	it("shows the list error instead of crashing when a content refetch fails", async () => {
 		const { router, queryClient, TestApp } = buildRouter();
 
 		await router.navigate({
@@ -1127,16 +1182,59 @@ describe("ContentListPage – hook order is stable when a refetch errors (#1415)
 		const addNewLink = screen.getByRole("link", { name: /add new/i });
 		await expect.element(addNewLink).toBeInTheDocument();
 
-		// Make the next content fetch fail, then force a refetch. The component
-		// re-renders with `error` truthy and takes the ErrorScreen early return,
-		// which sits ABOVE the onLoadMore useCallback. If that callback hook is
-		// below the guards, this render runs one fewer hook and React throws #300
-		// — so the ErrorScreen (and its Retry button) never appears.
+		// Make the next content fetch fail, then force a refetch. If a hook sits
+		// below the page's early returns, the error render runs a different number
+		// of hooks and React throws #300, so the error never appears.
 		mockFetch.on("GET", "/_emdash/api/content/posts", { error: { message: "Boom" } }, 500);
 		await queryClient.refetchQueries({ queryKey: ["content", "posts"] });
 
-		const retryButton = screen.getByRole("button", { name: /retry/i });
+		const retryButton = screen.getByRole("button", { name: "Try again" });
 		await expect.element(retryButton).toBeInTheDocument();
+	});
+
+	it("keeps the page and announces the error in the list when the entries fail to load", async () => {
+		mockFetch.on(
+			"GET",
+			"/_emdash/api/content/posts",
+			{ error: { code: "INTERNAL_ERROR", message: "SQLITE_BUSY: database is locked" } },
+			500,
+		);
+		const { router, TestApp } = buildRouter();
+		await router.navigate({ to: "/content/$collection", params: { collection: "posts" } });
+		const screen = await render(<TestApp />);
+
+		await expect
+			.element(screen.getByRole("alert"))
+			.toHaveTextContent("The entries couldn't be loaded.");
+		await expect.element(screen.getByRole("heading", { name: "Posts" })).toBeVisible();
+		await expect.element(screen.getByRole("link", { name: /add new/i })).toBeVisible();
+		expect(document.body.textContent).not.toContain("SQLITE_BUSY");
+
+		mockFetch.on("GET", "/_emdash/api/content/posts", {
+			data: {
+				items: [
+					{
+						id: "post_1",
+						type: "posts",
+						slug: "back-again",
+						status: "draft",
+						locale: "fr",
+						data: { title: "Back again" },
+						authorId: null,
+						createdAt: "2025-01-01T00:00:00Z",
+						updatedAt: "2025-01-01T00:00:00Z",
+						publishedAt: null,
+						scheduledAt: null,
+						liveRevisionId: null,
+						draftRevisionId: null,
+					},
+				],
+				total: 1,
+			},
+		});
+		await screen.getByRole("button", { name: "Try again" }).click();
+		await expect.element(screen.getByText("Back again")).toBeVisible();
+		expect(screen.getByRole("alert").query()).toBeNull();
 	});
 });
 
@@ -1209,8 +1307,12 @@ describe("ContentListPage – numbered pages", () => {
 				requests.push(`${url.pathname}${url.search}`);
 				const [, collection = "", trash = ""] = list;
 				if (holdCollection?.collection === collection) await holdCollection.release;
+				const page = listPage(collection, url, totals[`${collection}${trash}`] ?? 0);
 				return Response.json({
-					data: listPage(collection, url, totals[`${collection}${trash}`] ?? 0),
+					data:
+						url.searchParams.get("trashTotal") === "1"
+							? { ...page, trashTotal: totals[`${collection}/trash`] ?? 0 }
+							: page,
 				});
 			}
 			return mockedFetch(input, init);
@@ -1229,14 +1331,14 @@ describe("ContentListPage – numbered pages", () => {
 		return { ...harness, screen };
 	}
 
-	it("loads one page of the list and of the trash at a time", async () => {
+	it("loads one page of the list at a time, with the trash count from the list", async () => {
 		const { screen } = await renderPosts();
 
-		expect(requests).toContain("/_emdash/api/content/posts/trash?page=1&limit=20&locale=fr");
 		expect(
 			requests.some((url) => url.startsWith("/_emdash/api/content/posts?page=1&limit=20&")),
 		).toBe(true);
 		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("25");
+		expect(requests.filter((url) => url.includes("/trash?"))).toEqual([]);
 
 		await screen.getByRole("button", { name: "Next page" }).click();
 
@@ -1245,6 +1347,13 @@ describe("ContentListPage – numbered pages", () => {
 		expect(
 			requests.some((url) => url.startsWith("/_emdash/api/content/posts?page=2&limit=20&")),
 		).toBe(true);
+	});
+
+	it("asks only for the entry fields the list shows", async () => {
+		await renderPosts();
+
+		const listRequest = requests.find((url) => url.startsWith("/_emdash/api/content/posts?"));
+		expect(new URL(listRequest!, location.origin).searchParams.get("fields")).toBe("title,name");
 	});
 
 	it("starts a changed search at page 1 without requesting the old page for it", async () => {
@@ -1295,7 +1404,7 @@ describe("ContentListPage – numbered pages", () => {
 		]);
 	});
 
-	it("waits for the manifest before loading the trash", async () => {
+	it("waits for the manifest before loading the list", async () => {
 		let releaseManifest = () => {};
 		holdManifest = new Promise<void>((resolve) => {
 			releaseManifest = resolve;
@@ -1309,9 +1418,35 @@ describe("ContentListPage – numbered pages", () => {
 		releaseManifest();
 
 		await expect.element(screen.getByText("Showing 1-20 of 45")).toBeInTheDocument();
+	});
+
+	it("loads the trash once its tab opens", async () => {
+		const { screen } = await renderPosts();
+		expect(requests.filter((url) => url.includes("/trash?"))).toEqual([]);
+
+		await screen.getByRole("tab", { name: /Trash/ }).click();
+
+		await expect.element(screen.getByText("posts entry 1", { exact: true })).toBeInTheDocument();
 		expect(requests.filter((url) => url.includes("/trash?"))).toEqual([
 			"/_emdash/api/content/posts/trash?page=1&limit=20&locale=fr",
 		]);
+		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("25");
+	});
+
+	it("shows the list's newer trash count over a trash page cached earlier", async () => {
+		const { screen, router, queryClient } = await renderPosts();
+		await screen.getByRole("tab", { name: /Trash/ }).click();
+		await expect.element(screen.getByText("posts entry 1", { exact: true })).toBeInTheDocument();
+
+		await router.navigate({ to: "/content/$collection/new", params: { collection: "posts" } });
+		await expect.element(screen.getByRole("tab", { name: /Trash/ })).not.toBeInTheDocument();
+		totals.posts = 44;
+		totals["posts/trash"] = 26;
+		await queryClient.invalidateQueries({ queryKey: ["content", "posts"] });
+		await router.navigate({ to: "/content/$collection", params: { collection: "posts" } });
+
+		await expect.element(screen.getByText("Showing 1-20 of 44")).toBeInTheDocument();
+		await expect.element(screen.getByRole("tab", { name: /Trash/ })).toHaveTextContent("26");
 	});
 });
 
@@ -1440,7 +1575,7 @@ describe("ContentNewPage – create failure surfaces the server's error", () => 
 		mockFetch.restore();
 	});
 
-	it("shows a toast with the server's message on a slug conflict (and stays on /new)", async () => {
+	it("hands the server's message to the editor on a slug conflict (and stays on /new)", async () => {
 		const { router, TestApp } = buildRouter();
 
 		await router.navigate({
@@ -1457,19 +1592,17 @@ describe("ContentNewPage – create failure surfaces the server's error", () => 
 
 		await screen.getByRole("button", { name: "Save", exact: true }).click();
 
-		// The UI surfaces WHAT happened — the server's human-readable
-		// conflict message.
-		await expect.element(screen.getByText("Failed to save")).toBeInTheDocument();
+		// The editor reports the server's human-readable conflict message, once.
 		await expect
-			.element(screen.getByText("Slug 'test-post' already exists in collection 'posts'"))
+			.element(
+				screen
+					.getByTestId("save-error")
+					.getByText("Slug 'test-post' already exists in collection 'posts'"),
+			)
 			.toBeInTheDocument();
-
-		// And with the error affordance: Kumo styles severity off `variant`
-		// (Base UI's `type` is inert for styling), and the toast icon only
-		// renders for a non-default variant.
-		await expect
-			.poll(() => document.querySelectorAll("[data-toast-icon]").length)
-			.toBeGreaterThan(0);
+		expect(
+			screen.getByRole("region", { name: "Notifications" }).query()?.textContent ?? "",
+		).not.toContain("already exists");
 
 		// And the failed create must not navigate anywhere.
 		expect(router.state.location.pathname).toContain("/content/posts/new");
@@ -1679,7 +1812,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 						status: "draft",
 						locale: "en",
 						translationGroup: null,
-						data: { title: "Published Title" },
+						data: { title: "Draft Title" },
 						authorId: null,
 						primaryBylineId: null,
 						createdAt: "2025-01-01T00:00:00Z",
@@ -1688,6 +1821,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 						scheduledAt: null,
 						liveRevisionId: "rev_live",
 						draftRevisionId: "rev_draft",
+						draftSlug: "draft-slug",
 					},
 				},
 			})
@@ -1712,18 +1846,6 @@ describe("ContentEditPage – autosave cache patching", () => {
 					},
 				},
 			})
-			.on("GET", "/_emdash/api/revisions/rev_draft", {
-				data: {
-					item: {
-						id: "rev_draft",
-						collection: "posts",
-						entryId: "post_1",
-						data: { title: "Draft Title", _slug: "draft-slug" },
-						authorId: null,
-						createdAt: "2025-01-01T00:00:00Z",
-					},
-				},
-			})
 			.on("PUT", "/_emdash/api/content/posts/post_1", {
 				data: {
 					item: {
@@ -1733,7 +1855,7 @@ describe("ContentEditPage – autosave cache patching", () => {
 						status: "draft",
 						locale: "en",
 						translationGroup: null,
-						data: { title: "Published Title" },
+						data: { title: "Draft Title" },
 						authorId: null,
 						primaryBylineId: null,
 						createdAt: "2025-01-01T00:00:00Z",
@@ -1745,6 +1867,30 @@ describe("ContentEditPage – autosave cache patching", () => {
 					},
 				},
 			});
+		// The server keeps the draft: a save merges into it, and reads return it.
+		const draft = { data: { title: "Draft Title" } as Record<string, unknown>, slug: "draft-slug" };
+		const mockedFetch = globalThis.fetch;
+		globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+			const url =
+				typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			const response = await mockedFetch(input, init);
+			if (!url.startsWith("/_emdash/api/content/posts/post_1") || !response.ok) return response;
+			const method = init?.method ?? "GET";
+			if (method === "PUT" && typeof init?.body === "string") {
+				const saved = JSON.parse(init.body) as { data?: Record<string, unknown>; slug?: string };
+				draft.data = { ...draft.data, ...saved.data };
+				if (saved.slug !== undefined) draft.slug = saved.slug;
+			} else if (method !== "GET" || url.includes("/lock")) {
+				return response;
+			}
+			const body = (await response.json()) as { data: { item: ContentItem } };
+			body.data.item.data = draft.data;
+			if (method === "GET") body.data.item.draftSlug = draft.slug;
+			else delete body.data.item.draftSlug;
+			return new Response(JSON.stringify(body), {
+				headers: { "Content-Type": "application/json" },
+			});
+		}) as typeof fetch;
 	});
 
 	afterEach(() => {
@@ -1772,6 +1918,76 @@ describe("ContentEditPage – autosave cache patching", () => {
 			expect(screen.getByTestId("mock-title").element().textContent).toBe("Autosaved Title");
 			expect(screen.getByTestId("mock-slug").element().textContent).toBe("autosaved-title");
 		});
+	});
+
+	it("keeps the staged slug when a save and unschedule replace the cached entry", async () => {
+		mockFetch
+			.on("GET", "/_emdash/api/auth/me", { data: { id: "user_01", role: 50 } })
+			.on("DELETE", "/_emdash/api/content/posts/post_1/schedule", {
+				data: {
+					_rev: "revision-token-2",
+					item: {
+						id: "post_1",
+						type: "posts",
+						slug: "published-slug",
+						status: "draft",
+						locale: "en",
+						translationGroup: null,
+						data: { title: "Saved Title" },
+						authorId: null,
+						primaryBylineId: null,
+						createdAt: "2025-01-01T00:00:00Z",
+						updatedAt: "2025-01-02T00:00:00Z",
+						publishedAt: "2025-01-01T00:00:00Z",
+						scheduledAt: null,
+						liveRevisionId: "rev_live",
+						draftRevisionId: "rev_draft",
+					},
+				},
+			});
+		const { router, TestApp } = buildRouter();
+		await router.navigate({
+			to: "/content/$collection/$id",
+			params: { collection: "posts", id: "post_1" },
+		});
+		const screen = await render(<TestApp />);
+		await waitFor(() => {
+			expect(screen.getByTestId("mock-slug").element().textContent).toBe("draft-slug");
+		});
+
+		await screen.getByRole("button", { name: "Trigger Save And Unschedule" }).click();
+
+		await waitFor(() => {
+			expect(screen.getByTestId("mock-title").element().textContent).toBe("Saved Title");
+		});
+		expect(screen.getByTestId("mock-slug").element().textContent).toBe("draft-slug");
+	});
+
+	it("opens an entry with a draft in one read, without reading the draft revision", async () => {
+		const fetchWithMocks = globalThis.fetch;
+		const reads: string[] = [];
+		globalThis.fetch = ((input: string | URL | Request, init?: RequestInit) => {
+			const url =
+				typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+			if ((init?.method ?? "GET") === "GET") reads.push(url);
+			return fetchWithMocks(input, init);
+		}) as typeof fetch;
+		const { router, TestApp } = buildRouter();
+		await router.navigate({
+			to: "/content/$collection/$id",
+			params: { collection: "posts", id: "post_1" },
+		});
+
+		const screen = await render(<TestApp />);
+		await waitFor(() => {
+			expect(screen.getByTestId("mock-slug").element().textContent).toBe("draft-slug");
+		});
+		await new Promise((resolve) => setTimeout(resolve, 100));
+
+		expect(reads.filter((url) => url.startsWith("/_emdash/api/content/posts/post_1"))).toEqual([
+			"/_emdash/api/content/posts/post_1?draftSlug=1",
+		]);
+		expect(reads.filter((url) => url.startsWith("/_emdash/api/revisions/"))).toEqual([]);
 	});
 
 	it("echoes the current revision token in editor and auxiliary writes", async () => {
@@ -2270,7 +2486,7 @@ describe("ContentEditPage – revision token synchronization", () => {
 			status: "draft",
 			locale: "en",
 			translationGroup: null,
-			data: { title: "Published Title" },
+			data: { title: "Draft Title" },
 			authorId: null,
 			primaryBylineId: null,
 			createdAt: "2025-01-01T00:00:00Z",
@@ -2311,19 +2527,6 @@ describe("ContentEditPage – revision token synchronization", () => {
 				return jsonResponse({ data: { id: "user_01", role: 30 } });
 			if (method === "GET" && url === "/_emdash/api/bylines")
 				return jsonResponse({ data: { items: [] } });
-			if (method === "GET" && url.startsWith("/_emdash/api/revisions/rev_draft"))
-				return jsonResponse({
-					data: {
-						item: {
-							id: "rev_draft",
-							collection: "posts",
-							entryId: "post_1",
-							data: { title: "Draft Title", _slug: "draft-slug" },
-							authorId: null,
-							createdAt: "2025-01-01T00:00:00Z",
-						},
-					},
-				});
 			if (method === "POST" && url.includes("/_emdash/api/content/posts/post_1/lock"))
 				return jsonResponse({ data: { enabled: false, holder: null, heldByCaller: false } });
 			if (method === "DELETE" && url.includes("/_emdash/api/content/posts/post_1/lock"))
@@ -2332,7 +2535,7 @@ describe("ContentEditPage – revision token synchronization", () => {
 				getCount++;
 				const revision = getCount === 1 ? rev1 : rev2;
 				return jsonResponse({
-					data: { _rev: revision, item: makeItem() },
+					data: { _rev: revision, item: makeItem({ draftSlug: "draft-slug" }) },
 				});
 			}
 			if (method === "PUT" && url.startsWith("/_emdash/api/content/posts/post_1")) {

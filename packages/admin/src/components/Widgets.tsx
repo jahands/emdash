@@ -12,6 +12,7 @@ import {
 	Label,
 	LayerDialog,
 	Select,
+	SkeletonLine,
 	Switch,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
@@ -46,8 +47,6 @@ import * as React from "react";
 
 import {
 	fetchManifest,
-	fetchWidgetAreas,
-	fetchWidgetComponents,
 	fetchMenus,
 	createWidgetArea,
 	createWidget,
@@ -70,7 +69,9 @@ import {
 	useTakenValue,
 } from "../lib/dialog-form.js";
 import { getPluginBlocks } from "../lib/pluginBlocks";
+import { widgetAreasQueryOptions, widgetComponentsQueryOptions } from "../lib/route-queries.js";
 import { CaretNext } from "./ArrowIcons.js";
+import { ChangedElsewhereNotice } from "./ChangedElsewhereNotice.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { GalleryDetailPanel } from "./editor/GalleryDetailPanel";
@@ -81,6 +82,7 @@ import {
 	type BlockSidebarPanel,
 	type PluginBlockDef,
 } from "./PortableTextEditor";
+import { ScreenPresence } from "./presence/ScreenPresence.js";
 
 /** Palette item types that can be dragged into areas */
 interface PaletteItemData {
@@ -184,6 +186,8 @@ const CORE_WIDGET_META: Record<string, CoreWidgetMeta> = {
 };
 
 const WIDGET_AREA_NAME_PATTERN = /^[a-z0-9-]+$/;
+// Fixed, so placeholders shown again after a remount don't change shape.
+const AREA_PLACEHOLDER_WIDTHS = [30, 42];
 
 type CreateAreaField = "name" | "label";
 
@@ -239,15 +243,11 @@ export function Widgets() {
 		});
 	}, []);
 
-	const { data: areas = [], isLoading } = useQuery({
-		queryKey: ["widget-areas"],
-		queryFn: fetchWidgetAreas,
-	});
+	const { data: areas = [], isLoading } = useQuery(widgetAreasQueryOptions());
 
-	const { data: components = [] } = useQuery({
-		queryKey: ["widget-components"],
-		queryFn: fetchWidgetComponents,
-	});
+	const { data: components = [], isPending: componentsPending } = useQuery(
+		widgetComponentsQueryOptions(),
+	);
 
 	const { data: manifest } = useQuery({
 		queryKey: ["manifest"],
@@ -255,6 +255,11 @@ export function Widgets() {
 	});
 
 	const pluginBlocks = React.useMemo(() => (manifest ? getPluginBlocks(manifest) : []), [manifest]);
+
+	// The server always lists the core components, so the palette can show them
+	// before it answers.
+	const paletteComponents: Array<Pick<WidgetComponent, "id" | "label" | "description">> =
+		componentsPending ? Object.keys(CORE_WIDGET_META).map((id) => ({ id, label: id })) : components;
 
 	const createAreaMutation = useMutation({
 		mutationFn: createWidgetArea,
@@ -434,14 +439,6 @@ export function Widgets() {
 			? areas.flatMap((a) => a.widgets ?? []).find((w) => w.id === activeId)
 			: null;
 
-	if (isLoading) {
-		return (
-			<div className="flex items-center justify-center h-64">
-				<div className="text-kumo-subtle">{t`Loading widgets...`}</div>
-			</div>
-		);
-	}
-
 	return (
 		<>
 			<DndContext
@@ -458,80 +455,83 @@ export function Widgets() {
 								{t`Manage content widgets in your widget areas`}
 							</p>
 						</div>
-						<LayerDialog.Root
-							open={isCreateAreaOpen}
-							{...guardUnsavedInput(
-								newAreaName !== "" || newAreaLabel !== "" || newAreaDescription !== "",
-								handleCreateAreaOpenChange,
-							)}
-							dismissDisabled={createAreaMutation.isPending}
-						>
-							<LayerDialog.Trigger
-								render={(props) => (
-									<Button {...props} icon={<Plus />}>
-										{t`Add Widget Area`}
-									</Button>
+						<div className="flex items-center gap-2">
+							<ScreenPresence topic="widgets" editing={expandedWidgets.size > 0} />
+							<LayerDialog.Root
+								open={isCreateAreaOpen}
+								{...guardUnsavedInput(
+									newAreaName !== "" || newAreaLabel !== "" || newAreaDescription !== "",
+									handleCreateAreaOpenChange,
 								)}
-							/>
-							<LayerDialog.Content>
-								<LayerDialog.Title>{t`Create Widget Area`}</LayerDialog.Title>
-								<LayerDialog.Description>
-									{t`A widget area is a place in your theme, such as a sidebar, that holds widgets.`}
-								</LayerDialog.Description>
-								<LayerDialog.Body>
-									<form
-										ref={createAreaFormRef}
-										id={createAreaFormId}
-										noValidate
-										onSubmit={handleCreateArea}
-										className="grid gap-5"
-									>
-										<Input
-											dir="ltr"
-											label={t`Name`}
-											name="name"
-											required
-											placeholder="sidebar"
-											value={newAreaName}
-											onChange={(e) => setNewAreaName(e.target.value)}
-											error={areaErrors.name && t(areaErrors.name)}
-											aria-invalid={areaErrors.name ? true : undefined}
-										/>
-										<Input
-											label={t`Label`}
-											name="label"
-											required
-											placeholder={t`Main Sidebar`}
-											value={newAreaLabel}
-											onChange={(e) => setNewAreaLabel(e.target.value)}
-											error={areaErrors.label && t(areaErrors.label)}
-											aria-invalid={areaErrors.label ? true : undefined}
-										/>
-										<Input
-											label={t`Description`}
-											name="description"
-											placeholder={t`Appears on posts and pages`}
-											value={newAreaDescription}
-											onChange={(e) => setNewAreaDescription(e.target.value)}
-										/>
-										<DialogError
-											message={getMutationError(
-												takenAreaName.unlessTaken(createAreaMutation.error),
-											)}
-										/>
-									</form>
-								</LayerDialog.Body>
-								<LayerDialog.Actions dismissLabel={t`Cancel`}>
-									<LayerDialog.Action
-										type="submit"
-										form={createAreaFormId}
-										disabled={createAreaMutation.isPending}
-									>
-										{createAreaMutation.isPending ? t`Creating...` : t`Create`}
-									</LayerDialog.Action>
-								</LayerDialog.Actions>
-							</LayerDialog.Content>
-						</LayerDialog.Root>
+								dismissDisabled={createAreaMutation.isPending}
+							>
+								<LayerDialog.Trigger
+									render={(props) => (
+										<Button {...props} icon={<Plus />}>
+											{t`Add Widget Area`}
+										</Button>
+									)}
+								/>
+								<LayerDialog.Content>
+									<LayerDialog.Title>{t`Create Widget Area`}</LayerDialog.Title>
+									<LayerDialog.Description>
+										{t`A widget area is a place in your theme, such as a sidebar, that holds widgets.`}
+									</LayerDialog.Description>
+									<LayerDialog.Body>
+										<form
+											ref={createAreaFormRef}
+											id={createAreaFormId}
+											noValidate
+											onSubmit={handleCreateArea}
+											className="grid gap-5"
+										>
+											<Input
+												dir="ltr"
+												label={t`Name`}
+												name="name"
+												required
+												placeholder="sidebar"
+												value={newAreaName}
+												onChange={(e) => setNewAreaName(e.target.value)}
+												error={areaErrors.name && t(areaErrors.name)}
+												aria-invalid={areaErrors.name ? true : undefined}
+											/>
+											<Input
+												label={t`Label`}
+												name="label"
+												required
+												placeholder={t`Main Sidebar`}
+												value={newAreaLabel}
+												onChange={(e) => setNewAreaLabel(e.target.value)}
+												error={areaErrors.label && t(areaErrors.label)}
+												aria-invalid={areaErrors.label ? true : undefined}
+											/>
+											<Input
+												label={t`Description`}
+												name="description"
+												placeholder={t`Appears on posts and pages`}
+												value={newAreaDescription}
+												onChange={(e) => setNewAreaDescription(e.target.value)}
+											/>
+											<DialogError
+												message={getMutationError(
+													takenAreaName.unlessTaken(createAreaMutation.error),
+												)}
+											/>
+										</form>
+									</LayerDialog.Body>
+									<LayerDialog.Actions dismissLabel={t`Cancel`}>
+										<LayerDialog.Action
+											type="submit"
+											form={createAreaFormId}
+											disabled={createAreaMutation.isPending}
+										>
+											{createAreaMutation.isPending ? t`Creating...` : t`Create`}
+										</LayerDialog.Action>
+									</LayerDialog.Actions>
+								</LayerDialog.Content>
+							</LayerDialog.Root>
+						</div>
 					</div>
 
 					<div className="overflow-x-auto">
@@ -551,7 +551,7 @@ export function Widgets() {
 												widgetInput={{ ...item.input, title: t(item.label) }}
 											/>
 										))}
-										{components.map((comp) => {
+										{paletteComponents.map((comp) => {
 											const meta = CORE_WIDGET_META[comp.id];
 											const label = meta ? t(meta.label) : comp.label;
 											const description = meta ? t(meta.description) : comp.description;
@@ -575,7 +575,28 @@ export function Widgets() {
 
 							{/* Widget Areas (droppable + sortable) */}
 							<div className="col-span-8 space-y-4">
-								{areas.length === 0 ? (
+								{isLoading ? (
+									<>
+										<span role="status" className="sr-only">
+											{t`Loading widgets...`}
+										</span>
+										{AREA_PLACEHOLDER_WIDTHS.map((width) => (
+											<div
+												key={width}
+												className="rounded-lg border bg-kumo-base"
+												aria-hidden="true"
+											>
+												<div className="flex items-center justify-between border-b p-4">
+													<div className="w-full text-lg">
+														<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+													</div>
+													<div className="skeleton-line size-6.5 shrink-0 rounded-md" />
+												</div>
+												<div className="min-h-[80px] p-4" />
+											</div>
+										))}
+									</>
+								) : areas.length === 0 ? (
 									<div className="rounded-lg border bg-kumo-base p-12 text-center">
 										<p className="text-kumo-subtle">{t`No widget areas yet. Create one to get started.`}</p>
 									</div>
@@ -922,6 +943,28 @@ function WidgetItem({
 	);
 }
 
+interface WidgetFormValues {
+	title: string;
+	content: unknown[];
+	menuName: string;
+	componentId: string;
+	componentProps: Record<string, unknown>;
+}
+
+function widgetFormValues(widget: Widget): WidgetFormValues {
+	return {
+		title: widget.title ?? "",
+		content: Array.isArray(widget.content) ? widget.content : [],
+		menuName: widget.menuName ?? "",
+		componentId: widget.componentId ?? "",
+		componentProps: widget.componentProps ?? {},
+	};
+}
+
+function sameWidgetValues(a: WidgetFormValues, b: WidgetFormValues): boolean {
+	return JSON.stringify(a) === JSON.stringify(b);
+}
+
 /** Inline editor form for a widget, rendered when the widget is expanded */
 function WidgetEditor({
 	widget,
@@ -941,17 +984,43 @@ function WidgetEditor({
 	onBlockSidebarClose: () => void;
 }) {
 	const { t } = useLingui();
-	const [title, setTitle] = React.useState(widget.title ?? "");
-	const [content, setContent] = React.useState<unknown[]>(
-		Array.isArray(widget.content) ? widget.content : [],
-	);
-	const [menuName, setMenuName] = React.useState(widget.menuName ?? "");
-	const [componentId, setComponentId] = React.useState(widget.componentId ?? "");
+	const [baseline, setBaseline] = React.useState(() => widgetFormValues(widget));
+	const [title, setTitle] = React.useState(baseline.title);
+	const [content, setContent] = React.useState<unknown[]>(baseline.content);
+	const [menuName, setMenuName] = React.useState(baseline.menuName);
+	const [componentId, setComponentId] = React.useState(baseline.componentId);
 	const [componentProps, setComponentProps] = React.useState<Record<string, unknown>>(
-		widget.componentProps ?? {},
+		baseline.componentProps,
 	);
+	// The content editor reads its value once, so adopting a newer version remounts it.
+	const [generation, setGeneration] = React.useState(0);
+	const [changedElsewhere, setChangedElsewhere] = React.useState(false);
 
-	const { data: menus = [] } = useQuery({
+	const adopt = (values: WidgetFormValues) => {
+		setBaseline(values);
+		setTitle(values.title);
+		setContent(values.content);
+		setMenuName(values.menuName);
+		setComponentId(values.componentId);
+		setComponentProps(values.componentProps);
+		setGeneration((previous) => previous + 1);
+		setChangedElsewhere(false);
+	};
+
+	// The areas list refetches when any widget changes. An editor without edits takes the newer
+	// version, as does one whose edits are what was just saved; one with other edits says so.
+	const [seenWidget, setSeenWidget] = React.useState(widget);
+	if (widget !== seenWidget) {
+		setSeenWidget(widget);
+		const incoming = widgetFormValues(widget);
+		if (!sameWidgetValues(incoming, baseline)) {
+			const shown = { title, content, menuName, componentId, componentProps };
+			if (sameWidgetValues(shown, baseline) || sameWidgetValues(shown, incoming)) adopt(incoming);
+			else setChangedElsewhere(true);
+		}
+	}
+
+	const { data: menus = [], isPending: menusPending } = useQuery({
 		queryKey: ["menus"],
 		queryFn: () => fetchMenus(),
 		enabled: widget.type === "menu",
@@ -974,6 +1043,13 @@ function WidgetEditor({
 
 	return (
 		<div className="mt-3 p-3 bg-kumo-tint rounded space-y-4">
+			{changedElsewhere && (
+				<ChangedElsewhereNotice
+					onLoad={async () => {
+						adopt(widgetFormValues(seenWidget));
+					}}
+				/>
+			)}
 			<Input
 				label={t`Title`}
 				value={title}
@@ -985,6 +1061,7 @@ function WidgetEditor({
 				<div>
 					<Label className="text-sm font-medium mb-2 block">{t`Content`}</Label>
 					<PortableTextEditor
+						key={generation}
 						value={content as Parameters<typeof PortableTextEditor>[0]["value"]}
 						onChange={(value) => setContent(value)}
 						minimal
@@ -999,6 +1076,7 @@ function WidgetEditor({
 			{widget.type === "menu" && (
 				<Select
 					label={t`Menu`}
+					disabled={menusPending}
 					value={menuName}
 					onValueChange={(v) => setMenuName(v ?? "")}
 					items={Object.fromEntries(menus.map((m) => [m.name, m.label || m.name]))}

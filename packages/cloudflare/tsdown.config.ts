@@ -13,6 +13,7 @@ export default defineConfig({
 		"src/db/playground-middleware.ts",
 		"src/storage/r2.ts",
 		"src/image-endpoint.ts",
+		"src/image-resizing-endpoint.ts",
 		"src/auth/index.ts",
 		"src/sandbox/index.ts",
 		"src/sandbox/bridge.ts",

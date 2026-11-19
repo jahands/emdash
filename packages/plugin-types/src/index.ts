@@ -72,6 +72,8 @@ export type PluginCapability =
 	| "media:write"
 	// Users
 	| "users:read"
+	// Realtime
+	| "realtime:publish" // ctx.realtime (the plugin's declared channels)
 	// Email
 	| "email:send"
 	// Hook registration
@@ -225,6 +227,7 @@ export interface DeclaredAccess {
 	email?: { send?: AccessConstraints; events?: AccessConstraints; transport?: AccessConstraints };
 	page?: { fragments?: AccessConstraints };
 	users?: { read?: AccessConstraints };
+	realtime?: { publish?: AccessConstraints };
 }
 
 /**
@@ -298,6 +301,7 @@ export function capabilitiesToDeclaredAccess(
 	if (caps.has("hooks.email-transport:register")) (out.email ??= {}).transport = {};
 	if (caps.has("hooks.page-fragments:register")) out.page = { fragments: {} };
 	if (caps.has("users:read")) out.users = { read: {} };
+	if (caps.has("realtime:publish")) out.realtime = { publish: {} };
 
 	return out;
 }
@@ -376,6 +380,7 @@ export function declaredAccessToCapabilities(declaredAccess: DeclaredAccess): {
 	if (declaredAccess.email?.transport) caps.add("hooks.email-transport:register");
 	if (declaredAccess.page?.fragments) caps.add("hooks.page-fragments:register");
 	if (declaredAccess.users?.read) caps.add("users:read");
+	if (declaredAccess.realtime?.publish) caps.add("realtime:publish");
 
 	return { capabilities: [...caps], allowedHosts };
 }
@@ -589,6 +594,13 @@ export interface PluginManifest {
 	/** Explicit, opt-in MCP surface. Absent manifests expose no plugin tools. */
 	mcp?: PluginMcpManifestConfig;
 	admin: PluginAdminConfig;
+	/** Channels the plugin publishes live updates on, with `ctx.realtime`. */
+	realtime?: PluginRealtimeManifestConfig;
+}
+
+export interface PluginRealtimeManifestConfig {
+	/** Channels by name, each with the permission a user needs to receive its changes. */
+	channels: Record<string, { permission: string }>;
 }
 
 // ── Slug / version helpers ───────────────────────────────────────────────────

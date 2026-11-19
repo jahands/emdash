@@ -12,6 +12,7 @@ import {
 	invalidateCollectionCache,
 	invalidateSchemaObjectCache,
 } from "../../object-cache/index.js";
+import { publishChange } from "../../realtime/publish.js";
 import {
 	SchemaRegistry,
 	SchemaError,
@@ -103,6 +104,7 @@ function invalidateFieldCaches(collectionSlug: string): void {
 	invalidateCollectionCache(collectionSlug);
 	invalidateSchemaCache(collectionSlug);
 	invalidateSchemaObjectCache();
+	publishChange("schema", { op: "update" });
 }
 
 /**
@@ -274,6 +276,7 @@ export async function handleSchemaCollectionCreate(
 	try {
 		const registry = new SchemaRegistry(db);
 		const item = await registry.createCollection(input);
+		publishChange("schema", { op: "create" });
 
 		return {
 			success: true,
@@ -312,6 +315,7 @@ export async function handleSchemaCollectionUpdate(
 	try {
 		const registry = new SchemaRegistry(db);
 		const item = await registry.updateCollection(slug, input);
+		publishChange("schema", { op: "update" });
 
 		return {
 			success: true,
@@ -367,6 +371,7 @@ export async function handleSchemaCollectionDelete(
 		}
 
 		await registry.deleteCollection(slug, options);
+		publishChange("schema", { op: "delete" });
 
 		return {
 			success: true,
@@ -866,6 +871,7 @@ export async function handleSchemaCollectionReorder(
 	try {
 		const registry = new SchemaRegistry(db);
 		await registry.reorderCollections(slugs);
+		publishChange("schema", { op: "update" });
 
 		return {
 			success: true,
@@ -904,6 +910,7 @@ export async function handleSchemaFieldReorder(
 	try {
 		const registry = new SchemaRegistry(db);
 		await registry.reorderFields(collectionSlug, fieldSlugs);
+		publishChange("schema", { op: "update" });
 
 		return {
 			success: true,
@@ -985,6 +992,7 @@ export async function handleOrphanedTableRegister(
 	try {
 		const registry = new SchemaRegistry(db);
 		const item = await registry.registerOrphanedTable(slug, options);
+		publishChange("schema", { op: "create" });
 
 		return {
 			success: true,

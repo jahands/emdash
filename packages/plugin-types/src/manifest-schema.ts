@@ -52,6 +52,7 @@ export const CURRENT_PLUGIN_CAPABILITIES = [
 	"hooks.email-transport:register",
 	"hooks.email-events:register",
 	"hooks.page-fragments:register",
+	"realtime:publish",
 ] as const;
 
 /**
@@ -222,17 +223,22 @@ const settingFieldSchema = z.discriminatedUnion("type", [
 	}),
 ]);
 
+const realtimeChannelNameSchema = z.string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const refreshOnSchema = z.array(realtimeChannelNameSchema).max(16).optional();
+
 const adminPageSchema = z.object({
 	path: z.string(),
 	label: z.string(),
 	icon: z.string().optional(),
 	group: z.string().trim().min(1).max(100).optional(),
+	refreshOn: refreshOnSchema,
 });
 
 const dashboardWidgetSchema = z.object({
 	id: z.string(),
 	size: z.enum(["full", "half", "third"]).optional(),
 	title: z.string().optional(),
+	refreshOn: refreshOnSchema,
 });
 
 const editorExtensionIdPattern = /^[a-z][a-z0-9_-]*$/;
@@ -427,6 +433,7 @@ const declaredAccessSchema = z.object({
 		.optional(),
 	page: z.object({ fragments: accessConstraints.optional() }).optional(),
 	users: z.object({ read: accessConstraints.optional() }).optional(),
+	realtime: z.object({ publish: accessConstraints.optional() }).optional(),
 });
 
 // ── Main schema ─────────────────────────────────────────────────
@@ -462,6 +469,13 @@ export const pluginManifestBaseSchema = z.object({
 	routes: z.array(z.union([routeNameSchema, manifestRouteEntrySchema])),
 	mcp: pluginMcpConfigSchema.optional(),
 	admin: pluginAdminConfigSchema,
+	realtime: z
+		.object({
+			channels: z
+				.record(realtimeChannelNameSchema, z.object({ permission: z.string().min(1) }))
+				.refine((channels) => Object.keys(channels).length <= 32),
+		})
+		.optional(),
 });
 
 function validateEditorExtensionRoutes(
@@ -571,11 +585,34 @@ function validateBlockKitAdminRoute(
 	}
 }
 
+function validateRefreshOnChannels(
+	manifest: z.infer<typeof pluginManifestBaseSchema>,
+	ctx: z.RefinementCtx,
+): void {
+	const channels = manifest.realtime?.channels ?? {};
+	for (const [kind, surfaces] of [
+		["pages", manifest.admin.pages],
+		["widgets", manifest.admin.widgets],
+	] as const) {
+		for (const [index, surface] of (surfaces ?? []).entries()) {
+			for (const [channelIndex, channel] of (surface.refreshOn ?? []).entries()) {
+				if (Object.hasOwn(channels, channel)) continue;
+				ctx.addIssue({
+					code: "custom",
+					message: `refreshOn names "${channel}", which realtime.channels doesn't declare`,
+					path: ["admin", kind, index, "refreshOn", channelIndex],
+				});
+			}
+		}
+	}
+}
+
 export const pluginManifestSchema = pluginManifestBaseSchema.superRefine((manifest, ctx) => {
 	validateUniqueRoutes(manifest, ctx);
 	validateEditorExtensionRoutes(manifest, ctx);
 	validateMcpToolRoutes(manifest, ctx);
 	validateBlockKitAdminRoute(manifest, ctx);
+	validateRefreshOnChannels(manifest, ctx);
 });
 
 export type ValidatedPluginManifest = z.infer<typeof pluginManifestSchema>;

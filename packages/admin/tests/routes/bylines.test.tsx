@@ -1,4 +1,5 @@
 import { Toast } from "@cloudflare/kumo";
+import { QueryClientProvider } from "@tanstack/react-query";
 import * as React from "react";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { page, userEvent } from "vitest/browser";
@@ -12,9 +13,11 @@ import {
 	fetchUsers,
 } from "../../src/lib/api";
 import type { BylineSummary } from "../../src/lib/api/bylines";
+import { bylinesQueryOptions } from "../../src/lib/route-queries";
 import { BylinesPage } from "../../src/routes/bylines";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.tsx";
-import { QueryWrapper } from "../utils/test-helpers.tsx";
+import { createTestQueryClient, QueryWrapper } from "../utils/test-helpers.tsx";
 
 // The bylines page reads the active locale from the URL and navigates on
 // locale switches; neither matters for the search-debounce behaviour, so we
@@ -206,6 +209,113 @@ const guestByline: BylineSummary = {
 	createdAt: "2026-01-01",
 	updatedAt: "2026-01-01",
 };
+
+describe("BylinesPage loading", () => {
+	beforeEach(() => {
+		vi.clearAllMocks();
+	});
+
+	it("shows the page with placeholder rows, then the rows, without passing through the empty state", async () => {
+		const list = deferred<{ items: BylineSummary[]; nextCursor: undefined }>();
+		fetchBylinesMock.mockReturnValueOnce(list.promise);
+		const screen = await renderPage();
+
+		await expect.element(screen.getByRole("heading", { name: "Bylines" })).toBeVisible();
+		await expect.element(screen.getByRole("button", { name: "New byline" })).toBeVisible();
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("status")).toHaveTextContent("Loading...");
+
+		const emptyStates: string[] = [];
+		const observer = new MutationObserver(() => {
+			if (document.body.textContent?.includes("No bylines yet")) emptyStates.push("shown");
+		});
+		observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+		try {
+			list.resolve({ items: [guestByline], nextCursor: undefined });
+			await expect
+				.element(screen.getByRole("button", { name: "Edit Guest Contributor" }))
+				.toBeVisible();
+		} finally {
+			observer.disconnect();
+		}
+		expect(emptyStates).toEqual([]);
+		expect(table.getByRole("status").query()).toBeNull();
+	});
+
+	it("lists bylines the route's loader read before the page mounted", async () => {
+		const queryClient = createTestQueryClient();
+		await queryClient.prefetchQuery({
+			...bylinesQueryOptions({ search: "", guest: "all", locale: undefined }),
+			queryFn: () => ({ items: [guestByline], nextCursor: undefined }),
+			staleTime: 60_000,
+			gcTime: 60_000,
+		});
+		const screen = await render(
+			<QueryClientProvider client={queryClient}>
+				<Toast.Provider>
+					<BylinesPage />
+				</Toast.Provider>
+			</QueryClientProvider>,
+		);
+
+		await expect
+			.element(screen.getByRole("button", { name: "Edit Guest Contributor" }))
+			.toBeVisible();
+		expect(screen.getByText("No bylines yet").query()).toBeNull();
+	});
+
+	it("keeps its columns when bylines with a long website arrive in a 1000px table", async () => {
+		const list = deferred<{ items: BylineSummary[]; nextCursor: undefined }>();
+		fetchBylinesMock.mockReturnValueOnce(list.promise);
+		const screen = await render(
+			<div style={{ width: 1000 }}>
+				<QueryWrapper>
+					<Toast.Provider>
+						<BylinesPage />
+					</Toast.Provider>
+				</QueryWrapper>
+			</div>,
+		);
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("status")).toBeInTheDocument();
+		const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+		list.resolve({
+			items: [
+				guestByline,
+				{
+					...guestByline,
+					id: "staff",
+					displayName: "Staff Writer",
+					isGuest: false,
+					userId: "user-1",
+					websiteUrl: "https://regional-newsroom-partnership.example.com/writers/staff",
+				},
+			],
+			nextCursor: undefined,
+		});
+
+		await expect.element(screen.getByRole("button", { name: "Edit Staff Writer" })).toBeVisible();
+		expect(largestMovement(before)).toBeLessThan(1);
+	});
+
+	it("keeps the page when the bylines fail to load, and loads them again on request", async () => {
+		fetchBylinesMock
+			.mockRejectedValueOnce(new Error("Server unavailable"))
+			.mockResolvedValueOnce({ items: [guestByline], nextCursor: undefined });
+		const screen = await renderPage();
+
+		const alert = screen.getByRole("table").getByRole("alert");
+		await expect.element(alert).toHaveTextContent("Failed to load bylines: Server unavailable");
+		await expect.element(screen.getByRole("heading", { name: "Bylines" })).toBeVisible();
+		await expect.element(screen.getByPlaceholder("Search bylines")).toBeVisible();
+
+		await alert.getByRole("button", { name: "Try again" }).click();
+		await expect
+			.element(screen.getByRole("button", { name: "Edit Guest Contributor" }))
+			.toBeVisible();
+	});
+});
 
 describe("BylinesPage directory", () => {
 	beforeEach(() => {

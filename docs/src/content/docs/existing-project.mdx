@@ -164,8 +164,8 @@ not edit that generated file by hand.
 
 ## If verification fails
 
-- If the admin remains on **Loading EmDash...**, check that `react()` appears in the Astro
-  `integrations` array. Installing `@astrojs/react` without registering it is not enough.
+- If the admin page stays blank, or keeps showing the outline of its sidebar and header, check
+  that `react()` appears in the Astro `integrations` array. Installing `@astrojs/react` without registering it is not enough.
 - If `getEmDashCollection()` returns an error about the live collection, check that
   `src/live.config.ts` exports `_emdash` with `emdashLoader()`.
 - If the page works in development but deployed edits do not appear, check that the page is not

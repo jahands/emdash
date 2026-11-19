@@ -1,4 +1,4 @@
-import { Button, LinkButton, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
+import { LinkButton, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { Dialog, Drawer } from "@cloudflare/kumo/primitives";
 import { useLingui } from "@lingui/react/macro";
 import {
@@ -24,7 +24,6 @@ import * as React from "react";
 
 import type { AdminManifest } from "../../lib/api/client.js";
 import {
-	fetchContent,
 	fetchTranslations,
 	getPreviewUrl,
 	publishContent,
@@ -39,12 +38,14 @@ import {
 	type CalendarItem,
 	type CalendarState,
 } from "../../lib/calendar.js";
-import { canPublishEntry } from "../../lib/content-permissions.js";
+import { canPublishEntry, hasContentPermission } from "../../lib/content-permissions.js";
 import { invalidateContentViews } from "../../lib/invalidate-content-views.js";
 import { openPreviewWindow } from "../../lib/preview-window.js";
+import { contentEntryQueryOptions } from "../../lib/route-queries.js";
 import { contentUrl } from "../../lib/url.js";
 import { cn } from "../../lib/utils.js";
 import { getLocaleLabel } from "../../locales/index.js";
+import { Button } from "../Button.js";
 import { getMutationError } from "../DialogError.js";
 import { PublishingScheduleDialog } from "../PublishingDateTimeEditor.js";
 import { RouterLinkButton } from "../RouterLinkButton.js";
@@ -189,9 +190,9 @@ function CalendarEntryPanelContent({
 	const [previewing, setPreviewing] = React.useState(false);
 
 	const locale = i18n ? item.locale : undefined;
+	// The editor reads the entry under the same key, so the panel reads it the editor's way.
 	const details = useQuery({
-		queryKey: ["content", item.collection, item.id, { locale }],
-		queryFn: () => fetchContent(item.collection, item.id, { locale }),
+		...contentEntryQueryOptions(item.collection, item.id, locale),
 		staleTime: 0,
 	});
 	const translations = useQuery({
@@ -201,7 +202,12 @@ function CalendarEntryPanelContent({
 	});
 
 	const entry = details.data;
-	const canPublish = Boolean(entry && canPublishEntry(user, { authorId: entry.authorId ?? null }));
+	// Permission to publish any entry doesn't depend on its author, so it can be decided before the details load.
+	const canPublish = entry
+		? canPublishEntry(user, { authorId: entry.authorId ?? null })
+		: details.isPending && hasContentPermission(user, "content:publish_any");
+	const mayPublish =
+		!canPublish && details.isPending && hasContentPermission(user, "content:publish_own");
 	const scheduled = item.kind === "scheduled";
 	const supportsScheduling = !collections[item.collection]?.supports?.includes("no-scheduling");
 	const title = item.title;
@@ -329,6 +335,11 @@ function CalendarEntryPanelContent({
 			</div>
 
 			<Body className="flex-1 overflow-y-auto px-5 pt-3 pb-6 sm:px-6">
+				{details.isPending && (
+					<span role="status" className="sr-only">
+						{t`Loading...`}
+					</span>
+				)}
 				<Dialog.Title
 					dir="auto"
 					className="text-2xl leading-tight font-semibold tracking-tight break-words"
@@ -368,26 +379,32 @@ function CalendarEntryPanelContent({
 								{getLocaleLabel(item.locale)}
 								<LocaleCode locale={item.locale} />
 							</span>
-							{others.length > 0 && (
-								<span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-kumo-subtle">
-									{t`Translations:`}
-									{others.map((translation) => (
-										<span key={translation.id}>
-											<LocaleCode locale={translation.locale} />
-											<span className="sr-only">{getLocaleLabel(translation.locale)}</span>
-										</span>
-									))}
+							{translations.isPending ? (
+								<span aria-hidden="true" className="mt-1 flex h-4 items-center">
+									<span className="skeleton-line w-24" />
 								</span>
+							) : (
+								others.length > 0 && (
+									<span className="mt-1 flex flex-wrap items-center gap-1 text-xs text-kumo-subtle">
+										{t`Translations:`}
+										{others.map((translation) => (
+											<span key={translation.id}>
+												<LocaleCode locale={translation.locale} />
+												<span className="sr-only">{getLocaleLabel(translation.locale)}</span>
+											</span>
+										))}
+									</span>
+								)
 							)}
 						</PanelProperty>
 					)}
-					{bylines && (
+					{(details.isPending || bylines) && (
 						<PanelProperty icon={Signature} label={t`Bylines`}>
-							{bylines}
+							{details.isPending ? <PropertyPlaceholder width={55} /> : bylines}
 						</PanelProperty>
 					)}
 					<PanelProperty icon={ClockCounterClockwise} label={t`Last edited`}>
-						{details.isPending ? <SkeletonLine minWidth={30} maxWidth={45} /> : (edited ?? "—")}
+						{details.isPending ? <PropertyPlaceholder width={38} /> : (edited ?? "—")}
 					</PanelProperty>
 				</dl>
 
@@ -448,7 +465,7 @@ function CalendarEntryPanelContent({
 										variant="primary"
 										icon={<PaperPlaneTilt aria-hidden="true" className="rtl:-scale-x-100" />}
 										loading={publish.isPending}
-										disabled={unschedule.isPending}
+										disabled={!entry || unschedule.isPending}
 										onClick={() => publish.mutate()}
 									>
 										{t`Publish now`}
@@ -474,6 +491,12 @@ function CalendarEntryPanelContent({
 								</Button>
 							</div>
 						)}
+						{mayPublish && (
+							<div aria-hidden="true" className="mt-5 flex gap-2">
+								<div className="skeleton-line h-9 w-32 rounded-lg" />
+								<div className="skeleton-line h-9 w-36 rounded-lg" />
+							</div>
+						)}
 					</>
 				)}
 			</Body>
@@ -495,6 +518,9 @@ function CalendarEntryPanelContent({
 					>
 						{item.state === "update" ? t`Preview changes` : t`Preview`}
 					</Button>
+				)}
+				{item.state === "published" && details.isPending && (
+					<div aria-hidden="true" className="skeleton-line h-9 w-28 rounded-lg" />
 				)}
 				{liveUrl && (
 					<LinkButton
@@ -544,6 +570,14 @@ function PanelProperty({
 			</dt>
 			<dd className="min-w-0 break-words">{children}</dd>
 		</>
+	);
+}
+
+function PropertyPlaceholder({ width }: { width: number }) {
+	return (
+		<div aria-hidden="true">
+			<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+		</div>
 	);
 }
 

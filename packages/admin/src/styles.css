@@ -120,45 +120,285 @@ body:has(> #admin-root) {
 }
 
 /*
- * Mirrors the pre-React EmDash boot loader exactly. Keep these values in sync
- * with packages/core/src/astro/routes/admin.astro so the two loading stages do
- * not visibly shift or change animation as React takes over.
+ * The admin's frame while it loads. admin.astro renders this markup before the
+ * admin's code runs, and AdminFrameSkeleton renders the same markup until the
+ * admin's data is ready, so the sizes follow Shell, Header and Kumo's Sidebar.
  */
-.emdash-configuration-loader {
-	position: fixed;
-	inset: 0;
+.emdash-frame {
 	display: flex;
-	align-items: center;
-	justify-content: center;
-	min-height: 100vh;
-	width: 100%;
+	height: 100svh;
+	overflow: hidden;
 	background: var(--color-kumo-elevated);
 }
 
-.emdash-configuration-loader .loader-inner {
+.emdash-frame-sidebar {
+	display: none;
+	flex-direction: column;
+	flex-shrink: 0;
+	width: 16.25rem;
+	border-inline-end: 1px solid var(--color-kumo-line);
+}
+
+@media (min-width: 768px) {
+	.emdash-frame-sidebar {
+		display: flex;
+	}
+}
+
+.emdash-frame-sidebar-header {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	gap: 0.5rem;
+	height: 58px;
+	padding-inline: 1.5rem;
+	border-bottom: 1px solid var(--color-kumo-line);
+}
+
+.emdash-frame-sidebar-nav {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 1px;
+	min-height: 0;
+	padding: 1.125rem 0.875rem 0.75rem;
+}
+
+.emdash-frame-sidebar-item {
+	display: flex;
+	align-items: center;
+	gap: 0.75rem;
+	min-height: 2.125rem;
+	padding-inline: 0.75rem;
+}
+
+.emdash-frame-sidebar-footer {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	height: 3rem;
+	padding-inline: 1rem;
+	border-top: 1px solid var(--color-kumo-line);
+}
+
+/* Centered in the place of the sidebar's 2.125rem collapse button. */
+.emdash-frame-footer-trigger {
+	margin-inline: 0.5rem;
+}
+
+.emdash-frame .emdash-frame-footer-version {
+	width: 5rem;
+	height: 0.5rem;
+	margin-inline-start: 0.5rem;
+}
+
+.emdash-frame-main {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	min-width: 0;
+}
+
+.emdash-frame-header {
+	display: flex;
+	flex-shrink: 0;
+	align-items: center;
+	justify-content: flex-end;
+	gap: 0.5rem;
+	height: 58px;
+	padding-inline: 1rem;
+	border-bottom: 1px solid var(--color-kumo-line);
+}
+
+/* The header's View Site, theme and account buttons, each the size of a small Kumo button. */
+.emdash-frame-button {
+	height: 1.625rem;
+	border-radius: 0.375rem;
+}
+
+.emdash-frame-view-site {
+	width: 5.5rem;
+}
+
+.emdash-frame-theme {
+	width: 1.625rem;
+}
+
+/* The account button shows the user's name from 640px. */
+.emdash-frame-user {
+	width: 2.25rem;
+}
+
+@media (min-width: 640px) {
+	.emdash-frame-user {
+		width: 7.5rem;
+	}
+}
+
+/* Centered in the place of the phone header's 2.125rem navigation button. */
+.emdash-frame-header-menu {
+	margin-inline: 0.5rem auto;
+}
+
+@media (min-width: 768px) {
+	.emdash-frame-header-menu {
+		display: none;
+	}
+}
+
+.emdash-frame .skeleton-line {
+	flex-shrink: 0;
+}
+
+/* The frame around an error the admin shows before it can load. */
+.emdash-frame[data-settled] .skeleton-line::after {
+	animation: none;
+}
+
+.emdash-frame-icon {
+	width: 1.125rem;
+	height: 1.125rem;
+	border-radius: 0.375rem;
+}
+
+.emdash-frame-sidebar-header .emdash-frame-icon {
+	width: 1.25rem;
+	height: 1.25rem;
+}
+
+.emdash-frame-label {
+	height: 0.625rem;
+	border-radius: 9999px;
+}
+
+.emdash-frame-sidebar-header .emdash-frame-label {
+	width: 6rem;
+}
+
+.emdash-frame-sidebar-item:nth-child(4n + 1) .emdash-frame-label {
+	width: 5.5rem;
+}
+
+.emdash-frame-sidebar-item:nth-child(4n + 2) .emdash-frame-label {
+	width: 4rem;
+}
+
+.emdash-frame-sidebar-item:nth-child(4n + 3) .emdash-frame-label {
+	width: 6.5rem;
+}
+
+.emdash-frame-sidebar-item:nth-child(4n) .emdash-frame-label {
+	width: 4.75rem;
+}
+
+/*
+ * The sign-in card in outline, shown while a screen without the sidebar loads.
+ * admin.astro and StandalonePending render it, so the sizes follow LoginPage.
+ */
+.emdash-standalone {
+	display: grid;
+	grid-template-rows: 1fr auto 1fr;
+	justify-items: center;
+	min-height: 100vh;
+	padding: 1rem;
+	background: var(--color-kumo-base);
+}
+
+.emdash-standalone-column {
+	grid-row-start: 2;
+	width: 100%;
+	max-width: 28rem;
+}
+
+.emdash-standalone-heading {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	margin-bottom: 2rem;
+}
+
+.emdash-standalone .skeleton-line {
+	flex-shrink: 0;
+}
+
+.emdash-standalone-logo {
+	width: 10rem;
+	height: 2.5rem;
+	border-radius: 0.5rem;
+}
+
+.emdash-standalone-title {
+	width: 14rem;
+	max-width: 100%;
+	height: 1.25rem;
+	margin-top: 0.875rem;
+	margin-bottom: 0.375rem;
+	border-radius: 9999px;
+}
+
+.emdash-standalone-card {
+	padding: 1.5rem;
+	border: 1px solid var(--color-kumo-line);
+	border-radius: 0.5rem;
+	background: var(--color-kumo-base);
+	@apply shadow-sm;
+}
+
+.emdash-standalone-control {
+	width: 100%;
+	height: 2.25rem;
+	border-radius: 0.5rem;
+}
+
+.emdash-standalone-text {
+	width: 60%;
+	height: 0.5rem;
+	margin: 1.25rem auto 0.25rem;
+	border-radius: 9999px;
+}
+
+.emdash-standalone-text + .emdash-standalone-text {
+	width: 30%;
+	margin-top: 2rem;
+}
+
+.emdash-standalone-text + .emdash-standalone-control {
+	margin-top: 1.75rem;
+}
+
+/* Shown in place of the frame when the admin's code fails to load before React runs. */
+.emdash-boot-error {
+	display: flex;
+	flex-direction: column;
+	align-items: center;
+	justify-content: center;
+	gap: 1rem;
+	min-height: 100svh;
+	padding: 1rem;
 	text-align: center;
+	background: var(--color-kumo-elevated);
+	color: var(--text-color-kumo-default);
 }
 
-.emdash-configuration-loader .spinner {
-	width: 24px;
-	height: 24px;
-	margin: 0 auto;
-	border: 2.5px solid var(--color-kumo-line);
-	border-top-color: var(--text-color-kumo-subtle);
-	border-radius: 50%;
-	animation: emdash-configuration-spin 0.8s linear infinite;
+.emdash-boot-error h1 {
+	margin: 0;
+	font-size: 1.5rem;
+	font-weight: 600;
 }
 
-.emdash-configuration-loader p {
-	margin-top: 1rem;
-	font-family: var(--font-emdash, ui-sans-serif, system-ui, sans-serif);
-	font-size: 0.875rem;
-	color: var(--text-color-kumo-subtle);
+.emdash-boot-error button {
+	padding: 0.5rem 1rem;
+	border: 1px solid var(--color-kumo-line);
+	border-radius: 0.5rem;
+	background: var(--color-kumo-base);
+	color: inherit;
+	font: inherit;
+	cursor: pointer;
 }
 
-@keyframes emdash-configuration-spin {
-	to {
-		transform: rotate(360deg);
+@media (prefers-reduced-motion: reduce) {
+	.skeleton-line::after {
+		animation: none;
 	}
 }
 
@@ -174,46 +414,6 @@ body:has(> #admin-root) {
 div:has(> [role="listbox"] > .emdash-compact-select-option) {
 	width: var(--anchor-width);
 	min-width: var(--anchor-width);
-}
-
-/* Transitions.dev — Text states swap */
-:root {
-	--text-swap-dur: 150ms;
-	--text-swap-translate-y: 4px;
-	--text-swap-blur: 2px;
-	--text-swap-ease: ease-in-out;
-}
-
-.t-text-swap {
-	display: inline-block;
-	line-height: 1;
-	transform: translateY(0);
-	filter: blur(0);
-	opacity: 1;
-	transition:
-		transform var(--text-swap-dur) var(--text-swap-ease),
-		filter var(--text-swap-dur) var(--text-swap-ease),
-		opacity var(--text-swap-dur) var(--text-swap-ease);
-	will-change: transform, filter, opacity;
-}
-
-.t-text-swap.is-exit {
-	transform: translateY(calc(var(--text-swap-translate-y) * -1));
-	filter: blur(var(--text-swap-blur));
-	opacity: 0;
-}
-
-.t-text-swap.is-enter-start {
-	transform: translateY(var(--text-swap-translate-y));
-	filter: blur(var(--text-swap-blur));
-	opacity: 0;
-	transition: none;
-}
-
-@media (prefers-reduced-motion: reduce) {
-	.t-text-swap {
-		transition: none !important;
-	}
 }
 
 [data-sidebar-popup] {
@@ -1725,6 +1925,72 @@ div:has(> [role="listbox"] > .emdash-block-option)[data-open] {
 			[data-swipe-direction]
 		) {
 		transform: translateX(var(--toast-swipe-movement-x)) translateY(var(--offset-y));
+	}
+}
+
+/*
+ * On a phone, toasts span the screen, and at the bottom they cover the last actions of a sheet or
+ * list, so they stack down from the top, over the admin header. Kumo stacks them up from the
+ * bottom; these mirror its offsets. A toast being swiped away keeps Kumo's swipe transforms.
+ */
+@media (width < 40rem) {
+	[role="region"][aria-live]:has(> :is([role="dialog"], [role="alertdialog"])) {
+		top: calc(env(safe-area-inset-top) + 0.5rem);
+		bottom: auto;
+	}
+
+	[role="region"][aria-live] > :is([role="dialog"], [role="alertdialog"]) {
+		--emdash-toast-rest: translateX(var(--toast-swipe-movement-x))
+			translateY(
+				calc(
+					var(--toast-swipe-movement-y) + (var(--toast-index) * var(--peek)) +
+						(var(--shrink) * var(--height))
+				)
+			)
+			scale(var(--scale));
+		--emdash-toast-rest-expanded: translateX(var(--toast-swipe-movement-x))
+			translateY(
+				calc(
+					var(--toast-offset-y) + (var(--toast-index) * var(--gap)) + var(--toast-swipe-movement-y)
+				)
+			);
+		top: 0;
+		bottom: auto;
+		transform-origin: top;
+	}
+
+	[role="region"][aria-live]
+		> :is([role="dialog"], [role="alertdialog"]):not([data-swipe-direction]) {
+		transform: var(--emdash-toast-rest);
+	}
+
+	[role="region"][aria-live]
+		> :is([role="dialog"], [role="alertdialog"])[data-expanded]:not([data-swipe-direction]) {
+		transform: var(--emdash-toast-rest-expanded);
+	}
+
+	[role="region"][aria-live] > :is([role="dialog"], [role="alertdialog"])[data-starting-style],
+	[role="region"][aria-live]
+		> :is([role="dialog"], [role="alertdialog"])[data-ending-style]:not([data-limited]):not(
+			[data-swipe-direction]
+		) {
+		transform: translateY(-150%);
+	}
+}
+
+@media (width < 40rem) and (prefers-reduced-motion: reduce) {
+	[role="region"][aria-live]
+		> :is([role="dialog"], [role="alertdialog"])[data-ending-style]:not([data-limited]):not(
+			[data-swipe-direction]
+		) {
+		transform: var(--emdash-toast-rest);
+	}
+
+	[role="region"][aria-live]
+		> :is([role="dialog"], [role="alertdialog"])[data-ending-style][data-expanded]:not(
+			[data-limited]
+		):not([data-swipe-direction]) {
+		transform: var(--emdash-toast-rest-expanded);
 	}
 }
 

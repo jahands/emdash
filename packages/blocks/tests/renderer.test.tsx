@@ -672,7 +672,7 @@ describe("BlockRenderer", () => {
 		expect(img.src).toBe("https://example.com/photo.jpg");
 	});
 
-	it("chart block leaves toolbox, brush and dataZoom out of custom chart options", () => {
+	it("chart block leaves toolbox, brush and dataZoom out of custom chart options", async () => {
 		vi.stubGlobal("matchMedia", () => ({
 			matches: false,
 			addEventListener: () => {},
@@ -698,7 +698,7 @@ describe("BlockRenderer", () => {
 				},
 			},
 		]);
-		const options = JSON.parse(screen.getByTestId("custom-chart").dataset.options!);
+		const options = JSON.parse((await screen.findByTestId("custom-chart")).dataset.options!);
 		expect(options).not.toHaveProperty("toolbox");
 		expect(options).not.toHaveProperty("brush");
 		expect(options).not.toHaveProperty("dataZoom");

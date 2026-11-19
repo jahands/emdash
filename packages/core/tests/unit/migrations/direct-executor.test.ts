@@ -276,7 +276,7 @@ describe("createDirectMigrationExecutor", () => {
 			setup(database) {
 				const prepare = database.prepare.bind(database);
 				database.prepare = ((source: string) => {
-					if (/create table if not exists [`"]?revisions/i.test(source)) {
+					if (/create table (?:if not exists )?[`"]?revisions\b/i.test(source)) {
 						throw new Error("injected migration failure");
 					}
 					return prepare(source);

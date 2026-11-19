@@ -1,21 +1,27 @@
-import { CLOSE_CODES, RoomSaveError } from "emdash/internal/co-editing";
+import { CLOSE_CODES, HUB_NAME, RoomSaveError, signRoomToken } from "emdash/internal/co-editing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { fakeEnv, rooms, astroFetch } = vi.hoisted(() => {
+const { fakeEnv, rooms, astroFetch, secret } = vi.hoisted(() => {
 	const stub = {
 		fetch: vi.fn(async (_request: Request) => new Response("room")),
 		save: vi.fn(async (_actorId: string, _rev?: string): Promise<unknown> => null),
+		publish: vi.fn(async (_changes: unknown) => {}),
 	};
 	return {
 		fakeEnv: {} as Record<string, unknown>,
 		rooms: { stub, getByName: vi.fn((_name: string) => stub) },
 		astroFetch: vi.fn(async (_request: Request) => new Response("astro")),
+		secret: vi.fn(async (_db: unknown) => "room-secret"),
 	};
 });
 
 vi.mock("cloudflare:workers", () => ({ env: fakeEnv }));
 vi.mock("@astrojs/cloudflare/entrypoints/server", () => ({ default: { fetch: astroFetch } }));
 vi.mock("astro/app/entrypoint", () => ({ createApp: () => ({ manifest: {} }) }));
+vi.mock("emdash/middleware", () => ({
+	withEmDashRuntime: (run: (runtime: { db: unknown }) => unknown) => run({ db: {} }),
+}));
+vi.mock("emdash/internal/co-editing/site", () => ({ resolveRoomTokenSecret: secret }));
 vi.mock("../src/sandbox/bridge.js", () => ({ PluginBridge: vi.fn() }));
 vi.mock("../src/rooms/object.js", () => ({ EmDashRoom: vi.fn() }));
 vi.mock("../src/rooms/site.js", () => ({ EmDashRoomSite: vi.fn() }));
@@ -24,11 +30,25 @@ import { createRoomHost } from "../src/rooms/host.js";
 import { handleRoomUpgrade } from "../src/rooms/upgrade.js";
 import worker from "../src/worker.js";
 
-const TOKEN = "Aa0_-".repeat(8) + "Aa0";
+const ROOM = "posts:01 ID";
 const ROOM_PATH = "https://site.test/blog/_emdash/api/content/posts/01%20ID/room";
-const ROOM_URL = `${ROOM_PATH}?token=${TOKEN}`;
 
-function upgrade(url = ROOM_URL, method = "GET"): Request {
+const HUB_PATH = "https://site.test/blog/_emdash/api/realtime";
+
+function sign(
+	overrides: { roomId?: string; expiresAt?: number; key?: string; role?: number } = {},
+) {
+	return signRoomToken(overrides.key ?? "room-secret", {
+		roomId: overrides.roomId ?? ROOM,
+		userId: "ana",
+		nonce: "nonce",
+		expiresAt: overrides.expiresAt ?? Date.now() + 60_000,
+		role: overrides.role,
+	});
+}
+
+function upgrade(token: string | null, path = ROOM_PATH, method = "GET"): Request {
+	const url = token === null ? path : `${path}?token=${encodeURIComponent(token)}`;
 	return new Request(url, { method, headers: { Upgrade: "websocket" } });
 }
 
@@ -40,37 +60,49 @@ beforeEach(() => {
 });
 
 describe("handleRoomUpgrade", () => {
-	it("forwards a room upgrade under a base path to the entry's Durable Object", async () => {
-		const request = upgrade();
+	it("forwards an upgrade with a token signed for the room to the entry's Durable Object", async () => {
+		const request = upgrade(await sign());
 		const response = await handleRoomUpgrade(request, { EMDASH_ROOMS: rooms });
 		expect(await response?.text()).toBe("room");
-		expect(rooms.getByName).toHaveBeenCalledWith("posts:01 ID");
+		expect(rooms.getByName).toHaveBeenCalledWith(ROOM);
 		expect(rooms.stub.fetch).toHaveBeenCalledWith(request);
 	});
 
 	it.each([
-		["a request that isn't an upgrade", new Request(ROOM_URL)],
-		["an upgrade that isn't a GET", upgrade(ROOM_URL, "POST")],
-		["an upgrade without a token", upgrade(ROOM_PATH)],
+		["a request that isn't an upgrade", () => new Request(`${ROOM_PATH}?token=x`)],
+		["an upgrade that isn't a GET", () => upgrade("x", ROOM_PATH, "POST")],
+		["an upgrade without a token", () => upgrade(null)],
 		[
 			"an upgrade on another path",
-			upgrade(`https://site.test/_emdash/api/content/posts/1?token=${TOKEN}`),
+			() => upgrade("x", "https://site.test/_emdash/api/content/posts/1"),
 		],
 		[
 			"an upgrade on a path that names no room",
-			upgrade(`https://site.test/_emdash/api/content/%3Aposts/1/room?token=${TOKEN}`),
+			() => upgrade("x", "https://site.test/_emdash/api/content/%3Aposts/1/room"),
+		],
+		[
+			"an upgrade on a path whose collection isn't a collection slug",
+			() => upgrade("x", "https://site.test/_emdash/api/content/_realtime/content%2Fposts/room"),
 		],
 	])("ignores %s", (_name, request) => {
-		expect(handleRoomUpgrade(request, { EMDASH_ROOMS: rooms })).toBeNull();
+		expect(handleRoomUpgrade(request(), { EMDASH_ROOMS: rooms })).toBeNull();
 		expect(rooms.getByName).not.toHaveBeenCalled();
 	});
 
-	it("ignores room upgrades when the Worker has no room binding", () => {
-		expect(handleRoomUpgrade(upgrade(), {})).toBeNull();
-		expect(handleRoomUpgrade(upgrade(), undefined)).toBeNull();
+	it("forwards an upgrade on the realtime path with a ticket signed for the hub to the hub", async () => {
+		const request = upgrade(await sign({ roomId: HUB_NAME, role: 40 }), HUB_PATH);
+		const response = await handleRoomUpgrade(request, { EMDASH_ROOMS: rooms });
+		expect(await response?.text()).toBe("room");
+		expect(rooms.getByName).toHaveBeenCalledWith(HUB_NAME);
+		expect(rooms.stub.fetch).toHaveBeenCalledWith(request);
 	});
 
-	describe("with a token no room could have issued", () => {
+	it("ignores room upgrades when the Worker has no room binding", () => {
+		expect(handleRoomUpgrade(upgrade("x"), {})).toBeNull();
+		expect(handleRoomUpgrade(upgrade("x"), undefined)).toBeNull();
+	});
+
+	describe("with a token not signed for the room", () => {
 		const server = { accept: vi.fn(), close: vi.fn() };
 		const client = {};
 
@@ -99,15 +131,50 @@ describe("handleRoomUpgrade", () => {
 		});
 
 		it.each([
-			["empty", ""],
-			["too short", TOKEN.slice(1)],
-			["too long", `${TOKEN}A`],
-			["outside base64url", `${TOKEN.slice(1)}+`],
+			["empty", async () => ""],
+			["unsigned", async () => "Aa0_-".repeat(8) + "Aa0"],
+			["signed with another key", () => sign({ key: "other" })],
+			["signed for another room", () => sign({ roomId: "posts:other" })],
+			["expired", () => sign({ expiresAt: Date.now() - 1 })],
+			["with its signature changed", async () => `${await sign()}A`],
 		])("closes the socket with busy without reaching the namespace: %s", async (_name, token) => {
-			const url = `${ROOM_PATH}?token=${encodeURIComponent(token)}`;
-			const response = await handleRoomUpgrade(upgrade(url), { EMDASH_ROOMS: rooms });
+			const response = await handleRoomUpgrade(upgrade(await token()), { EMDASH_ROOMS: rooms });
 			expect(response).toMatchObject({ init: { status: 101, webSocket: client } });
 			expect(server.accept).toHaveBeenCalled();
+			expect(server.close).toHaveBeenCalledWith(CLOSE_CODES.busy, "No valid token");
+			expect(rooms.getByName).not.toHaveBeenCalled();
+		});
+
+		it.each([
+			["a room's token", () => sign()],
+			[
+				"a ticket signed with another key",
+				() => sign({ roomId: HUB_NAME, role: 40, key: "other" }),
+			],
+			["an expired ticket", () => sign({ roomId: HUB_NAME, role: 40, expiresAt: Date.now() - 1 })],
+		])(
+			"closes a realtime socket with busy without reaching the namespace: %s",
+			async (_name, token) => {
+				await handleRoomUpgrade(upgrade(await token(), HUB_PATH), { EMDASH_ROOMS: rooms });
+				expect(server.close).toHaveBeenCalledWith(CLOSE_CODES.busy, "No valid token");
+				expect(rooms.getByName).not.toHaveBeenCalled();
+			},
+		);
+
+		it("looks up the secret only for a token whose claims pass", async () => {
+			await handleRoomUpgrade(upgrade(await sign({ expiresAt: Date.now() - 1 })), {
+				EMDASH_ROOMS: rooms,
+			});
+			await handleRoomUpgrade(upgrade(await sign({ roomId: "posts:other" })), {
+				EMDASH_ROOMS: rooms,
+			});
+			expect(secret).not.toHaveBeenCalled();
+		});
+
+		it("closes the socket with busy when the secret can't be read", async () => {
+			secret.mockRejectedValueOnce(new Error("database down"));
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			await handleRoomUpgrade(upgrade(await sign()), { EMDASH_ROOMS: rooms });
 			expect(server.close).toHaveBeenCalledWith(CLOSE_CODES.busy, "No valid token");
 			expect(rooms.getByName).not.toHaveBeenCalled();
 		});
@@ -122,9 +189,9 @@ describe("the Worker's fetch", () => {
 			e: unknown,
 			c: ExecutionContext,
 		) => Promise<Response>;
-		expect(await (await fetch(upgrade(), env, ctx)).text()).toBe("room");
+		expect(await (await fetch(upgrade(await sign()), env, ctx)).text()).toBe("room");
 		expect(astroFetch).not.toHaveBeenCalled();
-		expect(await (await fetch(new Request(ROOM_URL), env, ctx)).text()).toBe("astro");
+		expect(await (await fetch(new Request(ROOM_PATH), env, ctx)).text()).toBe("astro");
 		expect(rooms.stub.fetch).toHaveBeenCalledTimes(1);
 	});
 });
@@ -132,6 +199,14 @@ describe("the Worker's fetch", () => {
 describe("createRoomHost", () => {
 	it("returns null without the room binding", () => {
 		expect(createRoomHost()).toBeNull();
+	});
+
+	it("publishes changes to the hub", async () => {
+		fakeEnv.EMDASH_ROOMS = rooms;
+		const changes = [{ topic: "menus" }];
+		await createRoomHost()?.publish?.(changes);
+		expect(rooms.getByName).toHaveBeenCalledWith(HUB_NAME);
+		expect(rooms.stub.publish).toHaveBeenCalledWith(changes);
 	});
 
 	it("throws a room's failed operation save as RoomSaveError", async () => {

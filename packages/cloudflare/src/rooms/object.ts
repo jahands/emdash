@@ -1,27 +1,32 @@
 /**
  * `EmDashRoom`: one co-editing room per Durable Object, named by its room ID. Sockets hibernate,
  * and each one's connection info lives in its attachment so it survives. The room calls back
- * into its own Worker through the `EmDashRoomSite` entrypoint.
+ * into its own Worker through the `EmDashRoomSite` entrypoint. The object named `HUB_NAME` is
+ * the site's realtime hub instead, and runs none of the room's code.
  */
 
 import { DurableObject, exports } from "cloudflare:workers";
 import {
 	CLOSE_CODES,
 	COMMIT,
+	HUB_NAME,
 	MAX_UPDATE_BYTES,
 	parseRoomId,
+	readRoomToken,
 	ROOM_STATE_LIFETIME_MS,
 	RoomSaveError,
 	VERSION,
 	type ConnectionInfo,
 	type OutsideValue,
 	type RoomConnection,
+	type RoomRecord,
 	type TokenClaims,
 } from "emdash/internal/co-editing";
 import type { Room, RoomOptions } from "emdash/internal/co-editing/room";
 // @ts-ignore - virtual module
 import { loadRoomEngine } from "virtual:emdash/room-engine";
 
+import { HubObject } from "./hub.js";
 import { DurableObjectRoomStore } from "./store.js";
 
 /** Node.js closes larger frames with 1009 too, through `ws`'s `maxPayload`. */
@@ -66,10 +71,17 @@ export class EmDashRoom extends DurableObject {
 	readonly #sockets = new Map<WebSocket, Socket>();
 	#room: Room | null = null;
 	#loading: Promise<Room> | null = null;
+	/** Set for the hub, which handles every event in place of the room. */
+	readonly #hub: HubObject | null = null;
 
 	constructor(ctx: DurableObjectState, env: Cloudflare.Env) {
 		super(ctx, env);
+		// Creates no storage until the room's first write, so the hub's is never touched.
 		this.#store = new DurableObjectRoomStore(ctx.storage, ctx.id.name ?? "");
+		if (ctx.id.name === HUB_NAME) {
+			this.#hub = new HubObject(ctx);
+			return;
+		}
 		for (const ws of ctx.getWebSockets()) {
 			// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- only this class writes attachments
 			const attachment = ws.deserializeAttachment() as Attachment | null;
@@ -77,18 +89,27 @@ export class EmDashRoom extends DurableObject {
 		}
 	}
 
+	/** Hub only: tells the tabs subscribed to them which topics changed. */
+	async publish(changes: unknown): Promise<void> {
+		if (!this.#hub) throw new Error("[realtime] Only the hub takes changes");
+		await this.#hub.publish(changes);
+	}
+
 	async issueToken(claims: TokenClaims): ReturnType<Room["issueToken"]> {
+		this.#refuseHub();
 		await this.#closeSilent();
 		return (await this.#loadRoom()).issueToken(claims);
 	}
 
 	async isOpen(): Promise<boolean> {
+		this.#refuseHub();
 		await this.#closeSilent();
 		if (this.#holdsNothing()) return false;
 		return (await this.#loadRoom()).isOpen();
 	}
 
 	async save(actorId: string, rev?: string): Promise<RoomSaveReply> {
+		this.#refuseHub();
 		if (this.#holdsNothing()) return null;
 		const room = await this.#loadRoom();
 		try {
@@ -100,25 +121,30 @@ export class EmDashRoom extends DurableObject {
 	}
 
 	async release(hold: string, options?: { overwrite?: boolean }): Promise<void> {
+		this.#refuseHub();
 		if (this.#holdsNothing()) return;
 		return (await this.#loadRoom()).release(hold, options);
 	}
 
 	async notify(outside: OutsideValue[]): Promise<void> {
+		this.#refuseHub();
 		if (this.#holdsNothing()) return;
 		return (await this.#loadRoom()).notify(outside);
 	}
 
 	async forgetTokens(userId: string): Promise<void> {
+		this.#refuseHub();
 		if (this.#holdsNothing()) return;
 		return (await this.#loadRoom()).forgetTokens(userId);
 	}
 
 	override async fetch(request: Request): Promise<Response> {
+		if (this.#hub) return this.#hub.fetch(request);
 		if (request.headers.get("Upgrade")?.toLowerCase() !== "websocket") {
 			return new Response(null, { status: 400 });
 		}
-		const token = new URL(request.url).searchParams.get("token") ?? "";
+		// The Worker verified the token before forwarding the upgrade.
+		const token = readRoomToken(new URL(request.url).searchParams.get("token") ?? "");
 		const { 0: client, 1: server } = new WebSocketPair();
 		this.ctx.acceptWebSocket(server);
 		// Tokens live only in the room's memory, so an instance that hasn't loaded its room holds none.
@@ -127,7 +153,7 @@ export class EmDashRoom extends DurableObject {
 			return new Response(null, { status: 101, webSocket: client });
 		}
 		const socket = this.#socket(server, null, Date.now());
-		const info = this.#room.connect(socket.connection, token);
+		const info = this.#room.connect(socket.connection, token?.nonce ?? "", token?.userId);
 		if (info) {
 			socket.info = info;
 			try {
@@ -143,6 +169,7 @@ export class EmDashRoom extends DurableObject {
 	}
 
 	override async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
+		if (this.#hub) return this.#hub.webSocketMessage(ws, message);
 		const socket = this.#sockets.get(ws);
 		if (!socket) return;
 		// Before the sweep, so a socket that was silent isn't closed by its own message.
@@ -160,6 +187,7 @@ export class EmDashRoom extends DurableObject {
 	}
 
 	override async webSocketClose(ws: WebSocket, code: number): Promise<void> {
+		if (this.#hub) return this.#hub.webSocketClose(ws, code);
 		await this.#forget(ws);
 		try {
 			// 1005 and 1006 report a close without a code, and can't be sent.
@@ -170,13 +198,19 @@ export class EmDashRoom extends DurableObject {
 	}
 
 	override async webSocketError(ws: WebSocket): Promise<void> {
+		if (this.#hub) return this.#hub.webSocketError(ws);
 		await this.#forget(ws);
 	}
 
 	override async alarm(): Promise<void> {
+		if (this.#hub) return;
 		try {
-			// Stored room state waits for co-editing to be on again.
-			if (!loadRoomEngine) return;
+			if (!loadRoomEngine) {
+				// Unsaved edits wait for co-editing to be on again, for a recovery revision.
+				const record = this.#store.readRecord();
+				if (record && isSaved(record)) await this.#store.drop();
+				return;
+			}
 			await this.#closeSilent();
 			await (await this.#loadRoom()).expire();
 		} finally {
@@ -185,6 +219,10 @@ export class EmDashRoom extends DurableObject {
 				await this.ctx.storage.setAlarm(Date.now() + ROOM_STATE_LIFETIME_MS);
 			}
 		}
+	}
+
+	#refuseHub(): void {
+		if (this.#hub) throw new Error("[realtime] The hub isn't a room");
 	}
 
 	#socket(ws: WebSocket, info: ConnectionInfo | null, seenAt: number): Socket {
@@ -282,6 +320,11 @@ export class EmDashRoom extends DurableObject {
 		});
 		return this.#loading;
 	}
+}
+
+/** Whether the site has every edit: no user has updates past the checkpoint, and no field waits. */
+function isSaved(record: RoomRecord): boolean {
+	return record.editors.length === 0 && !Object.values(record.mergeBase.document).includes(null);
 }
 
 /** A message's size as sent, which is UTF-8 for text. */

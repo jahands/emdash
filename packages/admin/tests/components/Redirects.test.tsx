@@ -346,6 +346,85 @@ describe("Redirects", () => {
 		);
 	});
 
+	it("holds the table's place with placeholder rows while the redirects load", async () => {
+		const list = deferred<{ items: Redirect[] }>();
+		vi.mocked(fetchRedirects).mockReturnValue(list.promise);
+		const screen = await render(<Redirects />);
+
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("columnheader", { name: "Status" })).toBeVisible();
+		await expect.element(table.getByRole("status")).toHaveTextContent("Loading...");
+		expect(screen.getByText("No redirects yet").query()).toBeNull();
+		const header = table.element().querySelector("thead")!.getBoundingClientRect().top;
+
+		list.resolve({ items: [makeRedirect(1)] });
+		await expect.element(screen.getByText("/source-1", { exact: true })).toBeVisible();
+		expect(table.getByRole("status").query()).toBeNull();
+		expect(table.element().querySelector("thead")!.getBoundingClientRect().top).toBe(header);
+	});
+
+	it("keeps the rows on screen, marked busy, while a new filter loads", async () => {
+		const filtered = deferred<{ items: Redirect[] }>();
+		vi.mocked(fetchRedirects).mockImplementation(({ enabled } = {}) =>
+			enabled === false ? filtered.promise : Promise.resolve({ items: [makeRedirect(1)] }),
+		);
+		const screen = await render(<Redirects />);
+		await expect.element(screen.getByText("/source-1", { exact: true })).toBeVisible();
+
+		await screen.getByRole("combobox", { name: "Filter by status" }).click();
+		await screen.getByRole("option", { name: "Disabled" }).click();
+
+		const table = screen.getByRole("table");
+		await expect.element(table).toHaveAttribute("aria-busy", "true");
+		await expect.element(screen.getByText("/source-1", { exact: true })).toBeVisible();
+		expect(table.getByRole("status").query()).toBeNull();
+
+		filtered.resolve({ items: [] });
+		await expect.element(screen.getByText("No redirects match these filters")).toBeVisible();
+		expect(table.element().hasAttribute("aria-busy")).toBe(false);
+	});
+
+	it("says in the table when the redirects can't be loaded, and loads them again on request", async () => {
+		vi.mocked(fetchRedirects)
+			.mockRejectedValueOnce(new Error("Server unavailable"))
+			.mockResolvedValueOnce({ items: [makeRedirect(1)] });
+		const screen = await render(<Redirects />);
+
+		const alert = screen.getByRole("table").getByRole("alert");
+		await expect.element(alert).toHaveTextContent("The redirects couldn't be loaded.");
+		expect(screen.getByText("No redirects yet").query()).toBeNull();
+
+		await alert.getByRole("button", { name: "Try again" }).click();
+		await expect.element(screen.getByText("/source-1", { exact: true })).toBeVisible();
+	});
+
+	it("shows placeholder rows, not the empty message, while the 404s load", async () => {
+		const summary = deferred<NotFoundSummary[]>();
+		vi.mocked(fetch404Summary).mockReturnValue(summary.promise);
+		const screen = await render(<Redirects />);
+		await screen.getByRole("tab", { name: "404 Errors" }).click();
+
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("status")).toHaveTextContent("Loading...");
+		expect(screen.getByText("No 404 errors recorded yet.").query()).toBeNull();
+
+		summary.resolve([]);
+		await expect.element(screen.getByText("No 404 errors recorded yet.")).toBeVisible();
+		expect(table.getByRole("status").query()).toBeNull();
+	});
+
+	it("shows a redirect loop warning inside the table, not above it", async () => {
+		vi.mocked(fetchRedirects).mockResolvedValue({
+			items: [makeRedirect(1)],
+			loopRedirectIds: ["redirect-1"],
+		});
+		const screen = await render(<Redirects />);
+
+		const alert = screen.getByRole("alert");
+		await expect.element(alert).toHaveTextContent("Redirect loop detected");
+		expect(screen.getByRole("table").element().contains(alert.element())).toBe(true);
+	});
+
 	it("uses accessible tabs to switch between redirects and 404 errors", async () => {
 		const screen = await render(<Redirects />);
 

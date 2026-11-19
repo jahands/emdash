@@ -7,7 +7,7 @@
  * live, so the whole panel follows suit instead of a save-button form).
  */
 
-import { Button, Input, Label, Select } from "@cloudflare/kumo";
+import { Input, Label, Select } from "@cloudflare/kumo";
 import {
 	DndContext,
 	KeyboardSensor,
@@ -32,6 +32,7 @@ import * as React from "react";
 import type { MediaItem } from "../../lib/api";
 import { canonicalMediaProviderId, metaString } from "../../lib/media-utils";
 import { cn } from "../../lib/utils";
+import { Button } from "../Button.js";
 import { useMediaAssetEditor } from "../media/useMediaAssetEditor.js";
 import { MediaPickerModal } from "../MediaPickerModal";
 import { GalleryPreviewImage, type GalleryAttributes, type GalleryImage } from "./GalleryNode";
@@ -435,7 +436,11 @@ function GalleryImageSettings({
 	return (
 		<div className="border rounded-lg p-3 space-y-3">
 			<div className="emdash-media-transparency-grid relative flex aspect-video items-center justify-center overflow-hidden rounded-lg">
-				<GalleryPreviewImage image={image} className="max-h-full max-w-full object-contain" />
+				<GalleryPreviewImage
+					image={image}
+					fit="contain"
+					className="max-h-full max-w-full object-contain"
+				/>
 			</div>
 			<div className="flex flex-wrap items-center gap-2">
 				<Button

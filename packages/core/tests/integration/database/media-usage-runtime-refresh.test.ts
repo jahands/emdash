@@ -4,6 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { handleMediaUsageSummaries } from "../../../src/api/handlers/media-usage.js";
 import { MediaUsageRepository } from "../../../src/database/repositories/media-usage.js";
 import { RevisionRepository } from "../../../src/database/repositories/revision.js";
+import { waitForDeferredTasks } from "../../../src/deferred-tasks.js";
 import type { EmDashRuntime } from "../../../src/emdash-runtime.js";
 import { setI18nConfig } from "../../../src/i18n/config.js";
 import {
@@ -80,7 +81,7 @@ describeEachDialect("runtime content media usage refresh", (dialect) => {
 			translatable: false,
 		});
 
-		runtime = createTestRuntime(ctx.db);
+		runtime = settlingDeferredWork(createTestRuntime(ctx.db));
 		usageRepo = new MediaUsageRepository(ctx.db);
 		revisionRepo = new RevisionRepository(ctx.db);
 	});
@@ -1049,6 +1050,25 @@ describeEachDialect("runtime content media usage refresh", (dialect) => {
 		);
 	});
 });
+
+/**
+ * Usage refresh runs after the write's response, so each handler call here
+ * waits for that deferred work the way a request's lifetime does.
+ */
+function settlingDeferredWork(runtime: EmDashRuntime): EmDashRuntime {
+	return new Proxy(runtime, {
+		get(target, property, receiver) {
+			const value: unknown = Reflect.get(target, property, receiver);
+			if (typeof property !== "string" || !property.startsWith("handle")) return value;
+			if (typeof value !== "function") return value;
+			return async (...args: unknown[]) => {
+				const result: unknown = await value.apply(target, args);
+				await waitForDeferredTasks();
+				return result;
+			};
+		},
+	});
+}
 
 async function activateAllCollections(db: DialectTestContext["db"]): Promise<void> {
 	let result = await activateMediaUsageCapture(db, { writersDrained: true });

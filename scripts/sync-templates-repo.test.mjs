@@ -7,6 +7,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
+const CARET_SEMVER = /^\^\d+\.\d+\.\d+$/;
 
 void test("sync includes the license in the repository and standalone templates", () => {
 	const target = mkdtempSync(join(tmpdir(), "emdash-templates-license-"));
@@ -35,6 +36,24 @@ void test("sync includes the license in the repository and standalone templates"
 			for (const template of templates) {
 				assert.equal(readFileSync(join(target, template, "LICENSE"), "utf8"), license);
 			}
+		}
+	} finally {
+		rmSync(target, { recursive: true, force: true });
+	}
+});
+
+void test("sync keeps sharp as a pinned dependency of the Node templates", () => {
+	const target = mkdtempSync(join(tmpdir(), "emdash-templates-sharp-"));
+	try {
+		execFileSync("git", ["init", target], { stdio: "pipe" });
+		execFileSync(
+			process.execPath,
+			[join(root, "scripts/sync-templates-repo.mjs"), "--local", target, "--dry-run"],
+			{ stdio: "pipe" },
+		);
+		for (const template of ["blog", "marketing", "portfolio", "starter"]) {
+			const pkg = JSON.parse(readFileSync(join(target, template, "package.json"), "utf8"));
+			assert.match(pkg.dependencies.sharp ?? "", CARET_SEMVER, template);
 		}
 	} finally {
 		rmSync(target, { recursive: true, force: true });

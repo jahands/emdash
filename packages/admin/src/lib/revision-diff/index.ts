@@ -7,14 +7,13 @@ import type {
 	DiffOptions,
 	RevisionData,
 	RevisionDiff,
-	RevisionLike,
 	VersionDiffInput,
 } from "./types.js";
 
 export type * from "./types.js";
 
 export { makeSnippet } from "./changes.js";
-export { findRestoredSource, restoresNothing } from "./fingerprint.js";
+export { findRestoredSource, restoredSources, restoresNothing } from "./fingerprint.js";
 
 /** EmDash prunes revisions beyond this many per entry, so a full list may be missing the first. */
 const KEPT_REVISIONS = 50;
@@ -43,23 +42,6 @@ export function diffRevisions(
 				})
 			: [{ kind: options.noPrevious ?? "created" }],
 	};
-}
-
-/**
- * The revisions (newest first) that copy an older loaded one, mapped to the id of the version each
- * restored. The same test `diffVersion` uses to describe a version as restored.
- */
-export function restoredSources(
-	revisions: readonly RevisionLike[],
-	fields: Readonly<Record<string, DiffFieldDescriptor>>,
-): Map<string, string> {
-	const sources = new Map<string, string>();
-	revisions.forEach((revision, index) => {
-		const previous = revisions[index + 1] ?? null;
-		const source = findRestoredSource(revision, previous, revisions.slice(index + 2), fields);
-		if (source) sources.set(revision.id, source);
-	});
-	return sources;
 }
 
 /**

@@ -17,6 +17,8 @@ import { invalidateRouteCache } from "#cache/route-cache.js";
 import { invalidateWidgetObjectCache, rowToWidget } from "#widgets/index.js";
 import type { WidgetRow } from "#widgets/types.js";
 
+import { publishChange } from "../../../../realtime/publish.js";
+
 export const prerender = false;
 
 export const GET: APIRoute = async ({ locals }) => {
@@ -91,6 +93,7 @@ export const POST: APIRoute = async ({ request, locals, cache }) => {
 			})
 			.execute();
 		await invalidateWidgetObjectCache({ waitForPersist: true });
+		publishChange("widgets", { ids: [id], op: "create" });
 
 		const area = await db
 			.selectFrom("_emdash_widget_areas")

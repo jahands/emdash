@@ -14,6 +14,8 @@ import { widgetAreaTag } from "#cache/chrome-tags.js";
 import { invalidateRouteCache } from "#cache/route-cache.js";
 import { invalidateWidgetObjectCache } from "#widgets/index.js";
 
+import { publishChange } from "../../../../../realtime/publish.js";
+
 export const prerender = false;
 
 export const POST: APIRoute = async ({ params, request, locals, cache }) => {
@@ -66,6 +68,7 @@ export const POST: APIRoute = async ({ params, request, locals, cache }) => {
 			),
 		);
 		await invalidateWidgetObjectCache({ waitForPersist: true });
+		publishChange("widgets", { ids: body.widgetIds, op: "update" });
 		const failed = results.find((result) => result.status === "rejected");
 		if (failed) throw failed.reason;
 

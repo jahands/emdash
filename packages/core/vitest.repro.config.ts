@@ -6,6 +6,17 @@ const stubs: Record<string, string> = {
 	"virtual:emdash/media-providers":
 		"export const mediaProviders = globalThis.__emdashTestMediaProviders ?? [];",
 	"virtual:emdash/block-components": "export const pluginBlockComponents = {};",
+	"virtual:emdash/admin-messages":
+		'export const adminMessageUrls = { en: "/_astro/messages.en.mjs", ar: "/_astro/messages.ar.mjs" };',
+	"virtual:emdash/admin-preloads": `export const adminPreloadsJson = ${JSON.stringify(
+		JSON.stringify({
+			boot: ["/_astro/PluginRegistry.js"],
+			routes: {
+				"components/ContentEditor": ["/_astro/ContentEditor.js"],
+				"components/Settings": ["/_astro/Settings.js"],
+			},
+		}),
+	)};`,
 };
 
 export default getViteConfig(

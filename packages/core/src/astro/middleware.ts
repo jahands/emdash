@@ -68,6 +68,7 @@ import { getLastContentWriteAt } from "../object-cache/index.js";
 import type { SandboxRunnerFactory } from "../plugins/sandbox/types.js";
 import type { ResolvedPlugin } from "../plugins/types.js";
 import { invalidateUrlPatternCache } from "../query.js";
+import { CLIENT_HEADER, withChangeOrigin } from "../realtime/publish.js";
 import {
 	createRequestMetrics,
 	getRequestContext,
@@ -87,7 +88,7 @@ import {
 	requestEndedAuthenticated,
 } from "./middleware/scoped-db.js";
 import { wrapBodyForStreamMetrics } from "./middleware/stream-end-metrics.js";
-import { prefetchLayoutData } from "./prefetch.js";
+import { startLayoutPrefetch } from "./prefetch.js";
 import {
 	createPublicPluginApiRouteHandler,
 	getPublicPluginRouteMeta,
@@ -118,32 +119,6 @@ const RUNTIME_INIT_DEADLINE_MS = DB_INIT_DEADLINE_MS + 15_000;
  */
 const RUNTIME_INIT_ERROR_LOG_INTERVAL_MS = 30_000;
 let lastRuntimeInitErrorLogAt = 0;
-
-/**
- * Whether we've verified the database has been set up.
- * On a fresh deployment the first request may hit a public page, bypassing
- * runtime init. Without this check, template helpers like getSiteSettings()
- * would query an empty database and crash. Once verified (or once the runtime
- * has initialized via an admin/API request), this stays true for the worker's
- * lifetime.
- *
- * Stored on globalThis behind a Symbol key so the flag is a true singleton
- * even when the bundler duplicates this module across SSR chunks (same
- * pattern as request-cache.ts). A plain module-scoped `let` becomes multiple
- * independent variables, which would make the setup probe re-run far more
- * often than intended — and every re-run is another chance for a transient
- * DB error to be misread as "fresh install" and bounce visitors to setup.
- */
-const SETUP_VERIFIED_KEY = Symbol.for("emdash:setup-verified");
-const setupFlagStore = globalThis as Record<symbol, unknown>;
-
-function isSetupVerified(): boolean {
-	return setupFlagStore[SETUP_VERIFIED_KEY] === true;
-}
-
-function markSetupVerified(): void {
-	setupFlagStore[SETUP_VERIFIED_KEY] = true;
-}
 
 /** Nested request contexts copy this one, so call it before creating them. */
 function providePublicMediaUrl(storage: Storage | null): (storageKey: string) => string {
@@ -874,7 +849,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 			context.isPrerendered || !hasSessionCookie ? null : await resolveSessionUser(context.session);
 
 		// The image endpoint EmDash installed reads media bytes from storage and
-		// nothing else, so it needs neither the setup probe nor runtime init.
+		// nothing else, so it needs no runtime init.
 		const imageStorage =
 			config && !playgroundDb && isImageEndpointRequest(context)
 				? tryGetStorage(config, migrationMode)
@@ -912,63 +887,19 @@ export const onRequest = defineMiddleware(async (context, next) => {
 			const timings: Array<{ name: string; dur: number; desc?: string }> = [];
 			const mwStart = performance.now();
 
-			// On a fresh deployment the database may be completely empty.
-			// Public pages call getSiteSettings() / getMenu() via getDb(), which
-			// bypasses runtime init and would crash with "no such table: options".
-			// Do a one-time lightweight probe using the same getDb() instance the
-			// page will use: if the migrations table doesn't exist, no migrations
-			// have ever run, and the page may only render once runtime init has
-			// migrated the database.
-			// Skip the probe when prerendering: the build database is legitimately
-			// empty in CI, and a response derived from it would be baked into the
-			// static page (session reads are already skipped for prerender above
-			// for the same reason).
-			// Runtime init starts before the probe so the two round trips overlap.
 			// Sub-phase timings are populated only on the cold init. Warm
 			// requests hit the cached runtime and leave this empty.
 			const initSubTimings: Array<{ name: string; dur: number; desc?: string }> = [];
 			const runtimeInitStart = performance.now();
 			const runtimeInit = config ? getRuntime(config, migrationMode, initSubTimings) : undefined;
-			// Awaited below unless the probe fails; then it settles in the background.
-			runtimeInit?.catch(() => {});
-
-			let unmigrated = false;
-			let probeFailed = false;
-			if (migrationMode === "auto" && !isSetupVerified() && !context.isPrerendered) {
-				const t0 = performance.now();
-				try {
-					const { getDb } = await import("../loader.js");
-					const db = await getDb();
-					await db.selectFrom("_emdash_migrations").selectAll().limit(1).execute();
-					markSetupVerified();
-				} catch (error) {
-					if (isMissingTableError(error)) {
-						unmigrated = true;
-					} else {
-						// Any other failure (transient D1/replica error, timeout, cold-start
-						// race, locked SQLite) must NOT be read as "fresh install". Leave the
-						// flag unset so a later request can re-verify, and fall through to
-						// render the page normally. Unless a runtime is already running,
-						// don't wait for runtime init on this request: it connects to the
-						// same database and would make the visitor wait through a second
-						// timeout. getRuntime anchors it with after(), so it can still
-						// finish for later requests.
-						probeFailed = !getRuntimeHolder().instance;
-						console.error("Setup probe failed (non-fatal):", error);
-					}
-				}
-				timings.push({ name: "setup", dur: performance.now() - t0, desc: "Setup probe" });
-			}
 
 			// Wait for the runtime for page:metadata and page:fragments hooks.
 			// The runtime is a cached singleton — after the first request,
 			// getRuntime() is just a null-check. This enables SEO plugins to
-			// contribute meta tags for all visitors, not just logged-in editors,
-			// except on a request whose setup probe just failed.
-			if (runtimeInit && !probeFailed) {
+			// contribute meta tags for all visitors, not just logged-in editors.
+			if (runtimeInit) {
 				try {
 					const runtime = await runtimeInit;
-					markSetupVerified();
 					const handlePublicPluginApiRoute = createPublicPluginApiRouteHandler(runtime);
 					const getPublicMediaUrl = providePublicMediaUrl(runtime.storage);
 					// eslint-disable-next-line typescript/no-unsafe-type-assertion -- partial object; getPageRuntime() only checks for the page-contribution methods
@@ -992,6 +923,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
 						);
 						return migrationRequiredResponse();
 					}
+					// Pages query tables that only migrations create, so a database
+					// that was never migrated cannot render them. Prerendering skips
+					// this: the build database is legitimately empty in CI, and the
+					// response would be baked into the static page.
+					if (
+						config &&
+						migrationMode === "auto" &&
+						!context.isPrerendered &&
+						EmDashRuntime.isDatabaseUnmigrated(config)
+					) {
+						return finalizeResponse(unmigratedDatabaseResponse(), timings);
+					}
 					// Non-fatal — EmDashHead falls back to base SEO contributions —
 					// but log it (throttled): a persistently failing init (e.g. a
 					// failing migration, #1744) is otherwise invisible on the
@@ -1011,10 +954,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
 				// rt.sandbox, rt.market, rt.hooks, rt.cron).
 				for (const sub of initSubTimings) timings.push(sub);
 			}
-			if (unmigrated && !locals.emdash) {
-				return finalizeResponse(unmigratedDatabaseResponse(), timings);
-			}
-
 			// Even on the anonymous fast path we ask the adapter for a per-request
 			// scoped db. For D1 with read replication this routes anonymous reads
 			// to the nearest replica; for other adapters it's a no-op.
@@ -1063,38 +1002,38 @@ export const onRequest = defineMiddleware(async (context, next) => {
 				const ctx = parent
 					? { ...parent, db: anonScoped.db, deferredTasks }
 					: { editMode: false, db: anonScoped.db, metrics, deferredTasks };
-				// Eagerly warm site-global layout data (menus, widget areas,
-				// taxonomy terms, settings) concurrently so the layout's
-				// per-component reads overlap into ~one wall-clock round trip and
-				// hit a warm cache instead of serializing. Four guards:
+				// Start the site-global layout reads this route is known to make
+				// (settings, menus, widget areas, term lists) concurrently, so they
+				// overlap instead of serializing. Guards:
 				//  - request-scoped (remote) backend only -- this branch implies it;
 				//    pointless on synchronous local SQLite.
 				//  - an adapter that can overlap queries -- without that, Kysely's
 				//    connection mutex (D1 sessions without `coalesce`) queues the
 				//    prefetch ahead of the page's own first query.
-				//  - HTML navigations only -- feeds/sitemaps/JSON don't render the
-				//    layout, so prefetching their chrome is pure waste.
-				//  - the work starts immediately, then after() keeps both it and the
-				//    request-scoped connection alive until the response also finishes.
-				// Gate on the CLIENT'S PREFERRED type (leading media range), not a
-				// substring -- browser navigations lead with `text/html`, while feed
-				// readers lead with `application/rss+xml` etc. and only list
-				// `text/html;q=0.8` later, so a substring match would leak onto feeds.
+				//  - HTML navigations only. Gate on the client's preferred type
+				//    (leading media range), not a substring: feed readers list
+				//    `text/html;q=0.8` after their feed type.
+				// after() keeps the reads and the request-scoped connection alive
+				// until the response also finishes.
 				const acceptsHtml = (request.headers.get("accept") ?? "")
 					.split(",", 1)[0]!
 					.trim()
 					.startsWith("text/html");
 				return runWithContext(ctx, async () => {
-					if (
+					const prefetch =
 						acceptsHtml &&
+						context.routePattern &&
 						anonScoped.db.getExecutor().adapter.supportsMultipleConnections !== false
-					) {
-						after(() => prefetchLayoutData(context.currentLocale));
-					}
+							? startLayoutPrefetch(ctx, context.routePattern, context.currentLocale)
+							: undefined;
+					if (prefetch) after(async () => void (await prefetch.settled));
 					// commit() persists per-request state (e.g. the D1 bookmark cookie)
 					// before the response is returned, even if render throws; close()
 					// waits for stream-end and request-owned deferred work. See finishScoped.
-					return finishScoped(lifecycle, runAnon);
+					return finishScoped(
+						lifecycle,
+						prefetch ? async () => prefetch.trackResponse(await runAnon()) : runAnon,
+					);
 				});
 			}
 			return runAnon();
@@ -1132,9 +1071,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
 				// in Server-Timing. Each phase appears prefixed "rt." to distinguish
 				// from the aggregate "rt" timing above.
 				for (const sub of initSubTimings) timings.push(sub);
-
-				// Runtime initialization has satisfied the effective migration policy.
-				markSetupVerified();
 
 				// The manifest is no longer pre-loaded here. It's admin-only
 				// content that public/anonymous requests never read, and
@@ -1250,6 +1186,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 					// demand. `requestCached` inside `getManifest` dedupes within
 					// a single request.
 					getManifest: runtime.getManifest.bind(runtime),
+					getRealtimeChannels: runtime.getRealtimeChannels.bind(runtime),
 
 					// Co-editing rooms, or null when this host can't run them
 					rooms: runtime.rooms,
@@ -1322,7 +1259,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
 					}
 				}
 				const t0 = performance.now();
-				const response = await next();
+				// Prerendering has no request headers to read.
+				const origin = context.isPrerendered ? null : request.headers.get(CLIENT_HEADER);
+				const response = await withChangeOrigin(origin, next);
 				timings.push({ name: "render", dur: performance.now() - t0, desc: "Page render" });
 				timings.push({ name: "mw", dur: performance.now() - mwStart, desc: "Total middleware" });
 				pushMetricsTimings(timings, metrics);

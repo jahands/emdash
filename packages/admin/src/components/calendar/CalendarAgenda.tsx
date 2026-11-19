@@ -1,4 +1,4 @@
-import { Badge, Button, Empty, SkeletonLine } from "@cloudflare/kumo";
+import { Badge, Button, Empty } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { CalendarBlank, CaretDown } from "@phosphor-icons/react";
@@ -10,8 +10,14 @@ import {
 	type CalendarDisplay,
 	type CalendarItem,
 } from "../../lib/calendar.js";
+import { cn } from "../../lib/utils.js";
 import { CaretNext } from "../ArrowIcons.js";
-import { CalendarDayList, CalendarNowLine, type CalendarSelectHandler } from "./CalendarEntry.js";
+import {
+	CalendarDayList,
+	CalendarDayListPlaceholder,
+	CalendarNowLine,
+	type CalendarSelectHandler,
+} from "./CalendarEntry.js";
 
 interface CalendarAgendaProps {
 	month: string;
@@ -208,24 +214,24 @@ function CalendarAgendaDay({
 	);
 }
 
+const PLACEHOLDER_DAYS = [
+	{ rows: 2, headingWidth: "w-36" },
+	{ rows: 1, headingWidth: "w-32" },
+	{ rows: 3, headingWidth: "w-40" },
+];
+
+/** Days shaped like `CalendarAgendaDay`, in the agenda's own spacing. */
 function CalendarAgendaSkeleton() {
 	return (
-		<div aria-hidden="true" className="grid gap-5">
-			{[0, 1].map((section) => (
-				<div key={section} className="grid gap-3">
-					<div className="border-b border-kumo-line px-2 pb-2">
-						<SkeletonLine minWidth={18} maxWidth={28} />
-					</div>
-					{[0, 1].map((row) => (
-						<div key={row} className="flex items-center gap-3 px-2">
-							<div className="w-16 shrink-0">
-								<SkeletonLine minWidth={70} maxWidth={90} />
-							</div>
-							<div className="flex-1">
-								<SkeletonLine minWidth={35} maxWidth={65} />
-							</div>
+		<div aria-hidden="true" className="grid gap-6">
+			{PLACEHOLDER_DAYS.map(({ rows, headingWidth }, day) => (
+				<div key={day}>
+					<div className="border-b border-kumo-line px-2 pt-2 pb-2 text-base">
+						<div className="flex h-lh items-center">
+							<div className={cn("skeleton-line", headingWidth)} />
 						</div>
-					))}
+					</div>
+					<CalendarDayListPlaceholder rows={rows} className="mt-1" />
 				</div>
 			))}
 		</div>

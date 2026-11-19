@@ -445,6 +445,7 @@ export const CAPABILITY_LABELS: Record<string, MessageDescriptor> = {
 	"hooks.email-events:register": msg`Read and change email your site sends`,
 	"hooks.email-transport:register": msg`Deliver all email your site sends`,
 	"hooks.page-fragments:register": msg`Add scripts and styles to your site's pages`,
+	"realtime:publish": msg`Tell open admin screens when its own data changes`,
 	// Legacy aliases (still emitted by older installed manifests)
 	"read:content": msg`Read your content`,
 	"write:content": msg`Create, update, and delete content`,

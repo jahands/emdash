@@ -117,6 +117,18 @@ export function primeBylineFieldsVersion(version: number): void {
 }
 
 /**
+ * Cache definitions read together with `version` in one statement, unless
+ * the version is dirty or older than the cached one.
+ */
+export function primeBylineFieldDefs(version: number, defs: BylineFieldDefinition[]): void {
+	if (version % 2 !== 0 || version < holder.cachedVersion) return;
+	if (holder.hasValue && holder.cachedVersion === version) return;
+	holder.value = defs;
+	holder.hasValue = true;
+	holder.cachedVersion = version;
+}
+
+/**
  * Resolve registered byline custom-field definitions. Two-tier cache:
  * per-request via `requestCached`, then per-isolate via the global
  * holder.

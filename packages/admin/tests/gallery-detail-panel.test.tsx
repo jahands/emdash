@@ -15,6 +15,7 @@ import {
 } from "../src/components/editor/GalleryDetailPanel";
 import type { GalleryAttributes, GalleryImage } from "../src/components/editor/GalleryNode";
 import { render } from "./utils/render.tsx";
+import { shownFile } from "./utils/rendition.js";
 
 vi.mock("../src/lib/api", async () => {
 	const actual = await vi.importActual("../src/lib/api");
@@ -401,8 +402,10 @@ describe("GalleryDetailPanel", () => {
 
 		await vi.waitFor(() => {
 			expect(
-				screen.container.querySelectorAll(
-					'img[src="/_emdash/api/media/file/m2.jpg?_emdash_media=sha256%3Areplaced-gallery"]',
+				[...screen.container.querySelectorAll("img")].filter(
+					(image) =>
+						shownFile(image) ===
+						"/_emdash/api/media/file/m2.jpg?_emdash_media=sha256%3Areplaced-gallery",
 				),
 			).toHaveLength(2);
 		});

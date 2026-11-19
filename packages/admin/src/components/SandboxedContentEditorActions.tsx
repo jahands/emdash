@@ -1,4 +1,4 @@
-import { Button, DropdownMenu, useKumoToastManager } from "@cloudflare/kumo";
+import { DropdownMenu, useKumoToastManager } from "@cloudflare/kumo";
 import type { ContentEditorActionResponse } from "@emdash-cms/blocks";
 import { useLingui } from "@lingui/react/macro";
 import { DotsThree } from "@phosphor-icons/react";
@@ -10,6 +10,7 @@ import {
 	editorExtensionUrl,
 	type ResolvedSandboxedEditorAction,
 } from "../lib/sandboxed-editor-extensions.js";
+import { Button } from "./Button.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import type {
 	BrowserEditorDraftRequest,

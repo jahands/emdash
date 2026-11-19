@@ -188,6 +188,9 @@ function fetchSetupOnce(url: string): Promise<Response> {
 // pipeline without depending on Google's CSS and asset rollouts being in sync.
 // ---------------------------------------------------------------------------
 
+/** Templates on the Node standalone adapter, whose builds precompress client assets. */
+const NODE_TEMPLATES = ["blank", "blog", "marketing", "portfolio", "starter"];
+
 describe("Site build verification", () => {
 	it("all templates and playground build successfully", { timeout: 300_000 }, async () => {
 		await ensureBuilt();
@@ -221,6 +224,15 @@ describe("Site build verification", () => {
 			throw new Error(`Site builds failed:\n\n${stderr || stdout}`.slice(0, 5000), {
 				cause: error,
 			});
+		}
+
+		for (const template of NODE_TEMPLATES) {
+			expect(
+				existsSync(
+					resolve(WORKSPACE_ROOT, "templates", template, "dist/server/emdash-precompressed.json"),
+				),
+				`${template} serves precompressed assets`,
+			).toBe(true);
 		}
 	});
 });

@@ -15,15 +15,38 @@ import AdminWrapper from "emdash/internal/routes/PluginRegistry";
 import { Font } from "astro:assets";
 // @ts-ignore - virtual module
 import { componentDataByCssVariable } from "virtual:astro:assets/fonts/internal";
+// @ts-ignore - virtual module
+import { adminMessageUrls } from "virtual:emdash/admin-messages";
+// @ts-ignore - virtual module
+import { adminPreloadsJson } from "virtual:emdash/admin-preloads";
 
 export const prerender = false;
 
-import { resolveLocale, loadMessages, getLocaleDir } from "@emdash-cms/admin/locales";
+import { resolveLocale, getLocaleDir, DEFAULT_LOCALE } from "@emdash-cms/admin/locales/config";
+import { loadAdminBootLabels } from "@emdash-cms/admin/locales/server";
+import { isAdminStandaloneRoute } from "@emdash-cms/admin/route-modules";
+import { adminBootDataScript, loadAdminBootData } from "#api/admin-boot.js";
 import { getSiteSettingsWithDb } from "#settings/index.js";
+import { adminPrefetchFiles, adminPreloadHrefs, adminRoutePath } from "#utils/admin-preloads.js";
 
+const FRAME_NAV_ITEMS = Array.from({ length: 8 });
+
+// Started before the shell is sent and awaited after it, so the browser loads
+// the admin's code while the database work runs.
+const bootDataScript = loadAdminBootData(Astro.locals, adminRoutePath(Astro.url.pathname)).then(
+	adminBootDataScript,
+);
 const resolvedLocale = resolveLocale(Astro.request);
 const resolvedDir = getLocaleDir(resolvedLocale);
-const messages = await loadMessages(resolvedLocale);
+const messagesUrl: string = adminMessageUrls[resolvedLocale] ?? adminMessageUrls[DEFAULT_LOCALE];
+const modulePreloads = adminPreloadHrefs(adminPreloadsJson, Astro.url.pathname);
+const routePrefetchFiles = adminPrefetchFiles(adminPreloadsJson, Astro.url.pathname);
+const bootLabels = await loadAdminBootLabels(resolvedLocale);
+// Signed-out visitors are headed for a standalone screen or a redirect to one,
+// and neither shows the sidebar and header, so they see a sign-in card's outline.
+const showFrame =
+	Boolean(Astro.locals.user) &&
+	!isAdminStandaloneRoute(adminRoutePath(Astro.url.pathname));
 
 const adminConfig = Astro.locals.emdash?.config?.admin;
 const pageTitle = adminConfig?.siteName ? `${adminConfig.siteName} Admin` : "EmDash Admin";
@@ -42,23 +65,25 @@ Astro.response.headers.set("Cache-Control", "private, no-store");
 // Otherwise fall back to the Site Icon configured in Settings → General, so
 // the admin shell is branded like the public site (WordPress-style Site Icon,
 // which also brands wp-admin), and finally the bundled EmDash mark below.
+// Read after the head's preloads are sent, so the admin's code downloads meanwhile.
 const emdash = Astro.locals.emdash;
-let siteFavicon: string | undefined;
-let siteFaviconType: string | undefined;
-if (!adminConfig?.favicon && emdash?.db) {
+const faviconLink: Promise<{ href?: string; type?: string }> = (async () => {
+	if (adminConfig?.favicon) return { href: adminConfig.favicon };
+	if (!emdash?.db) return {};
 	try {
 		const settings = await getSiteSettingsWithDb(emdash.db, emdash.storage ?? null);
-		siteFavicon = settings.favicon?.url ?? undefined;
-		siteFaviconType = settings.favicon?.contentType ?? undefined;
+		// The media-file URL has no extension, so browsers need the MIME type —
+		// Chromium ignores SVG favicons without type="image/svg+xml". Only set for
+		// Site Icons; build-time `admin.favicon` strings keep their current behavior.
+		return {
+			href: settings.favicon?.url ?? undefined,
+			type: settings.favicon?.contentType ?? undefined,
+		};
 	} catch {
-		// Settings unavailable (e.g. pre-setup) — fall back to the config/default.
+		// Settings unavailable (e.g. pre-setup) — fall back to the default.
+		return {};
 	}
-}
-const favicon = adminConfig?.favicon ?? siteFavicon;
-// The media-file URL has no extension, so browsers need the MIME type —
-// Chromium ignores SVG favicons without type="image/svg+xml". Only set for
-// Site Icons; build-time `admin.favicon` strings keep their current behavior.
-const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
+})();
 ---
 
 <!doctype html>
@@ -85,69 +110,119 @@ const faviconType = adminConfig?.favicon ? undefined : siteFaviconType;
 				document.documentElement.setAttribute("data-mode", mode);
 			})();
 		</script>
+		<link rel="modulepreload" href={messagesUrl} />
+		{modulePreloads.map((href) => <link rel="modulepreload" href={href} />)}
 		<link rel="stylesheet" href={adminStylesUrl} />
-		{componentDataByCssVariable.has("--font-emdash") ? <Font cssVariable="--font-emdash" /> : null}
-		{favicon ? (
-			<link rel="icon" href={favicon} type={faviconType} />
-		) : (
-			<link
-				rel="icon"
-				href="data:image/svg+xml,<svg width='75' height='75' viewBox='0 0 75 75' fill='none' xmlns='http://www.w3.org/2000/svg'> <g clip-path='url(%23clip0_50_99)'> <rect x='3' y='3' width='69' height='69' rx='10.518' stroke='url(%23paint0_linear_50_99)' stroke-width='6'/> <rect x='18' y='34' width='39.3661' height='6.56101' fill='url(%23paint1_linear_50_99)'/> </g> <defs> <linearGradient id='paint0_linear_50_99' x1='-42.9996' y1='124' x2='92.4233' y2='-41.7456' gradientUnits='userSpaceOnUse'> <stop stop-color='%230F006B'/> <stop offset='0.0833333' stop-color='%23281A81'/> <stop offset='0.166667' stop-color='%235D0C83'/> <stop offset='0.25' stop-color='%23911475'/> <stop offset='0.333333' stop-color='%23CE2F55'/> <stop offset='0.416667' stop-color='%23FF6633'/> <stop offset='0.5' stop-color='%23F6821F'/> <stop offset='0.583333' stop-color='%23FBAD41'/> <stop offset='0.666667' stop-color='%23FFCD89'/> <stop offset='0.75' stop-color='%23FFE9CB'/> <stop offset='0.833333' stop-color='%23FFF7EC'/> <stop offset='0.916667' stop-color='%23FFF8EE'/> <stop offset='1' stop-color='white'/> </linearGradient> <linearGradient id='paint1_linear_50_99' x1='91.4992' y1='27.4982' x2='28.1217' y2='54.1775' gradientUnits='userSpaceOnUse'> <stop stop-color='white'/> <stop offset='0.129253' stop-color='%23FFF8EE'/> <stop offset='0.617058' stop-color='%23FBAD41'/> <stop offset='0.848019' stop-color='%23F6821F'/> <stop offset='1' stop-color='%23FF6633'/> </linearGradient> <clipPath id='clip0_50_99'> <rect width='75' height='75' fill='white'/> </clipPath> </defs> </svg>"
-			/>
-		)}
+		{
+			componentDataByCssVariable.has("--font-emdash") ? (
+				<Font cssVariable="--font-emdash" preload={[{ subset: "latin", style: "normal" }]} />
+			) : null
+		}
 		<title>{pageTitle}</title>
+		{
+			faviconLink.then(({ href, type }) =>
+				href ? (
+					<link rel="icon" href={href} type={type} />
+				) : (
+					<link
+						rel="icon"
+						href="data:image/svg+xml,<svg width='75' height='75' viewBox='0 0 75 75' fill='none' xmlns='http://www.w3.org/2000/svg'> <g clip-path='url(%23clip0_50_99)'> <rect x='3' y='3' width='69' height='69' rx='10.518' stroke='url(%23paint0_linear_50_99)' stroke-width='6'/> <rect x='18' y='34' width='39.3661' height='6.56101' fill='url(%23paint1_linear_50_99)'/> </g> <defs> <linearGradient id='paint0_linear_50_99' x1='-42.9996' y1='124' x2='92.4233' y2='-41.7456' gradientUnits='userSpaceOnUse'> <stop stop-color='%230F006B'/> <stop offset='0.0833333' stop-color='%23281A81'/> <stop offset='0.166667' stop-color='%235D0C83'/> <stop offset='0.25' stop-color='%23911475'/> <stop offset='0.333333' stop-color='%23CE2F55'/> <stop offset='0.416667' stop-color='%23FF6633'/> <stop offset='0.5' stop-color='%23F6821F'/> <stop offset='0.583333' stop-color='%23FBAD41'/> <stop offset='0.666667' stop-color='%23FFCD89'/> <stop offset='0.75' stop-color='%23FFE9CB'/> <stop offset='0.833333' stop-color='%23FFF7EC'/> <stop offset='0.916667' stop-color='%23FFF8EE'/> <stop offset='1' stop-color='white'/> </linearGradient> <linearGradient id='paint1_linear_50_99' x1='91.4992' y1='27.4982' x2='28.1217' y2='54.1775' gradientUnits='userSpaceOnUse'> <stop stop-color='white'/> <stop offset='0.129253' stop-color='%23FFF8EE'/> <stop offset='0.617058' stop-color='%23FBAD41'/> <stop offset='0.848019' stop-color='%23F6821F'/> <stop offset='1' stop-color='%23FF6633'/> </linearGradient> <clipPath id='clip0_50_99'> <rect width='75' height='75' fill='white'/> </clipPath> </defs> </svg>"
+					/>
+				),
+			)
+		}
 	</head>
 	<body class="isolate">
 		<div id="admin-root" class="min-h-screen">
-			<div id="emdash-boot-loader">
-				<style>
-					#emdash-boot-loader {
-						display: flex;
-						align-items: center;
-						justify-content: center;
-						min-height: 100vh;
-						background: var(--color-kumo-elevated);
-					}
-					#emdash-boot-loader .loader-inner {
-						text-align: center;
-					}
-					#emdash-boot-loader .spinner {
-						width: 24px;
-						height: 24px;
-						margin: 0 auto;
-						border: 2.5px solid var(--color-kumo-line);
-						border-top-color: var(--text-color-kumo-subtle);
-						border-radius: 50%;
-						animation: emdash-spin 0.8s linear infinite;
-					}
-					#emdash-boot-loader p {
-						margin-top: 1rem;
-						font-family: var(
-							--font-emdash,
-							ui-sans-serif,
-							system-ui,
-							sans-serif
-						);
-						font-size: 0.875rem;
-						color: var(--text-color-kumo-subtle);
-					}
-					@keyframes emdash-spin {
-						to {
-							transform: rotate(360deg);
-						}
-					}
-				</style>
-				<div class="loader-inner">
-					<div class="spinner"></div>
-					<p>{adminConfig?.siteName ? `Loading ${adminConfig.siteName}...` : "Loading EmDash..."}</p>
-				</div>
+			<div
+				id="emdash-boot-loader"
+				data-error-title={bootLabels.error.title}
+				data-error-retry={bootLabels.error.retry}
+			>
+				{
+					showFrame ? (
+						<div class="emdash-frame">
+							<span class="sr-only" role="status">
+								{bootLabels.loading}
+							</span>
+							<div class="emdash-frame-sidebar" aria-hidden="true">
+								<div class="emdash-frame-sidebar-header">
+									<div class="skeleton-line emdash-frame-icon" />
+									<div class="skeleton-line emdash-frame-label" />
+								</div>
+								<div class="emdash-frame-sidebar-nav">
+									{FRAME_NAV_ITEMS.map(() => (
+										<div class="emdash-frame-sidebar-item">
+											<div class="skeleton-line emdash-frame-icon" />
+											<div class="skeleton-line emdash-frame-label" />
+										</div>
+									))}
+								</div>
+								<div class="emdash-frame-sidebar-footer">
+									<div class="skeleton-line emdash-frame-icon emdash-frame-footer-trigger" />
+									<div class="skeleton-line emdash-frame-label emdash-frame-footer-version" />
+								</div>
+							</div>
+							<div class="emdash-frame-main" aria-hidden="true">
+								<div class="emdash-frame-header">
+									<div class="skeleton-line emdash-frame-icon emdash-frame-header-menu" />
+									<div class="skeleton-line emdash-frame-button emdash-frame-view-site" />
+									<div class="skeleton-line emdash-frame-button emdash-frame-theme" />
+									<div class="skeleton-line emdash-frame-button emdash-frame-user" />
+								</div>
+							</div>
+						</div>
+					) : (
+						<div class="emdash-standalone">
+							<span class="sr-only" role="status">
+								{bootLabels.loading}
+							</span>
+							<div class="emdash-standalone-column" aria-hidden="true">
+								<div class="emdash-standalone-heading">
+									<div class="skeleton-line emdash-standalone-logo" />
+									<div class="skeleton-line emdash-standalone-title" />
+								</div>
+								<div class="emdash-standalone-card">
+									<div class="skeleton-line emdash-standalone-control" />
+									<div class="skeleton-line emdash-standalone-text" />
+									<div class="skeleton-line emdash-standalone-text" />
+									<div class="skeleton-line emdash-standalone-control" />
+								</div>
+							</div>
+						</div>
+					)
+				}
 			</div>
+			<script is:inline>
+				document.addEventListener(
+					"astro:hydration-error",
+					() => {
+						const loader = document.getElementById("emdash-boot-loader");
+						if (!loader) return;
+						const alert = document.createElement("div");
+						alert.className = "emdash-boot-error";
+						alert.setAttribute("role", "alert");
+						const title = document.createElement("h1");
+						title.textContent = loader.dataset.errorTitle;
+						const retry = document.createElement("button");
+						retry.type = "button";
+						retry.textContent = loader.dataset.errorRetry;
+						retry.addEventListener("click", () => location.reload());
+						alert.append(title, retry);
+						loader.replaceChildren(alert);
+					},
+					{ once: true },
+				);
+			</script>
 			<AdminWrapper
 				client:only="react"
 				locale={resolvedLocale}
-				messages={messages}
+				messagesUrl={messagesUrl}
 				adminBranding={{ logo: adminConfig?.logo, siteName: adminConfig?.siteName }}
+				bootErrorLabels={bootLabels.error}
+				routePrefetchFiles={routePrefetchFiles}
 			/>
 		</div>
+		<Fragment set:html={bootDataScript} />
 	</body>
 </html>

@@ -105,6 +105,11 @@ function makeCollection(
 
 const noop = () => {};
 
+/** The save button's status, apart from the relations panel's while relations load. */
+function saveStatus(screen: Awaited<ReturnType<typeof render>>) {
+	return screen.getByRole("status").filter({ hasNotText: "Loading relations..." });
+}
+
 function defaultProps(overrides: Partial<ContentTypeEditorProps> = {}): ContentTypeEditorProps {
 	return {
 		onSave: noop,
@@ -681,7 +686,7 @@ describe("ContentTypeEditor", () => {
 			<ContentTypeEditor {...defaultProps()} collection={collection} isSaving />,
 		);
 
-		expect(screen.getByRole("status").element().textContent).toBe("Saving...");
+		expect(saveStatus(screen).element().textContent).toBe("Saving...");
 		for (const button of screen.getByRole("button", { name: "Saving...", exact: true }).all()) {
 			await expect.element(button).toBeDisabled();
 		}
@@ -698,7 +703,7 @@ describe("ContentTypeEditor", () => {
 		await expect
 			.element(screen.getByRole("button", { name: "Saved", exact: true }).first())
 			.toBeInTheDocument();
-		expect(screen.getByRole("status").element().textContent).toBe("Saved");
+		expect(saveStatus(screen).element().textContent).toBe("Saved");
 		await expect
 			.element(screen.getByRole("button", { name: "Saved", exact: true }).last())
 			.toBeInTheDocument();
@@ -712,7 +717,7 @@ describe("ContentTypeEditor", () => {
 		await expect
 			.element(screen.getByRole("button", { name: "Saved", exact: true }).first())
 			.toBeDisabled();
-		expect(screen.getByRole("status").element().textContent).toBe("Saved");
+		expect(saveStatus(screen).element().textContent).toBe("Saved");
 
 		// Make a change -> sticky button remains "Save" and becomes enabled.
 		await screen.getByLabelText("Label (Plural)").fill("Articles");

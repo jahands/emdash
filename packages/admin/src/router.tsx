@@ -4,7 +4,7 @@
  * Defines all admin routes and their components.
  */
 
-import { Banner, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, useKumoToastManager } from "@cloudflare/kumo";
 import { msg, plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import type { QueryClient } from "@tanstack/react-query";
@@ -12,6 +12,8 @@ import {
 	keepPreviousData,
 	useQuery,
 	useInfiniteQuery,
+	useIsFetching,
+	useIsMutating,
 	useMutation,
 	useQueryClient,
 } from "@tanstack/react-query";
@@ -25,76 +27,42 @@ import {
 	useNavigate,
 	useSearch,
 	useMatches,
+	useRouterState,
 } from "@tanstack/react-router";
 import * as React from "react";
 
 import type { OutsideValue } from "./co-editing/types.js";
-import { BlockTypeList } from "./components/BlockTypeList.js";
+import { AdminFrameSkeleton, useRemoveBootLoader } from "./components/AdminFrameSkeleton.js";
 import { EMPTY_BYLINE_FILTER, type BylineFilterState } from "./components/BylineFilter";
 import type { BylineFormValues } from "./components/BylineFormDialog.js";
+import { ChangedElsewhereNotice } from "./components/ChangedElsewhereNotice.js";
 import type { SyncProblem } from "./components/co-editing/SyncStatus.js";
-import { CommentInbox } from "./components/comments/CommentInbox";
-import { ContentEditor, type ReferenceEntryRow } from "./components/ContentEditor";
-import {
-	CONTENT_LIST_PAGE_SIZES,
-	ContentList,
-	EMPTY_DATE_FILTER,
-	type ContentDateFilter,
-	type ContentListSort,
-	type ContentStatusFilter,
+import { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER } from "./components/content-list-options.js";
+import type { ReferenceEntryRow } from "./components/ContentEditor";
+import type {
+	ContentDateFilter,
+	ContentListSort,
+	ContentStatusFilter,
 } from "./components/ContentList";
-import { ContentTypeEditor } from "./components/ContentTypeEditor";
-import { ContentTypeList } from "./components/ContentTypeList";
-import { Dashboard } from "./components/Dashboard";
-import { DeviceAuthorizePage } from "./components/DeviceAuthorizePage";
 import { EntryLockNotice } from "./components/EntryLockNotice";
-import { InviteAcceptPage } from "./components/InviteAcceptPage";
-import { LoginPage } from "./components/LoginPage";
-import { MagicLinkConfirmPage } from "./components/MagicLinkConfirmPage";
-import { MediaLibrary } from "./components/MediaLibrary";
-import { MenuEditor } from "./components/MenuEditor";
-import { MenuList } from "./components/MenuList";
-import { PluginManager } from "./components/PluginManager";
-import { PluginSettings } from "./components/PluginSettings";
-import { Redirects } from "./components/Redirects";
-import { RegistryBrowse } from "./components/RegistryBrowse";
-import { RegistryPluginDetail } from "./components/RegistryPluginDetail";
-import { RelationList } from "./components/RelationList";
 import { RequireAdmin } from "./components/RequireAdmin.js";
-import { SandboxedPluginPage } from "./components/SandboxedPluginPage";
-import { SectionEditor } from "./components/SectionEditor";
-import { Sections } from "./components/Sections";
-import { Settings } from "./components/Settings";
-import { AllowedDomainsSettings } from "./components/settings/AllowedDomainsSettings";
-import { ApiTokenSettings } from "./components/settings/ApiTokenSettings";
-import { BackupSettings } from "./components/settings/BackupSettings";
-import { EmailSettings } from "./components/settings/EmailSettings";
-import { GeneralSettings } from "./components/settings/GeneralSettings";
-import { MediaUsageSettings } from "./components/settings/MediaUsageSettings";
-import { SecuritySettings } from "./components/settings/SecuritySettings";
-import { SeoSettings } from "./components/settings/SeoSettings";
-import { SidebarsSettings } from "./components/settings/SidebarsSettings";
-import { SocialSettings } from "./components/settings/SocialSettings";
-import { TransferSettings } from "./components/settings/TransferSettings";
-import { SetupWizard } from "./components/SetupWizard";
 import { Shell } from "./components/Shell";
-import { SignupPage } from "./components/SignupPage";
-import { TaxonomyManager } from "./components/TaxonomyManager";
-import { Widgets } from "./components/Widgets";
-import { WordPressImport } from "./components/WordPressImport";
+import {
+	ContentTypeEditorPending,
+	EditorFramePending,
+	RoutePending,
+	SettingsPagePending,
+	StandalonePending,
+} from "./components/ShellRoutePending.js";
 import { useAdminBranding } from "./lib/admin-branding-context.js";
 import {
 	apiFetch,
 	parseApiResponse,
 	fetchManifest,
-	fetchContentList,
-	fetchContentAuthors,
 	fetchContent,
 	createContent,
 	updateContent,
 	deleteContent,
-	fetchTranslations,
-	fetchMediaList,
 	updateMedia,
 	uploadMedia,
 	createRelation,
@@ -104,7 +72,6 @@ import {
 	updateRelation,
 	type CreateRelationInput,
 	type UpdateRelationInput,
-	fetchBlockTypes,
 	fetchCollection,
 	createCollection,
 	updateCollection,
@@ -114,10 +81,8 @@ import {
 	deleteField,
 	reorderFields,
 	reorderCollections,
-	fetchOrphanedTables,
 	registerOrphanedTable,
 	fetchUsers,
-	fetchBylines,
 	createByline,
 	updateByline,
 	setSearchEnabled,
@@ -130,9 +95,7 @@ import {
 	publishContent,
 	unpublishContent,
 	discardDraft,
-	fetchRevision,
 	fetchMediaFolder,
-	fetchMediaFolders,
 	createMediaFolder,
 	renameMediaFolder,
 	deleteMediaFolder,
@@ -140,6 +103,7 @@ import {
 	isListConflict,
 	isTerminalRequestError,
 	useCurrentUser,
+	fetchPlugins,
 	type AdminManifest,
 	type CreateCollectionInput,
 	type UpdateCollectionInput,
@@ -157,13 +121,12 @@ import {
 } from "./lib/api";
 import { useAdminLayout } from "./lib/api/admin-layout.js";
 import {
-	fetchComments,
-	fetchCommentCounts,
 	updateCommentStatus,
 	deleteComment,
 	bulkCommentAction,
 	type CommentStatus,
 } from "./lib/api/comments";
+import { currentUserQueryKey } from "./lib/api/current-user.js";
 import { saveRecoveryRevision, type RecoveryInput } from "./lib/api/rooms.js";
 import { runBulkAction } from "./lib/bulk";
 import { parseCalendarSearch } from "./lib/calendar";
@@ -177,27 +140,155 @@ import {
 	type RoomEditing,
 	type RoomEvent,
 } from "./lib/co-editing/types.js";
+import { contentListFields, useContentListFields } from "./lib/content-list-fields";
 import { canDuplicateEntry, canPublishEntry, entryEditAccess } from "./lib/content-permissions";
 import { describeContentValidationError } from "./lib/content-validation-errors";
 import { invalidateContentViews } from "./lib/invalidate-content-views.js";
-import { usePluginPage } from "./lib/plugin-context";
+import { usePluginPage, type PluginAdmins } from "./lib/plugin-context";
 import { getPluginBlocks } from "./lib/pluginBlocks";
+import {
+	LiveSyncProvider,
+	useAnnouncePresence,
+	useLiveQueries,
+} from "./lib/realtime/LiveSyncProvider.js";
 import {
 	autosavedDraftKey,
 	lastAutosavedDrafts,
 	withAutosavedDraft,
 } from "./lib/revision-list-cache.js";
+import { lazyRouteModule, routeLoadsEditor, withRouteModules } from "./lib/route-module.js";
+import { setScreenIdle } from "./lib/route-prefetch.js";
+import {
+	blockTypesQueryOptions,
+	bylineFieldsQueryOptions,
+	bylinePickerQueryOptions,
+	bylinesQueryOptions,
+	commentCountsQueryOptions,
+	commentsQueryOptions,
+	contentAuthorsQueryOptions,
+	contentEntryQueryOptions,
+	contentListQuery,
+	dashboardStatsQueryOptions,
+	MEDIA_PAGE_SIZE,
+	mediaFoldersQueryOptions,
+	mediaListQueryOptions,
+	menusQueryOptions,
+	orphanedTablesQueryOptions,
+	pluginsQueryOptions,
+	redirectsQueryOptions,
+	schemaCollectionsQueryOptions,
+	sectionsQueryOptions,
+	taxonomyDefQueryOptions,
+	taxonomyTermsQueryOptions,
+	translationsQueryOptions,
+	usersQueryOptions,
+	widgetAreasQueryOptions,
+	widgetComponentsQueryOptions,
+} from "./lib/route-queries.js";
+import { translationsLoadState } from "./lib/translations-load-state.js";
 import { sanitizeRedirectUrl } from "./lib/url";
-import { usePagedQuery } from "./lib/use-paged-query";
+import { defaultPageSize, pagedQueryOptions, usePagedQuery } from "./lib/use-paged-query";
 import { useEntryLock } from "./lib/useEntryLock";
-import { BylineSchemaPage } from "./routes/byline-schema";
-import { BylinesPage } from "./routes/bylines";
-import { CalendarPage } from "./routes/calendar";
-import { UsersPage } from "./routes/users";
+import { useDateLocaleReady } from "./locales/date-locale.js";
+
+const SetupWizard = lazyRouteModule("components/SetupWizard", "SetupWizard");
+const LoginPage = lazyRouteModule("components/LoginPage", "LoginPage");
+const MagicLinkConfirmPage = lazyRouteModule(
+	"components/MagicLinkConfirmPage",
+	"MagicLinkConfirmPage",
+);
+const SignupPage = lazyRouteModule("components/SignupPage", "SignupPage");
+const InviteAcceptPage = lazyRouteModule("components/InviteAcceptPage", "InviteAcceptPage");
+const DeviceAuthorizePage = lazyRouteModule(
+	"components/DeviceAuthorizePage",
+	"DeviceAuthorizePage",
+);
+const Dashboard = lazyRouteModule("components/Dashboard", "Dashboard");
+const CalendarPage = lazyRouteModule("routes/calendar", "CalendarPage");
+const ContentList = lazyRouteModule("components/ContentList", "ContentList");
+const ContentEditor = lazyRouteModule("components/ContentEditor", "ContentEditor");
+const ContentTypeList = lazyRouteModule("components/ContentTypeList", "ContentTypeList");
+const BlockTypeList = lazyRouteModule("components/BlockTypeList", "BlockTypeList");
+const ContentTypeEditor = lazyRouteModule("components/ContentTypeEditor", "ContentTypeEditor");
+const RelationList = lazyRouteModule("components/RelationList", "RelationList");
+const MediaLibrary = lazyRouteModule("components/MediaLibrary", "MediaLibrary");
+const CommentInbox = lazyRouteModule("components/comments/CommentInbox", "CommentInbox");
+const MenuList = lazyRouteModule("components/MenuList", "MenuList");
+const MenuEditor = lazyRouteModule("components/MenuEditor", "MenuEditor");
+const PluginManager = lazyRouteModule("components/PluginManager", "PluginManager");
+const PluginSettings = lazyRouteModule("components/PluginSettings", "PluginSettings");
+const RegistryBrowse = lazyRouteModule("components/RegistryBrowse", "RegistryBrowse");
+const RegistryPluginDetail = lazyRouteModule(
+	"components/RegistryPluginDetail",
+	"RegistryPluginDetail",
+);
+const SandboxedPluginPage = lazyRouteModule(
+	"components/SandboxedPluginPage",
+	"SandboxedPluginPage",
+);
+const Redirects = lazyRouteModule("components/Redirects", "Redirects");
+const Sections = lazyRouteModule("components/Sections", "Sections");
+const SectionEditor = lazyRouteModule("components/SectionEditor", "SectionEditor");
+const TaxonomyManager = lazyRouteModule("components/TaxonomyManager", "TaxonomyManager");
+const UsersPage = lazyRouteModule("routes/users", "UsersPage");
+const BylinesPage = lazyRouteModule("routes/bylines", "BylinesPage");
+const BylineSchemaPage = lazyRouteModule("routes/byline-schema", "BylineSchemaPage");
+const Widgets = lazyRouteModule("components/Widgets", "Widgets");
+const Settings = lazyRouteModule("components/Settings", "Settings");
+const MediaUsageSettings = lazyRouteModule(
+	"components/settings/MediaUsageSettings",
+	"MediaUsageSettings",
+);
+const GeneralSettings = lazyRouteModule("components/settings/GeneralSettings", "GeneralSettings");
+const SocialSettings = lazyRouteModule("components/settings/SocialSettings", "SocialSettings");
+const SeoSettings = lazyRouteModule("components/settings/SeoSettings", "SeoSettings");
+const SecuritySettings = lazyRouteModule(
+	"components/settings/SecuritySettings",
+	"SecuritySettings",
+);
+const AllowedDomainsSettings = lazyRouteModule(
+	"components/settings/AllowedDomainsSettings",
+	"AllowedDomainsSettings",
+);
+const ApiTokenSettings = lazyRouteModule(
+	"components/settings/ApiTokenSettings",
+	"ApiTokenSettings",
+);
+const EmailSettings = lazyRouteModule("components/settings/EmailSettings", "EmailSettings");
+const BackupSettings = lazyRouteModule("components/settings/BackupSettings", "BackupSettings");
+const TransferSettings = lazyRouteModule(
+	"components/settings/TransferSettings",
+	"TransferSettings",
+);
+const SidebarsSettings = lazyRouteModule(
+	"components/settings/SidebarsSettings",
+	"SidebarsSettings",
+);
+const WordPressImport = lazyRouteModule("components/WordPressImport", "WordPressImport");
 
 // Router context type
 interface RouterContext {
 	queryClient: QueryClient;
+	/** The content list requests different fields when a plugin adds a column to it. */
+	pluginAdmins?: PluginAdmins;
+}
+
+/*
+ * A route's loader prefetches the queries its screen renders first, with the
+ * screen's own query options. It runs when the router preloads the route on
+ * hover, focus or touch of a link, so the screen usually opens with its data,
+ * and on navigation, so the requests start before the screen's code arrives.
+ * Loaders never hold up a navigation: they don't return their promises.
+ */
+
+/** Calls `load` with the manifest, which the admin's frame loads before it shows a link. */
+function withCachedManifest(queryClient: QueryClient, load: (manifest: AdminManifest) => void) {
+	const manifest = queryClient.getQueryData<AdminManifest>(["manifest"]);
+	if (manifest) load(manifest);
+}
+
+function cachedUserIsAdmin(queryClient: QueryClient): boolean {
+	return (queryClient.getQueryData<CurrentUser>(currentUserQueryKey)?.role ?? 0) >= ROLE_ADMIN;
 }
 
 interface ContentUpdateChanges {
@@ -282,6 +373,22 @@ function revisionListLimit(queryKey: readonly unknown[]): number {
 		: Number.POSITIVE_INFINITY;
 }
 
+/**
+ * `next` with the slug its draft stages. Write responses leave it out; the server keeps the
+ * staged slug of the draft a write replaces unless the write stages another.
+ */
+function withDraftSlug(
+	next: ContentItem,
+	previous: ContentItem | undefined,
+	stagedSlug?: string,
+): ContentItem {
+	if (next.draftSlug !== undefined) return next;
+	const { draftSlug: _, ...item } = next;
+	const hasDraft = !!item.draftRevisionId && item.draftRevisionId !== item.liveRevisionId;
+	const draftSlug = hasDraft ? (stagedSlug ?? previous?.draftSlug) : undefined;
+	return draftSlug === undefined ? item : { ...item, draftSlug };
+}
+
 function patchAutosaveQueries(
 	queryClient: QueryClient,
 	params: {
@@ -300,6 +407,10 @@ function patchAutosaveQueries(
 ) {
 	const { collection, id, savedItem, payload, referenceRows, fields, previousDraftId } = params;
 	const draftRevisionId = savedItem.draftRevisionId;
+	const contentKey = ["content", collection, id];
+	const cachedEntry = queryClient
+		.getQueriesData<ContentItem>({ queryKey: contentKey })
+		.find(([, entry]) => entry)?.[1];
 
 	if (draftRevisionId) {
 		const listsKey = ["revisions", collection, id];
@@ -309,7 +420,17 @@ function patchAutosaveQueries(
 		// staged references and slug.
 		const previousDraft = previousDraftId
 			? (queryClient.getQueryData<Revision>(["revision", previousDraftId]) ??
-				lists.flatMap(([, list]) => list?.items ?? []).find((item) => item.id === previousDraftId))
+				lists
+					.flatMap(([, list]) => list?.items ?? [])
+					.find((item) => item.id === previousDraftId) ??
+				(cachedEntry?.draftRevisionId === previousDraftId
+					? {
+							data: {
+								...cachedEntry.data,
+								...(cachedEntry.draftSlug !== undefined && { _slug: cachedEntry.draftSlug }),
+							},
+						}
+					: undefined))
 			: undefined;
 		const existing = queryClient.getQueryData<Revision>(["revision", draftRevisionId]);
 		const nextData: Record<string, unknown> = {
@@ -385,10 +506,9 @@ function patchAutosaveQueries(
 	// The save response carries no `references` (only the editor GET hydrates
 	// them), and an entry reopened from this cache would show its reference
 	// fields empty, so the cached pages are carried over.
-	const contentKey = ["content", collection, id];
 	const contentRead = queryClient.isFetching({ queryKey: contentKey }) > 0;
 	queryClient.setQueriesData<ContentItem>({ queryKey: contentKey }, (cached) => ({
-		...savedItem,
+		...withDraftSlug(savedItem, cached ?? cachedEntry, payload.slug),
 		references:
 			savedItem.references ?? withAutosavedReferences(cached?.references, referenceRows, fields),
 	}));
@@ -452,6 +572,7 @@ function BaseRootComponent() {
 	React.useEffect(() => {
 		if (title) document.title = `${title} · ${siteLabel}`;
 	}, [title, siteLabel]);
+	useRemoveBootLoader();
 	return <Outlet />;
 }
 
@@ -461,6 +582,7 @@ const setupRoute = createRoute({
 	path: "/setup",
 	staticData: { pageTitle: msg`Setup` },
 	component: SetupWizard,
+	pendingComponent: StandalonePending,
 });
 
 // Login route (standalone, no Shell)
@@ -468,7 +590,8 @@ const loginRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	path: "/login",
 	staticData: { pageTitle: msg`Log in` },
-	component: LoginPageWrapper,
+	component: withRouteModules(LoginPageWrapper, LoginPage),
+	pendingComponent: StandalonePending,
 });
 
 function LoginPageWrapper() {
@@ -482,7 +605,8 @@ const magicLinkConfirmRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	path: "/login/magic-link",
 	staticData: { pageTitle: msg`Confirm magic link` },
-	component: MagicLinkConfirmPageWrapper,
+	component: withRouteModules(MagicLinkConfirmPageWrapper, MagicLinkConfirmPage),
+	pendingComponent: StandalonePending,
 	validateSearch: (search: Record<string, unknown>) => ({
 		token: typeof search.token === "string" ? search.token : undefined,
 		redirect: typeof search.redirect === "string" ? search.redirect : undefined,
@@ -501,6 +625,7 @@ const signupRoute = createRoute({
 	path: "/signup",
 	staticData: { pageTitle: msg`Sign up` },
 	component: SignupPage,
+	pendingComponent: StandalonePending,
 });
 
 // Invite accept route (standalone, no Shell)
@@ -509,6 +634,7 @@ const inviteAcceptRoute = createRoute({
 	path: "/invite/accept",
 	staticData: { pageTitle: msg`Accept invitation` },
 	component: InviteAcceptPage,
+	pendingComponent: StandalonePending,
 	validateSearch: (search: Record<string, unknown>) => ({
 		token: typeof search.token === "string" ? search.token : undefined,
 	}),
@@ -520,6 +646,7 @@ const deviceRoute = createRoute({
 	path: "/device",
 	staticData: { pageTitle: msg`Authorize device` },
 	component: DeviceAuthorizePage,
+	pendingComponent: StandalonePending,
 });
 
 // Layout route with Shell wrapper for admin pages (pathless - matches all admin routes)
@@ -527,6 +654,7 @@ const adminLayoutRoute = createRoute({
 	getParentRoute: () => baseRootRoute,
 	id: "_admin",
 	component: RootComponent,
+	pendingComponent: AdminFrameSkeleton,
 });
 
 // Isomorphic requestIdleCallback polyfill
@@ -536,7 +664,7 @@ if (typeof window !== "undefined" && typeof window.requestIdleCallback === "unde
 }
 
 function RootComponent() {
-	const { t } = useLingui();
+	const { t, i18n } = useLingui();
 	const {
 		data: manifest,
 		isLoading,
@@ -550,20 +678,40 @@ function RootComponent() {
 	const currentUser = useCurrentUser();
 	const [userSettled, setUserSettled] = React.useState(false);
 	if (!userSettled && !currentUser.isLoading) setUserSettled(true);
+	const dateLocaleReady = useDateLocaleReady(i18n.locale);
+	const ready = !isLoading && userSettled && dateLocaleReady;
+	const fetching = useIsFetching();
+	const mutating = useIsMutating();
+	const navigating = useRouterState({ select: (state) => state.status !== "idle" });
+	// Loading modules runs them on the main thread, which delays keystrokes in the editor.
+	const editing = useMatches({ select: (matches) => routeLoadsEditor(matches.at(-1)?.fullPath) });
+	const screenIdle = ready && !editing && !navigating && fetching === 0 && mutating === 0;
 
-	if (isLoading || !userSettled) {
-		return <ConfigurationLoadingScreen />;
+	React.useEffect(() => {
+		if (!screenIdle) return;
+		setScreenIdle(true);
+		return () => setScreenIdle(false);
+	}, [screenIdle]);
+
+	if (!ready) {
+		return <AdminFrameSkeleton />;
 	}
 
 	if (error || !manifest) {
-		return <ErrorScreen error={error?.message ?? t`Failed to load admin`} />;
+		return (
+			<AdminFrameSkeleton>
+				<ErrorScreen error={error?.message ?? t`Failed to load admin`} />
+			</AdminFrameSkeleton>
+		);
 	}
 
 	// Plugin admin components are passed via props and available through PluginAdminContext
 	return (
-		<Shell manifest={manifest}>
-			<Outlet />
-		</Shell>
+		<LiveSyncProvider enabled={manifest.realtime === true}>
+			<Shell manifest={manifest}>
+				<Outlet />
+			</Shell>
+		</LiveSyncProvider>
 	);
 }
 
@@ -571,8 +719,11 @@ function RootComponent() {
 const dashboardRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/",
-	component: DashboardPage,
+	component: withRouteModules(DashboardPage, Dashboard),
 	staticData: { pageTitle: msg`Dashboard` },
+	loader: ({ context: { queryClient } }) => {
+		void queryClient.prefetchQuery(dashboardStatsQueryOptions());
+	},
 });
 
 function DashboardPage() {
@@ -598,12 +749,49 @@ const calendarRoute = createRoute({
 const contentListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection",
-	component: ContentListPage,
+	component: withRouteModules(ContentListPage, ContentList),
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
 	}),
 	staticData: { pageTitle: msg`Content` },
+	loaderDeps: ({ search }) => ({ locale: search.locale }),
+	loader: ({ context: { queryClient, pluginAdmins = {} }, params: { collection }, deps }) => {
+		withCachedManifest(queryClient, (manifest) => {
+			if (!manifest.collections[collection]) return;
+			const list = contentListQuery(collection, {
+				locale: contentListLocale(manifest, deps.locale),
+				sort: defaultContentListSort(manifest, collection),
+				search: "",
+				status: "all",
+				author: "",
+				date: undefined,
+				byline: undefined,
+				fields: contentListFields(collection, manifest, pluginAdmins),
+			});
+			void queryClient.prefetchQuery(
+				pagedQueryOptions(list, 1, defaultPageSize(CONTENT_LIST_PAGE_SIZES)),
+			);
+			void queryClient.prefetchQuery(contentAuthorsQueryOptions(collection));
+		});
+	},
 });
+
+/** The locale a content list shows: the requested one, else the default. */
+function contentListLocale(manifest: AdminManifest | undefined, requested: string | undefined) {
+	const i18n = manifest?.i18n;
+	return i18n ? (requested ?? i18n.defaultLocale) : undefined;
+}
+
+/** The collection's date field, else last-updated, newest first. */
+function defaultContentListSort(
+	manifest: AdminManifest | undefined,
+	collection: string,
+): ContentListSort {
+	return {
+		field: manifest?.collections[collection]?.dateField ?? "updatedAt",
+		direction: "desc",
+	};
+}
 
 function ContentListPage() {
 	const { t } = useLingui();
@@ -620,20 +808,14 @@ function ContentListPage() {
 	const { data: currentUser } = useCurrentUser();
 
 	const i18n = manifest?.i18n;
-
-	// Default to defaultLocale when i18n is enabled and no locale specified
-	const activeLocale = i18n ? (localeParam ?? i18n.defaultLocale) : undefined;
+	const activeLocale = contentListLocale(manifest, localeParam);
 
 	// Controlled sort state — passed to the list, and included in the query
 	// key so changing direction invalidates the current cursor chain.
-	// Default sorts by the collection's dateField, else last-updated.
 	// `sortOverride` is the user's explicit choice (null until they click a
 	// column), keeping the default reactive as the manifest loads and per-collection.
 	const [sortOverride, setSortOverride] = React.useState<ContentListSort | null>(null);
-	const sort: ContentListSort = sortOverride ?? {
-		field: manifest?.collections[collection]?.dateField ?? "updatedAt",
-		direction: "desc",
-	};
+	const sort: ContentListSort = sortOverride ?? defaultContentListSort(manifest, collection);
 	React.useEffect(() => setSortOverride(null), [collection]);
 
 	// Server-side search term (debounced inside ContentList). Part of the query
@@ -670,55 +852,52 @@ function ContentListPage() {
 		};
 	}, [dateFilter]);
 
-	// Authors are collection-wide (the endpoint doesn't scope by locale), so the
-	// query key omits locale to avoid refetching/cache-fragmenting on locale
-	// switches, and the selection stays valid across locales.
 	const { data: authors } = useQuery({
-		queryKey: ["content", collection, "authors"],
-		queryFn: () => fetchContentAuthors(collection),
+		...contentAuthorsQueryOptions(collection),
 		enabled: !!manifest,
 	});
 
+	const listFields = useContentListFields(collection, manifest);
 	const contentList = usePagedQuery({
-		scope: ["content", collection],
-		queryKey: [
-			{
-				locale: activeLocale,
-				sort,
-				search: searchTerm,
-				status: statusFilter,
-				author: authorFilter,
-				date: dateApiParams,
-				byline: bylineApiParams,
-			},
-		],
-		queryFn: ({ page, perPage }) =>
-			fetchContentList(collection, {
-				locale: activeLocale,
-				page,
-				limit: perPage,
-				orderBy: sort.field,
-				order: sort.direction,
-				search: searchTerm || undefined,
-				status: statusFilter === "all" ? undefined : statusFilter,
-				authorId: authorFilter || undefined,
-				...dateApiParams,
-				...bylineApiParams,
-			}),
+		...contentListQuery(collection, {
+			locale: activeLocale,
+			sort,
+			search: searchTerm,
+			status: statusFilter,
+			author: authorFilter,
+			date: dateApiParams,
+			byline: bylineApiParams,
+			fields: listFields,
+		}),
 		pageSizes: CONTENT_LIST_PAGE_SIZES,
 		enabled: !!manifest,
 	});
 
-	// A failed trash request (subscribers can't read the trash) only hides the
-	// trash rows; it never replaces the list with an error screen.
+	// The list's response carries the trash count for the tab's badge, so the
+	// trash itself loads only once its tab opens. A failed trash request
+	// (subscribers can't read the trash) only hides the trash rows; it never
+	// replaces the list with an error screen.
+	const [trashOpened, setTrashOpened] = React.useState(false);
 	const trash = usePagedQuery({
 		scope: ["content", collection, "trash"],
+		live: [`content/${collection}`],
 		queryKey: [{ locale: activeLocale }],
 		queryFn: ({ page, perPage }) =>
 			fetchTrashedContent(collection, { locale: activeLocale, page, limit: perPage }),
 		pageSizes: CONTENT_LIST_PAGE_SIZES,
-		enabled: !!manifest,
+		enabled: !!manifest && trashOpened,
 	});
+	const listPage = contentList.query.data;
+	const listTrashTotal =
+		listPage && "trashTotal" in listPage && typeof listPage.trashTotal === "number"
+			? listPage.trashTotal
+			: 0;
+	// Whichever answered last is current: a trash page cached from an earlier
+	// visit stays put while the list refetches after an entry is trashed.
+	const trashedCount =
+		trash.query.data && trash.query.dataUpdatedAt >= contentList.query.dataUpdatedAt
+			? trash.pagination.totalCount
+			: listTrashTotal;
 
 	const deleteMutation = useMutation({
 		mutationFn: (id: string) => deleteContent(collection, id),
@@ -838,18 +1017,12 @@ function ContentListPage() {
 	// Keep every hook above the early returns below — a render that takes a
 	// guard (e.g. `error`) must run the same number of hooks as a full render,
 	// or React throws #300 "Rendered fewer hooks than expected" (#1415).
-	if (!manifest) {
-		return <LoadingScreen />;
-	}
+	if (!manifest) return null;
 
 	const collectionConfig = manifest.collections[collection];
 
 	if (!collectionConfig) {
 		return <NotFoundPage message={t`Collection "${collection}" not found`} />;
-	}
-
-	if (contentList.query.error) {
-		return <ErrorScreen error={contentList.query.error.message} />;
 	}
 
 	const listColumns = (collectionConfig.listColumns ?? []).flatMap((slug) => {
@@ -884,8 +1057,13 @@ function ContentListPage() {
 			trashedItems={trash.items}
 			trashPagination={trash.pagination}
 			isLoading={contentList.query.isLoading}
+			loadFailed={contentList.query.isError && contentList.items.length === 0}
+			onRetry={() => void contentList.query.refetch()}
 			isTrashedLoading={trash.query.isLoading}
-			trashedCount={trash.pagination.totalCount}
+			trashedCount={trashedCount}
+			onTabChange={(tab) => {
+				if (tab === "trash") setTrashOpened(true);
+			}}
 			onDelete={(id) => deleteMutation.mutateAsync(id)}
 			onRestore={(id) => restoreMutation.mutate(id)}
 			onPermanentDelete={(id) => permanentDeleteMutation.mutateAsync(id)}
@@ -927,7 +1105,8 @@ function ContentListPage() {
 const contentNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/new",
-	component: ContentNewPage,
+	component: withRouteModules(ContentNewPage, ContentEditor),
+	pendingComponent: EditorFramePending,
 	staticData: { fullBleed: true, pageTitle: msg`New content` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		locale: typeof search.locale === "string" ? search.locale : undefined,
@@ -940,7 +1119,6 @@ function ContentNewPage() {
 	const navigate = useNavigate();
 	const queryClient = useQueryClient();
 	const { t } = useLingui();
-	const toastManager = useKumoToastManager();
 	const [selectedBylines, setSelectedBylines] = React.useState<BylineCreditInput[]>([]);
 	const { data: currentUser } = useCurrentUser();
 	const adminLayout = useAdminLayout();
@@ -974,17 +1152,6 @@ function ContentNewPage() {
 				ignoreBlocker: true,
 			});
 		},
-		onError: (error) => {
-			toastManager.add({
-				title: t`Failed to save`,
-				description:
-					describeContentValidationError(
-						error,
-						manifest?.collections[collection]?.fields ?? EMPTY_FIELDS,
-					) ?? (error instanceof Error ? error.message : t`An error occurred`),
-				variant: "error",
-			});
-		},
 	});
 
 	const pluginBlocks = React.useMemo(() => (manifest ? getPluginBlocks(manifest) : []), [manifest]);
@@ -995,8 +1162,7 @@ function ContentNewPage() {
 	// query key so switching locales fetches a fresh slice rather than
 	// reusing a stale cache.
 	const { data: bylinesData, isSuccess: bylinesLoaded } = useQuery({
-		queryKey: ["bylines", "picker", pickerLocale ?? null],
-		queryFn: () => fetchBylines({ locale: pickerLocale, limit: 100 }),
+		...bylinePickerQueryOptions(pickerLocale),
 		enabled: !!manifest,
 	});
 
@@ -1042,7 +1208,7 @@ function ContentNewPage() {
 	);
 
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <EditorFramePending />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -1091,12 +1257,31 @@ function ContentNewPage() {
 const contentEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content/$collection/$id",
-	component: ContentEditPage,
+	component: withRouteModules(ContentEditPage, ContentEditor),
+	pendingComponent: EditorFramePending,
 	staticData: { fullBleed: true, pageTitle: msg`Edit content` },
 	validateSearch: (search) => ({
 		...(typeof search.field === "string" && { field: search.field }),
 		...(typeof search.locale === "string" && { locale: search.locale }),
 	}),
+	loaderDeps: ({ search }) => ({ locale: search.locale }),
+	loader: ({ context: { queryClient }, params: { collection, id }, deps }) => {
+		withCachedManifest(queryClient, (manifest) => {
+			if (!manifest.collections[collection]) return;
+			void queryClient
+				.fetchQuery(
+					contentEntryQueryOptions(collection, id, contentListLocale(manifest, deps.locale)),
+				)
+				.then((entry) => {
+					void queryClient.prefetchQuery(bylinePickerQueryOptions(entry.locale));
+					if (manifest.i18n)
+						void queryClient.prefetchQuery(translationsQueryOptions(collection, id));
+					return undefined;
+				})
+				// The screen reads the entry again and shows why it failed.
+				.catch(() => undefined);
+		});
+	},
 });
 
 // Role levels from @emdash-cms/auth
@@ -1134,8 +1319,10 @@ function ContentEditPage() {
 		},
 		[],
 	);
+	const [editorDirty, setEditorDirty] = React.useState(false);
 	const handleEditorDirtyChange = React.useCallback((isDirty: boolean) => {
 		isEditorDirtyRef.current = isDirty;
+		setEditorDirty(isDirty);
 	}, []);
 
 	const { data: manifest } = useQuery({
@@ -1152,11 +1339,8 @@ function ContentEditPage() {
 		isLoading,
 		error: itemError,
 	} = useQuery({
-		queryKey: ["content", collection, id, { locale: activeLocale }],
-		queryFn: () => fetchContent(collection, id, { locale: activeLocale }),
+		...contentEntryQueryOptions(collection, id, activeLocale),
 		enabled: !i18n || !!activeLocale,
-		retry: (failureCount, queryError) =>
-			!(queryError instanceof ApiResponseError && queryError.status === 404) && failureCount < 1,
 	});
 	const { data: currentUser } = useCurrentUser();
 	const adminLayout = useAdminLayout();
@@ -1307,13 +1491,7 @@ function ContentEditPage() {
 	React.useEffect(() => {
 		if (!leavingRoom) return;
 		const identity = revisionIdentity;
-		const draftRevisionId = rawItem?.draftRevisionId;
-		void Promise.all([
-			queryClient.invalidateQueries({ queryKey: ["content", collection, id] }),
-			draftRevisionId
-				? queryClient.invalidateQueries({ queryKey: ["revision", draftRevisionId] })
-				: undefined,
-		]).then(() => {
+		void queryClient.invalidateQueries({ queryKey: ["content", collection, id] }).then(() => {
 			resetEditorItem(id);
 			setLeftRoomEntry((current) => (current === identity ? null : current));
 			return undefined;
@@ -1578,73 +1756,35 @@ function ContentEditPage() {
 		void navigate({ search: preservedSearch as never, replace: true });
 	}, [searchParams, navigate]);
 
-	React.useEffect(() => {
-		if (typeof searchParams.field !== "string" || isLoading) return;
-		const rootField = searchParams.field.split(".")[0] ?? "";
-		const rootDefinition = (roomView?.manifest?.collections[collection]?.fields ??
-			collectionFields)[rootField];
-		// Blocks fields reveal and focus their own nested controls after mounting them.
-		if (searchParams.field.includes(".") && rootDefinition?.kind === "blocks") return;
-
-		const timeoutId = requestIdleCallback(() => {
-			const el = document.getElementById(`field-${searchParams.field}`);
-			if (el) {
-				el.scrollIntoView({ behavior: "smooth", block: "center" });
-				el.focus();
-				handleFieldFocused();
-			}
-		});
-		return () => cancelIdleCallback(timeoutId);
-	}, [
-		searchParams,
-		isLoading,
-		handleFieldFocused,
-		roomView?.manifest,
-		collection,
-		collectionFields,
-	]);
-
 	// Fetch translations when i18n is enabled
-	const { data: translationsData } = useQuery({
-		queryKey: ["translations", collection, id],
-		queryFn: () => fetchTranslations(collection, id),
+	const translationsQuery = useQuery({
+		...translationsQueryOptions(collection, id),
 		enabled: !!i18n && !!rawItem,
 	});
+	const translationsData = translationsQuery.data;
+	const translationsState = translationsLoadState(translationsQuery);
 
-	// When a draft revision exists, fetch its data for the editor form.
-	// The content table holds published data; the draft revision holds
-	// the editor's working copy.
-	const { data: draftRevision } = useQuery({
-		queryKey: ["revision", rawItem?.draftRevisionId],
-		queryFn: () => fetchRevision(rawItem!.draftRevisionId!),
-		enabled: !!rawItem?.draftRevisionId,
+	// A room keeps the entry current itself, and its checkpoints would refetch it under the editor.
+	const liveEntry = useLiveQueries({
+		topics: coEditing.mode === "single-editor" ? [`content/${collection}/${id}`] : [],
+		queryKeys: [["content", collection, id]],
+		dirty: editorDirty,
 	});
+	// Cursors and fields stay in the room; this tells lists and other screens who has the entry open.
+	useAnnouncePresence(`content/${collection}/${id}`, editAccess === null ? "viewing" : "editing");
+	const loadLatestEntry = async () => {
+		await liveEntry.loadLatest();
+		resetEditorItem(id, { discarded: true });
+	};
 
-	// Merge draft revision data into the item for the editor.
-	// The item's metadata (id, status, slug, etc.) comes from the content table;
-	// the data fields come from the draft revision if available.
-	const item = React.useMemo(() => {
-		if (!rawItem) return undefined;
-		if (!draftRevision?.data) return rawItem;
-		// Strip revision metadata keys (prefixed with _)
-		const draftData: Record<string, unknown> = {};
-		for (const [key, value] of Object.entries(draftRevision.data)) {
-			if (!key.startsWith("_")) {
-				draftData[key] = value;
-			}
-		}
-		// Draft slug override
-		const draftSlug =
-			typeof draftRevision.data._slug === "string" ? draftRevision.data._slug : rawItem.slug;
-		return {
-			...rawItem,
-			slug: draftSlug,
-			data: { ...rawItem.data, ...draftData },
-		};
-	}, [rawItem, draftRevision]);
+	// The read already carries the draft's data; the editor edits the slug the draft stages.
+	const item = React.useMemo(
+		() => (rawItem?.draftSlug === undefined ? rawItem : { ...rawItem, slug: rawItem.draftSlug }),
+		[rawItem],
+	);
 
 	// Fetch users list for author selector (only if user is editor+)
-	const { data: usersData } = useQuery({
+	const { data: usersData, isLoading: usersLoading } = useQuery({
 		queryKey: ["users"],
 		queryFn: () => fetchUsers({ limit: 100 }),
 		enabled: !!currentUser && currentUser.role >= ROLE_EDITOR,
@@ -1690,8 +1830,7 @@ function ContentEditPage() {
 		setConflictedEntryIdState(conflictedEntryIdRef.current);
 	}, []);
 	const { data: bylinesData, isSuccess: bylinesLoaded } = useQuery({
-		queryKey: ["bylines", "picker", itemLocale ?? null],
-		queryFn: () => fetchBylines({ locale: itemLocale, limit: 100 }),
+		...bylinePickerQueryOptions(itemLocale),
 		enabled: !!itemLocale,
 	});
 
@@ -1725,15 +1864,9 @@ function ContentEditPage() {
 			void queryClient.invalidateQueries({
 				queryKey: ["revisions", collection, targetId],
 			});
-			// Invalidate the cached draft revision so stale data doesn't overwrite the form
-			if (rawItem?.draftRevisionId) {
-				await queryClient.invalidateQueries({
-					queryKey: ["revision", rawItem.draftRevisionId],
-				});
-			}
 			await contentRefresh;
 		},
-		[collection, queryClient, rawItem?.draftRevisionId],
+		[collection, queryClient],
 	);
 	const recoverFromSaveConflict = React.useCallback(
 		async (entryId: string) => {
@@ -1794,12 +1927,17 @@ function ContentEditPage() {
 				describeContentValidationError(error, collectionFields) ??
 				(error instanceof Error ? error.message : t`An error occurred`);
 			if ((source === "editor" || source === "autosave") && editorShows(targetId)) {
-				setEditorSaveError((current) => ({
-					entryId: targetId,
-					message,
-					title: toastTitle,
-					token: (current?.token ?? 0) + 1,
-				}));
+				// An autosave retried every few seconds keeps its error's token, so the
+				// writer is told once per failure rather than once per retry.
+				setEditorSaveError((current) =>
+					source === "autosave" &&
+					current?.entryId === targetId &&
+					current.message === message &&
+					current.title === toastTitle
+						? current
+						: { entryId: targetId, message, title: toastTitle, token: (current?.token ?? 0) + 1 },
+				);
+				return;
 			}
 			toastManager.add({ title: toastTitle, description: message, variant: "error" });
 		},
@@ -1937,14 +2075,17 @@ function ContentEditPage() {
 				locale: rawItem?.locale ?? activeLocale,
 				_rev: revision,
 			}),
-		onSuccess: (publishedItem, { savedReferences }) => {
+		onSuccess: async (publishedItem, { savedReferences }) => {
+			// The preceding save's refetch can still be on its way with the entry as it was
+			// before publishing, and would land over the published item.
+			await queryClient.cancelQueries({ queryKey: ["content", collection, id] });
 			recordWriteRevision(id, publishedItem);
 			// A selection the preceding save sent is in no cached page yet, so the
 			// entry is read again instead of keeping the pages from before it.
 			queryClient.setQueriesData<ContentItem>(
 				{ queryKey: ["content", collection, id] },
 				(cached) => ({
-					...publishedItem,
+					...withDraftSlug(publishedItem, cached),
 					references:
 						publishedItem.references ?? (savedReferences ? undefined : cached?.references),
 				}),
@@ -2012,7 +2153,7 @@ function ContentEditPage() {
 		async (
 			changedItem: ContentItem,
 			savedItem?: ContentItem,
-			savedPayload?: { references?: Record<string, string[]> },
+			savedPayload?: { slug?: string; references?: Record<string, string[]> },
 		) => {
 			await queryClient.cancelQueries({ queryKey: ["content", collection, id] });
 			const currentChangedItem = changedItem._rev
@@ -2023,7 +2164,7 @@ function ContentEditPage() {
 				{ queryKey: ["content", collection, id] },
 				(existing) => {
 					const currentItem = savedItem ?? existing;
-					return currentItem
+					const merged = currentItem
 						? {
 								...currentItem,
 								...currentChangedItem,
@@ -2036,6 +2177,11 @@ function ContentEditPage() {
 									: (currentItem.references ?? existing?.references),
 							}
 						: currentChangedItem;
+					return withDraftSlug(
+						{ ...merged, draftSlug: currentChangedItem.draftSlug },
+						existing,
+						savedItem ? savedPayload?.slug : undefined,
+					);
 				},
 			);
 			// The save's own refetch was cancelled above, so a selection it sent is
@@ -2187,8 +2333,7 @@ function ContentEditPage() {
 					try {
 						// oxlint-disable-next-line no-await-in-loop -- a retry rebases on a fresh read
 						const latest = await queryClient.fetchQuery({
-							queryKey: ["content", collection, id, { locale: activeLocale }],
-							queryFn: () => fetchContent(collection, id, { locale: activeLocale }),
+							...contentEntryQueryOptions(collection, id, activeLocale),
 							staleTime: 0,
 						});
 						// oxlint-disable-next-line no-await-in-loop -- a retry rebases on a fresh read
@@ -2517,7 +2662,7 @@ function ContentEditPage() {
 	}, [collection, id, queryClient]);
 
 	if (!manifest) {
-		return <LoadingScreen />;
+		return <EditorFramePending />;
 	}
 
 	const collectionConfig = manifest.collections[collection];
@@ -2527,7 +2672,7 @@ function ContentEditPage() {
 	}
 
 	if (isLoading) {
-		return <LoadingScreen />;
+		return <EditorFramePending />;
 	}
 
 	if (itemError && !rawItem) {
@@ -2543,7 +2688,7 @@ function ContentEditPage() {
 	}
 
 	if (!showsEditor) {
-		return <LoadingScreen />;
+		return <EditorFramePending />;
 	}
 
 	const readOnlyBanner = (
@@ -2605,6 +2750,15 @@ function ContentEditPage() {
 		);
 	}
 
+	if (liveEntry.changedElsewhere) {
+		notice = (
+			<>
+				<ChangedElsewhereNotice onLoad={loadLatestEntry} />
+				{notice}
+			</>
+		);
+	}
+
 	const editor = (
 		<ContentEditor
 			collection={collection}
@@ -2652,9 +2806,13 @@ function ContentEditPage() {
 			currentUser={currentUser}
 			adminLayout={adminLayout.editor}
 			users={usersData?.items}
+			usersLoading={usersLoading}
 			onAuthorChange={handleAuthorChange}
 			i18n={i18n}
 			translations={translationsData?.translations}
+			translationsLoading={translationsState.loading}
+			translationsError={translationsState.error}
+			onRetryTranslations={translationsState.onRetry}
 			onTranslate={handleTranslate}
 			pluginBlocks={pluginBlocks}
 			hasSeo={collectionConfig.hasSeo}
@@ -2688,14 +2846,27 @@ function ContentEditPage() {
 const mediaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/media",
-	component: MediaPage,
-	staticData: { pageTitle: msg`Media` },
+	component: withRouteModules(MediaPage, MediaLibrary),
+	staticData: { pageTitle: msg`Media`, heading: msg`Media Library` },
 	validateSearch: (search: Record<string, unknown>) => ({
 		folder:
 			typeof search.folder === "string" && search.folder.length > 0 && search.folder.length <= 64
 				? search.folder
 				: undefined,
 	}),
+	loaderDeps: ({ search }) => ({ folder: search.folder }),
+	loader: ({ context: { queryClient }, deps: { folder } }) => {
+		void queryClient.prefetchQuery(
+			mediaListQueryOptions({
+				search: "",
+				mimeFilter: undefined,
+				folder,
+				page: 1,
+				perPage: MEDIA_PAGE_SIZE,
+			}),
+		);
+		if (folder === undefined) void queryClient.prefetchInfiniteQuery(mediaFoldersQueryOptions(""));
+	},
 });
 
 function MediaPage() {
@@ -2709,10 +2880,9 @@ function MediaPage() {
 	const [search, setSearch] = React.useState("");
 	const [mimeFilter, setMimeFilter] = React.useState<string | string[] | undefined>(undefined);
 	const [page, setPage] = React.useState(1);
-	const [perPage, setPerPage] = React.useState(35);
+	const [perPage, setPerPage] = React.useState(MEDIA_PAGE_SIZE);
 	const [retainedTotalCount, setRetainedTotalCount] = React.useState(0);
 	const [activeProvider, setActiveProvider] = React.useState("local");
-	const mimeKey = Array.isArray(mimeFilter) ? mimeFilter.join(",") : (mimeFilter ?? "");
 	const currentFolderQuery = useQuery({
 		queryKey: ["media-folder", folder],
 		queryFn: () => fetchMediaFolder(folder!),
@@ -2747,16 +2917,9 @@ function MediaPage() {
 		mimeFilter === undefined &&
 		(folder === undefined || search !== "");
 	const folderListQuery = useInfiniteQuery({
-		queryKey: ["media-folders", "page", { search }],
-		queryFn: ({ pageParam }) =>
-			fetchMediaFolders({
-				limit: 100,
-				cursor: pageParam,
-				search: search || undefined,
-			}),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		...mediaFoldersQueryOptions(search),
 		enabled: folderListEnabled,
+		placeholderData: keepPreviousData,
 	});
 	const folders = React.useMemo(
 		() => folderListQuery.data?.pages.flatMap((folderPage) => folderPage.items) ?? [],
@@ -2764,18 +2927,7 @@ function MediaPage() {
 	);
 
 	const { data, isLoading, isFetching, error } = useQuery({
-		queryKey: [
-			"media",
-			{ search, mime: mimeKey, folder: folder ?? "main", page: requestedPage, perPage },
-		],
-		queryFn: () =>
-			fetchMediaList({
-				page: requestedPage,
-				limit: perPage,
-				search: search || undefined,
-				mimeType: mimeFilter,
-				folderId: search ? undefined : (folder ?? null),
-			}),
+		...mediaListQueryOptions({ search, mimeFilter, folder, page: requestedPage, perPage }),
 		placeholderData: keepPreviousData,
 	});
 
@@ -2986,8 +3138,13 @@ function MediaPage() {
 const commentsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/comments",
-	component: CommentsPage,
+	component: withRouteModules(CommentsPage, CommentInbox),
 	staticData: { pageTitle: msg`Comments` },
+	loader: ({ context: { queryClient } }) => {
+		void queryClient.prefetchInfiniteQuery(
+			commentsQueryOptions({ status: "pending", collection: "", search: "" }),
+		);
+	},
 });
 
 // Admin role level from @emdash-cms/auth
@@ -3031,25 +3188,15 @@ function CommentsPage() {
 		isLoading,
 		fetchNextPage,
 		hasNextPage,
-	} = useInfiniteQuery({
-		queryKey: ["comments", activeStatus, collectionFilter, debouncedSearch],
-		queryFn: ({ pageParam }) =>
-			fetchComments({
-				status: activeStatus,
-				collection: collectionFilter || undefined,
-				search: debouncedSearch || undefined,
-				cursor: pageParam,
-				limit: 50,
-			}),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
-	});
+	} = useInfiniteQuery(
+		commentsQueryOptions({
+			status: activeStatus,
+			collection: collectionFilter,
+			search: debouncedSearch,
+		}),
+	);
 
-	// Fetch counts
-	const { data: counts } = useQuery({
-		queryKey: ["commentCounts"],
-		queryFn: fetchCommentCounts,
-	});
+	const { data: counts } = useQuery({ ...commentCountsQueryOptions(), staleTime: 60 * 1000 });
 
 	// Status change mutation
 	const statusMutation = useMutation({
@@ -3122,7 +3269,7 @@ function CommentsPage() {
 	return (
 		<CommentInbox
 			comments={allComments}
-			counts={counts ?? { pending: 0, approved: 0, spam: 0, trash: 0 }}
+			counts={counts}
 			isLoading={isLoading}
 			nextCursor={lastPage?.nextCursor}
 			collections={manifest?.collections ?? {}}
@@ -3163,15 +3310,17 @@ const settingsRoute = createRoute({
 const mediaUsageSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/media-usage",
+	pendingComponent: SettingsPagePending,
 	component: MediaUsageSettings,
-	staticData: { pageTitle: msg`Media Usage` },
+	staticData: { pageTitle: msg`Media Usage`, heading: msg`Media usage tracking` },
 });
 
 // Security settings route
 const securitySettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/security",
-	component: SecuritySettingsWrapper,
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(SecuritySettingsWrapper, SecuritySettings),
 	staticData: { pageTitle: msg`Security Settings` },
 	validateSearch: (search: Record<string, unknown>): { addPasskey?: boolean } =>
 		search.addPasskey === true || search.addPasskey === 1 || search.addPasskey === "1"
@@ -3188,22 +3337,30 @@ function SecuritySettingsWrapper() {
 const allowedDomainsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/allowed-domains",
-	component: () => (
-		<RequireAdmin>
-			<AllowedDomainsSettings />
-		</RequireAdmin>
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<AllowedDomainsSettings />
+			</RequireAdmin>
+		),
+		AllowedDomainsSettings,
 	),
-	staticData: { pageTitle: msg`Allowed Domains` },
+	staticData: { pageTitle: msg`Allowed Domains`, heading: msg`Self-Signup Domains` },
 });
 
 // API tokens settings route
 const apiTokenSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/api-tokens",
-	component: () => (
-		<RequireAdmin>
-			<ApiTokenSettings />
-		</RequireAdmin>
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<ApiTokenSettings />
+			</RequireAdmin>
+		),
+		ApiTokenSettings,
 	),
 	staticData: { pageTitle: msg`API Tokens` },
 });
@@ -3212,10 +3369,14 @@ const apiTokenSettingsRoute = createRoute({
 const emailSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/email",
-	component: () => (
-		<RequireAdmin>
-			<EmailSettings />
-		</RequireAdmin>
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<EmailSettings />
+			</RequireAdmin>
+		),
+		EmailSettings,
 	),
 	staticData: { pageTitle: msg`Email Settings` },
 });
@@ -3224,10 +3385,14 @@ const emailSettingsRoute = createRoute({
 const backupSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/backups",
-	component: () => (
-		<RequireAdmin>
-			<BackupSettings />
-		</RequireAdmin>
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<BackupSettings />
+			</RequireAdmin>
+		),
+		BackupSettings,
 	),
 	staticData: { pageTitle: msg`Backups` },
 });
@@ -3235,7 +3400,8 @@ const backupSettingsRoute = createRoute({
 const transferSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/transfer",
-	component: TransferSettingsPage,
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(TransferSettingsPage, TransferSettings),
 	staticData: { pageTitle: msg`Transfer` },
 	validateSearch: (search: Record<string, unknown>): { start?: "import" } =>
 		search.start === "import" ? { start: "import" } : {},
@@ -3249,7 +3415,9 @@ function TransferSettingsPage() {
 const sidebarsSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/sidebars",
-	component: SidebarsSettingsPage,
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(SidebarsSettingsPage, SidebarsSettings),
+	staticData: { heading: msg`Sidebars` },
 	validateSearch: (search: Record<string, unknown>): { tab?: "editor" } =>
 		search.tab === "editor" ? { tab: "editor" } : {},
 });
@@ -3263,10 +3431,14 @@ function SidebarsSettingsPage() {
 const generalSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/general",
-	component: () => (
-		<RequireAdmin>
-			<GeneralSettings />
-		</RequireAdmin>
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<GeneralSettings />
+			</RequireAdmin>
+		),
+		GeneralSettings,
 	),
 	staticData: { pageTitle: msg`General Settings` },
 });
@@ -3275,22 +3447,30 @@ const generalSettingsRoute = createRoute({
 const socialSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/social",
-	component: () => (
-		<RequireAdmin>
-			<SocialSettings />
-		</RequireAdmin>
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<SocialSettings />
+			</RequireAdmin>
+		),
+		SocialSettings,
 	),
-	staticData: { pageTitle: msg`Social Settings` },
+	staticData: { pageTitle: msg`Social Settings`, heading: msg`Social Links` },
 });
 
 // SEO settings route
 const seoSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/settings/seo",
-	component: () => (
-		<RequireAdmin>
-			<SeoSettings />
-		</RequireAdmin>
+	pendingComponent: SettingsPagePending,
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<SeoSettings />
+			</RequireAdmin>
+		),
+		SeoSettings,
 	),
 	staticData: { pageTitle: msg`SEO Settings` },
 });
@@ -3299,8 +3479,11 @@ const seoSettingsRoute = createRoute({
 const pluginManagerRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins-manager",
-	component: PluginManagerPage,
+	component: withRouteModules(PluginManagerPage, PluginManager),
 	staticData: { pageTitle: msg`Plugins` },
+	loader: ({ context: { queryClient } }) => {
+		void queryClient.prefetchQuery(pluginsQueryOptions());
+	},
 });
 
 function PluginManagerPage() {
@@ -3314,7 +3497,7 @@ function PluginManagerPage() {
 const registryBrowseRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/registry",
-	component: RegistryBrowsePage,
+	component: withRouteModules(RegistryBrowsePage, RegistryBrowse),
 	staticData: { pageTitle: msg`Plugin Registry` },
 });
 
@@ -3327,10 +3510,7 @@ function RegistryBrowsePage() {
 
 	const { data: plugins } = useQuery({
 		queryKey: ["plugins"],
-		queryFn: async () => {
-			const { fetchPlugins } = await import("./lib/api/plugins.js");
-			return fetchPlugins();
-		},
+		queryFn: fetchPlugins,
 		refetchOnMount: "always",
 		refetchOnWindowFocus: "always",
 	});
@@ -3358,7 +3538,7 @@ const marketplaceBrowseRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/marketplace",
 	component: MarketplaceUnavailablePage,
-	staticData: { pageTitle: msg`Plugin Marketplace` },
+	staticData: { pageTitle: msg`Plugin Marketplace`, heading: msg`Marketplace` },
 });
 
 // Marketplace plugin detail route
@@ -3372,7 +3552,7 @@ const marketplaceDetailRoute = createRoute({
 const registryDetailRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/registry/$publisher/$slug",
-	component: RegistryDetailPage,
+	component: withRouteModules(RegistryDetailPage, RegistryPluginDetail),
 	staticData: { pageTitle: msg`Plugin Details` },
 });
 
@@ -3404,7 +3584,7 @@ const themeMarketplaceBrowseRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/themes/marketplace",
 	component: MarketplaceUnavailablePage,
-	staticData: { pageTitle: msg`Theme Marketplace` },
+	staticData: { pageTitle: msg`Theme Marketplace`, heading: msg`Themes` },
 });
 
 // Theme marketplace detail route
@@ -3428,10 +3608,13 @@ function MarketplaceUnavailablePage() {
 const wordpressImportRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/import/wordpress",
-	component: () => (
-		<RequireAdmin>
-			<WordPressImport />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<WordPressImport />
+			</RequireAdmin>
+		),
+		WordPressImport,
 	),
 	staticData: { pageTitle: msg`Import from WordPress` },
 });
@@ -3442,6 +3625,11 @@ const menuListRoute = createRoute({
 	path: "/menus",
 	component: MenuList,
 	staticData: { pageTitle: msg`Menus` },
+	loader: ({ context: { queryClient } }) => {
+		withCachedManifest(queryClient, (manifest) => {
+			void queryClient.prefetchQuery(menusQueryOptions(manifest.i18n?.defaultLocale));
+		});
+	},
 });
 
 const menuEditorRoute = createRoute({
@@ -3460,8 +3648,16 @@ const menuEditorRoute = createRoute({
 const taxonomyRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/taxonomies/$taxonomy",
-	component: TaxonomyPage,
+	component: withRouteModules(TaxonomyPage, TaxonomyManager),
 	staticData: { pageTitle: msg`Taxonomies` },
+	loader: ({ context: { queryClient }, params: { taxonomy } }) => {
+		void queryClient.prefetchQuery(taxonomyDefQueryOptions(taxonomy));
+		withCachedManifest(queryClient, (manifest) => {
+			void queryClient.prefetchQuery(
+				taxonomyTermsQueryOptions(taxonomy, manifest.i18n?.defaultLocale),
+			);
+		});
+	},
 });
 
 function TaxonomyPage() {
@@ -3476,6 +3672,10 @@ const widgetsRoute = createRoute({
 	path: "/widgets",
 	component: Widgets,
 	staticData: { pageTitle: msg`Widgets` },
+	loader: ({ context: { queryClient } }) => {
+		void queryClient.prefetchQuery(widgetAreasQueryOptions());
+		void queryClient.prefetchQuery(widgetComponentsQueryOptions());
+	},
 });
 
 // Sections routes
@@ -3484,6 +3684,11 @@ const redirectsRoute = createRoute({
 	path: "/redirects",
 	component: Redirects,
 	staticData: { pageTitle: msg`Redirects` },
+	loader: ({ context: { queryClient } }) => {
+		void queryClient.prefetchInfiniteQuery(
+			redirectsQueryOptions({ search: "", enabled: undefined, auto: undefined, group: undefined }),
+		);
+	},
 });
 
 const sectionsListRoute = createRoute({
@@ -3491,6 +3696,9 @@ const sectionsListRoute = createRoute({
 	path: "/sections",
 	component: Sections,
 	staticData: { pageTitle: msg`Sections` },
+	loader: ({ context: { queryClient } }) => {
+		void queryClient.prefetchQuery(sectionsQueryOptions({ source: null, search: "" }));
+	},
 });
 
 const sectionEditRoute = createRoute({
@@ -3504,12 +3712,19 @@ const sectionEditRoute = createRoute({
 const usersRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/users",
-	component: () => (
-		<RequireAdmin>
-			<UsersPage />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<UsersPage />
+			</RequireAdmin>
+		),
+		UsersPage,
 	),
 	staticData: { pageTitle: msg`Users` },
+	loader: ({ context: { queryClient } }) => {
+		if (!cachedUserIsAdmin(queryClient)) return;
+		void queryClient.prefetchInfiniteQuery(usersQueryOptions({ search: "", role: undefined }));
+	},
 });
 
 // Bylines route
@@ -3533,6 +3748,13 @@ const bylinesRoute = createRoute({
 	component: BylinesPage,
 	staticData: { pageTitle: msg`Bylines` },
 	validateSearch: parseBylinesLocaleSearch,
+	loaderDeps: ({ search }) => ({ locale: search.locale }),
+	loader: ({ context: { queryClient }, deps }) => {
+		withCachedManifest(queryClient, (manifest) => {
+			const locale = deps.locale ?? manifest.i18n?.defaultLocale;
+			void queryClient.prefetchQuery(bylinesQueryOptions({ search: "", guest: "all", locale }));
+		});
+	},
 });
 
 // Byline schema management route (Discussion #1174, Phase 5).
@@ -3542,47 +3764,47 @@ const bylineSchemaRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/byline-schema",
 	component: BylineSchemaPage,
-	staticData: { pageTitle: msg`Byline Schema` },
+	staticData: { pageTitle: msg`Byline Schema`, heading: msg`Byline schema` },
+	loader: ({ context: { queryClient } }) => {
+		if (cachedUserIsAdmin(queryClient)) void queryClient.prefetchQuery(bylineFieldsQueryOptions());
+	},
 });
 
 // Content Types routes
 const contentTypesListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types",
-	component: ContentTypesListPage,
+	component: withRouteModules(ContentTypesListPage, ContentTypeList, BlockTypeList),
 	staticData: { pageTitle: msg`Content Types` },
+	loader: ({ context: { queryClient } }) => {
+		void queryClient.prefetchQuery(schemaCollectionsQueryOptions());
+		void queryClient.prefetchQuery(orphanedTablesQueryOptions());
+		void queryClient.prefetchQuery(blockTypesQueryOptions());
+	},
 });
 
 function ContentTypesListPage() {
 	const { t } = useLingui();
 	const queryClient = useQueryClient();
+	const { data: manifest } = useQuery({ queryKey: ["manifest"], queryFn: fetchManifest });
 	const toastManager = useKumoToastManager();
 
 	const {
 		data: collections,
 		isLoading: collectionsLoading,
 		error: collectionsError,
-	} = useQuery({
-		queryKey: ["schema", "collections"],
-		queryFn: fetchCollections,
-	});
+	} = useQuery(schemaCollectionsQueryOptions());
 
 	const {
 		data: orphanedTables,
 		isLoading: orphansLoading,
 		error: orphansError,
-	} = useQuery({
-		queryKey: ["schema", "orphans"],
-		queryFn: fetchOrphanedTables,
-	});
+	} = useQuery(orphanedTablesQueryOptions());
 	const {
 		data: blockTypes,
 		isLoading: blockTypesLoading,
 		error: blockTypesError,
-	} = useQuery({
-		queryKey: ["schema", "block-types"],
-		queryFn: fetchBlockTypes,
-	});
+	} = useQuery(blockTypesQueryOptions());
 
 	const deleteMutation = useMutation({
 		mutationFn: (slug: string) => deleteCollection(slug, true),
@@ -3632,6 +3854,7 @@ function ContentTypesListPage() {
 				collections={collections ?? []}
 				orphanedTables={orphanedTables}
 				isLoading={collectionsLoading || orphansLoading}
+				expectedCount={manifest ? Object.keys(manifest.collections).length : undefined}
 				onDelete={(slug) => deleteMutation.mutateAsync(slug)}
 				isDeleting={deleteMutation.isPending}
 				deleteError={deleteMutation.error}
@@ -3646,7 +3869,8 @@ function ContentTypesListPage() {
 const contentTypesNewRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/new",
-	component: ContentTypesNewPage,
+	component: withRouteModules(ContentTypesNewPage, ContentTypeEditor),
+	pendingComponent: ContentTypeEditorPending,
 	staticData: { pageTitle: msg`New content type` },
 });
 
@@ -3682,7 +3906,7 @@ function ContentTypesNewPage() {
 const relationsListRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/relations",
-	component: RelationsListPage,
+	component: withRouteModules(RelationsListPage, RelationList),
 	staticData: { pageTitle: msg`Relations` },
 });
 
@@ -3743,7 +3967,8 @@ function useRelationsQuery() {
 const contentTypesEditRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/content-types/$slug",
-	component: ContentTypesEditPage,
+	component: withRouteModules(ContentTypesEditPage, ContentTypeEditor),
+	pendingComponent: ContentTypeEditorPending,
 	staticData: { pageTitle: msg`Edit content type` },
 });
 
@@ -3760,6 +3985,9 @@ function ContentTypesEditPage() {
 	} = useQuery({
 		queryKey: ["schema", "collections", slug],
 		queryFn: () => fetchCollection(slug),
+		// The editor seeds its form from the collection once, so a live refetch would show
+		// someone else's change as an edit of this tab's.
+		meta: { live: [] },
 	});
 
 	const updateMutation = useMutation({
@@ -3894,7 +4122,7 @@ function ContentTypesEditPage() {
 	}
 
 	if (isLoading) {
-		return <LoadingScreen />;
+		return <ContentTypeEditorPending />;
 	}
 
 	return (
@@ -3923,10 +4151,13 @@ function ContentTypesEditPage() {
 const pluginSettingsRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins-manager/$pluginId/settings",
-	component: () => (
-		<RequireAdmin>
-			<PluginSettingsPage />
-		</RequireAdmin>
+	component: withRouteModules(
+		() => (
+			<RequireAdmin>
+				<PluginSettingsPage />
+			</RequireAdmin>
+		),
+		PluginSettings,
 	),
 	staticData: { pageTitle: msg`Plugin Settings` },
 });
@@ -3940,7 +4171,7 @@ function PluginSettingsPage() {
 const pluginRoute = createRoute({
 	getParentRoute: () => adminLayoutRoute,
 	path: "/plugins/$pluginId/$",
-	component: PluginPage,
+	component: withRouteModules(PluginPage, SandboxedPluginPage),
 	staticData: { pageTitle: msg`Plugin` },
 });
 
@@ -3951,13 +4182,17 @@ function PluginPage() {
 
 	// Get plugin page component from context (trusted plugins with React)
 	const PluginComponent = usePluginPage(pluginId, pagePath);
+	const { data: manifest } = useQuery({ queryKey: ["manifest"], queryFn: fetchManifest });
 
 	if (PluginComponent) {
 		return <PluginComponent />;
 	}
 
 	// No React component — fall back to Block Kit rendering
-	return <SandboxedPluginPage pluginId={pluginId} page={pagePath} />;
+	const refreshOn = manifest?.plugins[pluginId]?.adminPages?.find(
+		(page) => page.path === pagePath,
+	)?.refreshOn;
+	return <SandboxedPluginPage pluginId={pluginId} page={pagePath} refreshOn={refreshOn} />;
 }
 
 // Catch-all 404 route
@@ -4033,6 +4268,11 @@ export function createAdminRouter(queryClient: QueryClient) {
 		context: { queryClient },
 		basepath: "/_emdash/admin",
 		defaultPreload: "intent",
+		// Loaders only prefetch queries, so React Query decides when their data is stale.
+		defaultPreloadStaleTime: 0,
+		defaultPendingComponent: RoutePending,
+		defaultPendingMs: 150,
+		defaultPendingMinMs: 300,
 	});
 }
 
@@ -4045,38 +4285,10 @@ declare module "@tanstack/react-router" {
 
 // Shared components
 
-export function ConfigurationLoadingScreen() {
-	const { t } = useLingui();
-	return (
-		<div className="emdash-configuration-loader">
-			<div className="loader-inner">
-				<div
-					className="spinner emdash-configuration-spinner"
-					role="status"
-					aria-label={t`Loading`}
-				/>
-				<p className="emdash-configuration-label">{t`Loading configuration...`}</p>
-			</div>
-		</div>
-	);
-}
-
-function LoadingScreen() {
-	const { t } = useLingui();
-	return (
-		<div className="flex items-center justify-center min-h-screen">
-			<div className="text-center">
-				<Loader />
-				<p className="mt-4 text-kumo-subtle">{t`Loading configuration...`}</p>
-			</div>
-		</div>
-	);
-}
-
 function ErrorScreen({ error }: { error: string }) {
 	const { t } = useLingui();
 	return (
-		<div className="flex items-center justify-center min-h-screen">
+		<div className="flex items-center justify-center min-h-[50vh] p-4">
 			<div className="text-center">
 				<h1 className="text-2xl font-semibold leading-tight text-kumo-danger">{t`Error`}</h1>
 				<p className="mt-2 text-sm text-kumo-subtle">{error}</p>

@@ -28,6 +28,12 @@ vi.mock("cloudflare:workers", () => ({
 	exports: { PluginBridge: mocks.bridge },
 }));
 
+import { waitForDeferredTasks } from "../../../core/src/deferred-tasks.js";
+import {
+	setChangePublisher,
+	withChangeQueue,
+	type Change,
+} from "../../../core/src/realtime/publish.js";
 import { CloudflareSandboxRunner } from "../../src/sandbox/runner.js";
 
 const request = {
@@ -301,6 +307,75 @@ describe("Cloudflare sandbox runner runtime targets", () => {
 			name: "CONFLICT",
 			code: "CONFLICT",
 		});
+		await instance.terminateAll();
+	});
+
+	it("publishes realtime changes through the invocation, held by the host request's transaction", async () => {
+		const published: Change[] = [];
+		setChangePublisher({
+			publish: async (changes) => {
+				published.push(...changes);
+			},
+		});
+		const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+		try {
+			setupLoader({
+				routes: {
+					ops: async (_route: unknown, ctx: any) => {
+						for (let index = 0; index < 25; index++) {
+							await ctx.realtime.publish(`queue/${index}`, { op: "update" });
+						}
+						return "ok";
+					},
+				},
+			});
+			const instance = runner();
+			const plugin = await instance.load(
+				{
+					...manifest(["realtime:publish"]),
+					realtime: { channels: { queue: { permission: "settings:read" as const } } },
+				},
+				"",
+			);
+
+			await withChangeQueue(async () => {
+				await expect(plugin.invokeRoute("ops", {}, request)).resolves.toBe("ok");
+				await waitForDeferredTasks();
+				expect(published).toEqual([]);
+			});
+			await waitForDeferredTasks();
+
+			expect(published).toEqual(
+				Array.from({ length: 20 }, (_, index) => ({
+					topic: `plugin/runtime-plugin/queue/${index}`,
+					op: "update",
+				})),
+			);
+			await instance.terminateAll();
+		} finally {
+			setChangePublisher(null);
+			warn.mockRestore();
+		}
+	});
+
+	it("keeps a sandboxed plugin to its declared channels and its capability", async () => {
+		setupLoader({
+			routes: {
+				ops: async (_route: unknown, ctx: any) =>
+					ctx.realtime ? ctx.realtime.publish("other") : "no realtime",
+			},
+		});
+		const instance = runner();
+		const declared = {
+			realtime: { channels: { queue: { permission: "settings:read" as const } } },
+		};
+		const live = await instance.load({ ...manifest(["realtime:publish"]), ...declared }, "");
+		const quiet = await instance.load({ ...manifest([]), id: "quiet-plugin", ...declared }, "");
+
+		await expect(live.invokeRoute("ops", {}, request)).rejects.toThrow(
+			/no realtime channel "other"/,
+		);
+		await expect(quiet.invokeRoute("ops", {}, request)).resolves.toBe("no realtime");
 		await instance.terminateAll();
 	});
 

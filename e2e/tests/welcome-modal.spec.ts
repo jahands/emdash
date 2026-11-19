@@ -2,6 +2,8 @@ import { test, expect } from "../fixtures";
 
 const ADMIN_ROOT_PATTERN = /\/_emdash\/admin\/?$/;
 const CURRENT_USER_PATTERN = "**/_emdash/api/auth/me";
+const BOOT_DATA_PATTERN =
+	/(<script type="application\/json" id="emdash-admin-boot">)(.*?)(<\/script>)/s;
 const LONG_FIRST_NAME = "Alexanderthegreatestnameeverwritten";
 const MAX_LINE_BOX_OVERLAP_RATIO = 0.1;
 
@@ -24,6 +26,21 @@ test("wrapped welcome title lines do not collide", async ({ page }) => {
 					role: 50,
 					isFirstLogin: true,
 				},
+			}),
+		});
+	});
+
+	// The admin page also embeds the current user, so the first render never
+	// asks /auth/me.
+	await page.route(ADMIN_ROOT_PATTERN, async (route) => {
+		const response = await route.fetch();
+		const html = await response.text();
+		await route.fulfill({
+			response,
+			body: html.replace(BOOT_DATA_PATTERN, (_match, open: string, json: string, close: string) => {
+				const data = JSON.parse(json);
+				data.currentUser = { ...data.currentUser, name: LONG_FIRST_NAME, isFirstLogin: true };
+				return `${open}${JSON.stringify(data).replaceAll("<", "\\u003c")}${close}`;
 			}),
 		});
 	});

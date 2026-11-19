@@ -14,6 +14,8 @@ import { invalidateRouteCache } from "#cache/route-cache.js";
 import { invalidateWidgetObjectCache, rowToWidget } from "#widgets/index.js";
 import type { WidgetRow } from "#widgets/types.js";
 
+import { publishChange } from "../../../../realtime/publish.js";
+
 export const prerender = false;
 
 export const GET: APIRoute = async ({ params, locals }) => {
@@ -86,6 +88,7 @@ export const DELETE: APIRoute = async ({ params, locals, cache }) => {
 		await db.deleteFrom("_emdash_widget_areas").where("id", "=", area.id).execute();
 
 		await invalidateWidgetObjectCache({ waitForPersist: true });
+		publishChange("widgets", { ids: [area.id], op: "delete" });
 		await invalidateRouteCache(cache, [widgetAreaTag(name)]);
 		return apiSuccess({ deleted: true });
 	} catch (error) {

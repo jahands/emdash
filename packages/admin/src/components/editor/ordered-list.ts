@@ -60,25 +60,66 @@ export interface OrderedListNormalization {
 	attrs: Record<string, unknown>;
 }
 
-function collectLists(doc: ProseMirrorNode): ListDescriptor[] {
-	const lists: ListDescriptor[] = [];
-	doc.descendants((node, pos) => {
-		if (node.type.name !== "orderedList") return;
+/** A list inside a top-level node, with positions from the start of that node. */
+interface ListInTopLevelNode {
+	node: ProseMirrorNode;
+	pos: number;
+	depth: number;
+	contextType: string | null;
+	contextPos: number | null;
+}
+
+const listsByTopLevelNode = new WeakMap<ProseMirrorNode, ListInTopLevelNode[]>();
+
+function listsInTopLevelNode(
+	doc: ProseMirrorNode,
+	child: ProseMirrorNode,
+	offset: number,
+): ListInTopLevelNode[] {
+	const cached = listsByTopLevelNode.get(child);
+	if (cached) return cached;
+	const lists: ListInTopLevelNode[] = [];
+	const visit = (node: ProseMirrorNode, pos: number) => {
+		if (node.type.name !== "orderedList") return !node.isTextblock;
 		const resolved = doc.resolve(pos);
-		let context = "root";
+		let contextType: string | null = null;
 		let contextPos: number | null = null;
 		for (let depth = resolved.depth; depth > 0; depth--) {
 			if (resolved.node(depth).type.name === "listItem") {
-				contextPos = resolved.before(depth);
-				context = `listItem:${contextPos}`;
+				contextType = "listItem";
+				contextPos = resolved.before(depth) - offset;
 				break;
 			}
 		}
 		if (contextPos === null && resolved.depth > 0) {
-			contextPos = resolved.before(resolved.depth);
-			context = `${resolved.node(resolved.depth).type.name}:${contextPos}`;
+			contextType = resolved.node(resolved.depth).type.name;
+			contextPos = resolved.before(resolved.depth) - offset;
 		}
-		lists.push({ node, pos, depth: resolved.depth, context, contextPos });
+		lists.push({ node, pos: pos - offset, depth: resolved.depth, contextType, contextPos });
+		return true;
+	};
+	if (visit(child, offset)) child.descendants((node, pos) => visit(node, offset + 1 + pos));
+	listsByTopLevelNode.set(child, lists);
+	return lists;
+}
+
+/**
+ * Every ordered list in document order. Lists are found once per top-level
+ * node, so a transaction that leaves a node alone doesn't walk it again.
+ */
+function collectLists(doc: ProseMirrorNode): ListDescriptor[] {
+	const lists: ListDescriptor[] = [];
+	doc.forEach((child, offset) => {
+		for (const list of listsInTopLevelNode(doc, child, offset)) {
+			const contextPos = list.contextPos === null ? null : offset + list.contextPos;
+			lists.push({
+				node: list.node,
+				pos: offset + list.pos,
+				depth: list.depth,
+				context: list.contextType === null ? "root" : `${list.contextType}:${contextPos}`,
+				contextPos,
+			});
+		}
 	});
 	return lists;
 }

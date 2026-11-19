@@ -7,6 +7,7 @@ import { BlockTypeList } from "../../src/components/BlockTypeList.js";
 import { ContentTypeList } from "../../src/components/ContentTypeList.js";
 import type { SchemaCollection } from "../../src/lib/api";
 import type { BlockType } from "../../src/lib/api/schema.js";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 vi.mock("../../src/lib/api", async () => {
@@ -155,6 +156,61 @@ describe("Content types table", () => {
 	});
 });
 
+describe("Content types while the schema loads", () => {
+	it.each([272, 900])(
+		"leaves everything it drew in place when the collections arrive in a %ipx column",
+		async (width) => {
+			const screen = await render(
+				<div style={{ width }}>
+					<ContentTypeList collections={[]} isLoading onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("heading", { name: "Content Types" })).toBeVisible();
+			const before = snapshotPositions(
+				[...screen.container.querySelectorAll("h1, p, a, th")].filter(
+					(element) => !element.closest('[role="status"]'),
+				),
+			);
+
+			await screen.rerender(
+				<div style={{ width }}>
+					<ContentTypeList collections={collections} onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("link", { name: "Testimonials" })).toBeVisible();
+
+			expect(largestMovement(before)).toBeLessThanOrEqual(1);
+		},
+	);
+
+	it.each([900, 1100])(
+		"holds rows as tall as one-line content type rows in a %ipx column",
+		async (width) => {
+			const posts = { ...collections[0]!, supports: ["drafts"], hasSeo: false };
+			const loaded = [posts, { ...posts, id: "3", slug: "pages", label: "Pages" }];
+			const screen = await render(
+				<div style={{ width }}>
+					<ContentTypeList collections={[]} isLoading expectedCount={2} onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("table").getByRole("status")).toBeInTheDocument();
+			const body = () => screen.getByRole("table").element().querySelector("tbody")!;
+			const placeholderHeight = body().getBoundingClientRect().height;
+
+			await screen.rerender(
+				<div style={{ width }}>
+					<ContentTypeList collections={loaded} onReorder={vi.fn()} />
+				</div>,
+			);
+			await expect.element(screen.getByRole("link", { name: "Pages" })).toBeVisible();
+
+			expect(
+				Math.abs(body().getBoundingClientRect().height - placeholderHeight),
+			).toBeLessThanOrEqual(1);
+		},
+	);
+});
+
 const fingerprint = (seed: string) => `block-type:v1:sha256:${seed.repeat(64).slice(0, 64)}`;
 
 const blockTypes: BlockType[] = [
@@ -219,5 +275,25 @@ describe("Block types table", () => {
 			),
 		).toBe(1);
 		await expect.element(screen.getByText("2 versions")).not.toBeVisible();
+	});
+});
+
+describe("Block types while they load", () => {
+	it("keeps its columns when the block types arrive in a 1000px table", async () => {
+		const screen = await render(
+			<div style={{ width: 1000 }}>
+				<BlockTypeList blockTypes={[]} isLoading />
+			</div>,
+		);
+		const before = snapshotPositions(screen.getByRole("table").element().querySelectorAll("th"));
+
+		await screen.rerender(
+			<div style={{ width: 1000 }}>
+				<BlockTypeList blockTypes={blockTypes} />
+			</div>,
+		);
+
+		await expect.element(screen.getByText("Active v2")).toBeVisible();
+		expect(largestMovement(before)).toBeLessThan(1);
 	});
 });

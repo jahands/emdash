@@ -102,6 +102,56 @@ describe("MenuList", () => {
 		await expect.element(footer.getByText("1 item")).toBeInTheDocument();
 	});
 
+	it("puts each menu card where its placeholder was", async () => {
+		let resolveMenus!: (menus: Awaited<ReturnType<typeof api.fetchMenus>>) => void;
+		vi.mocked(api.fetchMenus).mockReturnValue(new Promise((resolve) => (resolveMenus = resolve)));
+		const screen = await render(<MenuList />, { wrapper: Wrapper });
+
+		const status = screen.getByRole("status");
+		await expect.element(status).toHaveTextContent("Loading menus...");
+		const placeholder = status.element().nextElementSibling!.firstElementChild!;
+		const placeholderBounds = placeholder.getBoundingClientRect();
+
+		resolveMenus([
+			{
+				id: "m1",
+				name: "main",
+				label: "Main Menu",
+				itemCount: 3,
+				createdAt: "",
+				updatedAt: "",
+				locale: "en",
+				translationGroup: "m1",
+			},
+		]);
+		const card = screen.getByRole("listitem").filter({ hasText: "Main Menu" });
+		await expect.element(card).toBeVisible();
+		const cardBounds = card.element().getBoundingClientRect();
+		expect(cardBounds.top).toBe(placeholderBounds.top);
+		expect(cardBounds.height).toBe(placeholderBounds.height);
+	});
+
+	it("asks for the default locale's menus first on a multilingual site", async () => {
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+		});
+		qc.setQueryData(["manifest"], {
+			collections: {},
+			i18n: { defaultLocale: "en", locales: ["en", "fr"] },
+		});
+		const screen = await render(
+			<Toasty>
+				<QueryClientProvider client={qc}>
+					<MenuList />
+				</QueryClientProvider>
+			</Toasty>,
+		);
+
+		await expect.element(screen.getByRole("heading", { name: "Main Menu" })).toBeVisible();
+		expect(api.fetchMenus).toHaveBeenCalledTimes(1);
+		expect(api.fetchMenus).toHaveBeenCalledWith({ locale: "en" });
+	});
+
 	it("Create Menu button opens dialog", async () => {
 		const screen = await render(<MenuList />, { wrapper: Wrapper });
 
@@ -300,6 +350,22 @@ describe("MenuList", () => {
 		await expect
 			.element(screen.getByText("Create your first navigation menu to get started"))
 			.toBeInTheDocument();
+	});
+
+	it("reports a failed load with Retry instead of claiming there are no menus", async () => {
+		vi.mocked(api.fetchMenus).mockRejectedValueOnce(new Error("Internal server error"));
+
+		const screen = await render(<MenuList />, { wrapper: Wrapper });
+
+		const alert = screen.getByRole("alert");
+		await expect.element(alert).toHaveTextContent("Menus could not be loaded");
+		await expect.element(alert).toHaveTextContent("Internal server error");
+		await expect.element(screen.getByText("No menus yet")).not.toBeInTheDocument();
+
+		await alert.getByRole("button", { name: "Retry" }).click();
+
+		await expect.element(screen.getByRole("heading", { name: "Main Menu" })).toBeInTheDocument();
+		await expect.element(screen.getByRole("alert")).not.toBeInTheDocument();
 	});
 
 	it("each menu has an Edit link", async () => {

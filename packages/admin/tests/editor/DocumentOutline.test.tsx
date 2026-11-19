@@ -187,6 +187,19 @@ describe("DocumentOutline", () => {
 			.toHaveAttribute("aria-current", "location");
 	});
 
+	it("puts the caret in the clicked heading after text before it changed", async () => {
+		const { editor } = createEditor(longDocument);
+		const screen = await renderOutline(editor);
+		await expect.element(screen.getByRole("button", { name: "Configure" })).toBeInTheDocument();
+
+		editor.commands.insertContentAt(1, "A longer opening. ");
+		await screen.getByRole("button", { name: "Configure" }).click();
+
+		const { $from } = editor.state.selection;
+		expect($from.parent.textContent).toBe("Configure");
+		expect($from.parentOffset).toBe(0);
+	});
+
 	it("marks the heading of the section scrolled to the top as current", async () => {
 		const { editor, scroller } = createEditor(longDocument);
 		const screen = await renderOutline(editor);

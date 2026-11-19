@@ -1,4 +1,4 @@
-import { Badge } from "@cloudflare/kumo";
+import { Badge, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { CheckCircle, WarningCircle } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
@@ -83,6 +83,18 @@ export function RegistryPluginIdentity({
 		);
 	}
 
+	if (identity.status === "pending") {
+		// Holds the resolved name's line, so the card doesn't change height when it arrives.
+		return (
+			<div className={cn("flex min-w-0 items-center text-sm", className)}>
+				<span className="sr-only">{t`Resolving publisher handle...`}</span>
+				<div aria-hidden="true" className="w-40">
+					<SkeletonLine blockHeight={16} minWidth={100} maxWidth={100} />
+				</div>
+			</div>
+		);
+	}
+
 	const fallbackName = `${identity.did}/${identity.slug}`;
 	return (
 		<div
@@ -94,11 +106,7 @@ export function RegistryPluginIdentity({
 			<code className="min-w-0 max-w-full truncate font-mono" dir="auto" title={fallbackName}>
 				{fallbackName}
 			</code>
-			{identity.status === "missing" ? (
-				<span>{t`Handle unavailable`}</span>
-			) : (
-				<span>{t`Resolving publisher handle...`}</span>
-			)}
+			<span>{t`Handle unavailable`}</span>
 		</div>
 	);
 }

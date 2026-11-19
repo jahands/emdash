@@ -65,9 +65,62 @@ describe("UserDetail", () => {
 				onEnable={noop}
 			/>,
 		);
-		// Skeleton has the animate-pulse class; portal renders outside screen.container
-		await expect.element(screen.getByRole("dialog")).toBeInTheDocument();
-		expect(document.querySelector(".animate-pulse")).not.toBeNull();
+		const dialog = screen.getByRole("dialog");
+		await expect.element(dialog.getByRole("status")).toHaveTextContent("Loading...");
+		expect(dialog.element().querySelectorAll(".skeleton-line").length).toBeGreaterThan(0);
+		expect(dialog.getByText("User not found").query()).toBeNull();
+	});
+
+	it("shows the user's list row while their details load, and keeps edits when they arrive", async () => {
+		const detail = makeUser({
+			name: "Alice Smith",
+			email: "alice@example.com",
+			credentialCount: 1,
+		});
+		const { credentials: _credentials, oauthAccounts: _oauthAccounts, ...summary } = detail;
+		const props = {
+			isOpen: true,
+			onClose: noop,
+			onSave: noop,
+			onDisable: noop,
+			onEnable: noop,
+		};
+		const screen = await render(<UserDetail {...props} user={null} summary={summary} isLoading />);
+
+		const name = screen.getByLabelText("Name");
+		await expect.element(name).toHaveValue("Alice Smith");
+		await expect.element(screen.getByLabelText("Email")).toHaveValue("alice@example.com");
+		await expect.element(screen.getByText("Passkeys (1)")).toBeVisible();
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading passkeys...");
+		expect(screen.getByText("No passkeys registered").query()).toBeNull();
+		await name.fill("Alice Jones");
+
+		await screen.rerender(<UserDetail {...props} user={detail} summary={summary} />);
+
+		await expect.element(screen.getByText("My Passkey")).toBeVisible();
+		expect(screen.getByRole("status").query()).toBeNull();
+		await expect.element(screen.getByLabelText("Name")).toHaveValue("Alice Jones");
+		await expect.element(screen.getByRole("button", { name: "Save Changes" })).toBeEnabled();
+	});
+
+	it("shows the details' values over an older list row the form wasn't edited from", async () => {
+		const detail = makeUser({ name: "Alice Jones" });
+		const { credentials: _credentials, oauthAccounts: _oauthAccounts, ...current } = detail;
+		const summary = { ...current, name: "Alice Smith" };
+		const props = {
+			isOpen: true,
+			onClose: noop,
+			onSave: noop,
+			onDisable: noop,
+			onEnable: noop,
+		};
+		const screen = await render(<UserDetail {...props} user={null} summary={summary} isLoading />);
+		await expect.element(screen.getByLabelText("Name")).toHaveValue("Alice Smith");
+
+		await screen.rerender(<UserDetail {...props} user={detail} summary={summary} />);
+
+		await expect.element(screen.getByLabelText("Name")).toHaveValue("Alice Jones");
+		await expect.element(screen.getByRole("button", { name: "Save Changes" })).toBeDisabled();
 	});
 
 	it("shows 'User not found' when not loading and no user", async () => {

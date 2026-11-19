@@ -23,7 +23,8 @@
 import type { ImageValue, MediaValue } from "../fields/types.js";
 import type { HTMLAttributes } from "astro/types";
 import type { LocalImageProps } from "astro:assets";
-import { Image as AstroImage, Picture as AstroPicture, getImage } from "astro:assets";
+import { getImage, imageConfig } from "astro:assets";
+import virtualConfig from "virtual:emdash/config";
 import type { ImageTransformFormat } from "../media/image-endpoint.js";
 import type { ImageEmbed } from "../media/types.js";
 import { getMediaProvider } from "../media/provider-loader.js";
@@ -32,10 +33,12 @@ import { buildRenderMediaUrl } from "../media/url.js";
 import {
 	buildResponsiveImage,
 	formatContentType,
-	canOptimizeImage,
+	mediaImageOrigin,
+	optimizeImage,
 	toAbsoluteMediaUrl,
 	responsiveSizes,
 	responsiveWidths,
+	type OptimizedImage,
 } from "../media/responsive.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { focalPointToObjectPosition } from "../media/focal-point.js";
@@ -141,7 +144,8 @@ interface ResolvedImage {
 	src: string;
 	srcset?: string;
 	sizes?: string;
-	astroImageSrc: string;
+	/** The `<img>` Astro's image service produced for same-origin media. */
+	optimized: OptimizedImage | null;
 	width?: number;
 	height?: number;
 	generatedStyle: string;
@@ -153,7 +157,10 @@ interface ResolvedImage {
  * Resolve the source URL, srcset, dimensions, and LQIP style for one media
  * value. Props override the value's own dimensions.
  */
-async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
+async function resolveImage(
+	img: MediaValue,
+	variant: { className: string | undefined; id: string | null | undefined }
+): Promise<ResolvedImage> {
 	const finalWidth = width ?? img.width;
 	const finalHeight = height ?? img.height;
 	const aspectRatio =
@@ -162,32 +169,91 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 	let src = "";
 	let srcset: string | undefined;
 	let sizes: string | undefined;
-	let astroImageSrc = "";
+	let optimized: OptimizedImage | null = null;
 	const sources: ResolvedImage["sources"] = [];
 
 	const providerId = img.provider ?? "local";
+	// Build placeholder background style. Prefer the first-class MediaValue fields;
+	// fall back to `meta` for snapshots stored before LQIP was promoted off `meta`.
+	const blurhash = img.blurhash ?? (img.meta?.blurhash as string | undefined);
+	const dominantColor =
+		img.dominantColor ?? (img.meta?.dominantColor as string | undefined);
+
+	let placeholderStyle = "";
+	if (placeholder && blurhash) {
+		const { blurhashToImageCssString } = await import("@unpic/placeholder");
+		placeholderStyle = blurhashToImageCssString(blurhash);
+	} else if (placeholder && dominantColor) {
+		placeholderStyle = `background-color: ${dominantColor};`;
+	}
+
+	// The focal point travels with the media value, so the dark variant gets
+	// its own object-position rather than inheriting the light image's.
+	const objectPosition = focalPointToObjectPosition(img.focalX, img.focalY);
+	const normalizedPlaceholder =
+		placeholderStyle && !placeholderStyle.endsWith(";")
+			? `${placeholderStyle};`
+			: placeholderStyle;
+	const generatedStyle = [
+		normalizedPlaceholder,
+		objectPosition ? `object-position: ${objectPosition};` : "",
+	]
+		.filter(Boolean)
+		.join(" ");
+
 
 	if (providerId === "local" || img.src) {
 		src = img.src || buildLocalImageUrl(img);
-		const publicOrigin = getPublicOrigin(Astro.url, Astro.locals.emdash?.config);
-		const absoluteSrc = toAbsoluteMediaUrl(src, publicOrigin);
-		if (finalWidth && finalHeight && absoluteSrc.startsWith(`${publicOrigin}/`)) {
-			const optimizedFormats = await Promise.all(
-				outputFormats.map((format) =>
-					canOptimizeImage(getImage, {
-						src: absoluteSrc,
-						width: finalWidth,
-						height: finalHeight,
-						...(format !== undefined ? { format } : {}),
-						...(quality !== undefined ? { quality } : {}),
-					}),
-				),
-			);
-			if (optimizedFormats.every(Boolean)) {
-				astroImageSrc = absoluteSrc;
+		const origin = mediaImageOrigin({
+			internalOrigin: virtualConfig?.internalMediaOrigin,
+			isPrerendered: Astro.isPrerendered,
+			publicOrigin: () => getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
+		});
+		const absoluteSrc = toAbsoluteMediaUrl(src, origin);
+		if (finalWidth && finalHeight && absoluteSrc.startsWith(`${origin}/`)) {
+			const imageOptions = {
+				id: variant.id,
+				alt: finalAlt,
+				width: finalWidth,
+				height: finalHeight,
+				originalWidth: img.width,
+				quality,
+				priority,
+				layout: "constrained",
+				loading: priority ? "eager" : "lazy",
+				decoding: "async",
+				class: astroClass(variant.className),
+				style: generatedStyle || undefined,
+				...attrs,
+				src: absoluteSrc,
+			};
+			const fallback = await optimizeImage(getImage, imageConfig, {
+				...imageOptions,
+				...(imgFormat !== undefined ? { format: imgFormat } : {}),
+			});
+			const alternates = fallback
+				? await Promise.all(
+						sourceFormats.map((format) =>
+							optimizeImage(getImage, imageConfig, { ...imageOptions, format }).then(
+								(alternate) => ({ format, alternate }),
+							),
+						),
+					)
+				: [];
+			if (fallback && alternates.every(({ alternate }) => alternate)) {
+				optimized = fallback;
+				const sourceSizes = attrs.sizes ?? responsiveSizes(finalWidth);
+				for (const { format, alternate } of alternates) {
+					if (!alternate?.srcset) continue;
+					sources.push({
+						type: formatContentType(format),
+						srcset: alternate.srcset,
+						sizes: sourceSizes,
+					});
+				}
 			}
 		} else {
-			const optimized = await buildResponsiveImage(getImage, {
+			const responsive = await buildResponsiveImage(getImage, {
 				src: absoluteSrc,
 				width: finalWidth,
 				height: finalHeight,
@@ -195,14 +261,14 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 				format: imgFormat,
 				quality,
 			});
-			if (optimized) {
-				src = optimized.src;
-				srcset = optimized.srcset;
-				sizes = optimized.sizes;
+			if (responsive) {
+				src = responsive.src;
+				srcset = responsive.srcset;
+				sizes = responsive.sizes;
 				const alternates = await Promise.all(
 					sourceFormats.map((sourceFormat) =>
 						sourceFormat === imgFormat
-							? Promise.resolve({ sourceFormat, alternate: optimized })
+							? Promise.resolve({ sourceFormat, alternate: responsive })
 							: buildResponsiveImage(getImage, {
 									src: absoluteSrc,
 									width: finalWidth,
@@ -263,39 +329,11 @@ async function resolveImage(img: MediaValue): Promise<ResolvedImage> {
 		}
 	}
 
-	// Build placeholder background style. Prefer the first-class MediaValue fields;
-	// fall back to `meta` for snapshots stored before LQIP was promoted off `meta`.
-	const blurhash = img.blurhash ?? (img.meta?.blurhash as string | undefined);
-	const dominantColor =
-		img.dominantColor ?? (img.meta?.dominantColor as string | undefined);
-
-	let placeholderStyle = "";
-	if (placeholder && blurhash) {
-		const { blurhashToImageCssString } = await import("@unpic/placeholder");
-		placeholderStyle = blurhashToImageCssString(blurhash);
-	} else if (placeholder && dominantColor) {
-		placeholderStyle = `background-color: ${dominantColor};`;
-	}
-
-	// The focal point travels with the media value, so the dark variant gets
-	// its own object-position rather than inheriting the light image's.
-	const objectPosition = focalPointToObjectPosition(img.focalX, img.focalY);
-	const normalizedPlaceholder =
-		placeholderStyle && !placeholderStyle.endsWith(";")
-			? `${placeholderStyle};`
-			: placeholderStyle;
-	const generatedStyle = [
-		normalizedPlaceholder,
-		objectPosition ? `object-position: ${objectPosition};` : "",
-	]
-		.filter(Boolean)
-		.join(" ");
-
 	return {
 		src,
 		srcset,
 		sizes,
-		astroImageSrc,
+		optimized,
 		width: finalWidth,
 		height: finalHeight,
 		generatedStyle,
@@ -309,14 +347,27 @@ const darkSource =
 const dark = img ? normalizeImage(darkSource) : null;
 const finalAlt = alt ?? img?.alt ?? "";
 
-const resolved = img ? await resolveImage(img) : null;
-const resolvedDark = dark ? await resolveImage(dark) : null;
+const lightClass = dark ? "emdash-image--light" : undefined;
+// Both variants render into the same document, so a caller-supplied `id` would
+// otherwise appear on two elements.
+const darkId = id ? `${id}--dark` : undefined;
+function astroClass(variantClass: string | undefined) {
+	return [variantClass, className].filter(Boolean).join(" ") || undefined;
+}
+
+const resolved = img ? await resolveImage(img, { className: lightClass, id }) : null;
+const resolvedDark = dark
+	? await resolveImage(dark, { className: "emdash-image--dark", id: darkId })
+	: null;
 
 function imgProps(
 	r: ResolvedImage,
 	variantClass: string | undefined,
 	elementId: string | null | undefined
 ): Record<string, unknown> {
+	if (r.optimized) {
+		return { src: r.optimized.src, srcset: r.optimized.srcset, ...r.optimized.attributes };
+	}
 	return {
 		id: elementId,
 		src: r.src,
@@ -333,56 +384,10 @@ function imgProps(
 		...attrs,
 	};
 }
-
-const lightClass = resolvedDark ? "emdash-image--light" : undefined;
-// Both variants render into the same document, so a caller-supplied `id` would
-// otherwise appear on two elements.
-const darkId = id ? `${id}--dark` : undefined;
-const astroClass = (variantClass: string | undefined) =>
-	[variantClass, className].filter(Boolean).join(" ") || undefined;
 ---
 
 {
-	resolved && resolved.astroImageSrc ? (
-		sourceFormats.length ? (
-			<AstroPicture
-				id={id}
-				src={resolved.astroImageSrc}
-				alt={finalAlt}
-				width={resolved.width}
-				height={resolved.height}
-				sizes={responsiveSizes(resolved.width)}
-				quality={quality}
-				priority={priority}
-				layout="constrained"
-				formats={sourceFormats}
-				fallbackFormat={imgFormat}
-				pictureAttributes={{ class: lightClass }}
-				loading={priority ? "eager" : "lazy"}
-				decoding="async"
-				class={astroClass(lightClass)}
-				style={resolved.generatedStyle || undefined}
-				{...attrs}
-			/>
-		) : (
-			<AstroImage
-				id={id}
-				src={resolved.astroImageSrc}
-				alt={finalAlt}
-				width={resolved.width}
-				height={resolved.height}
-				quality={quality}
-				priority={priority}
-				layout="constrained"
-				format={imgFormat}
-				loading={priority ? "eager" : "lazy"}
-				decoding="async"
-				class={astroClass(lightClass)}
-				style={resolved.generatedStyle || undefined}
-				{...attrs}
-			/>
-		)
-	) : resolved && resolved.src ? (
+	resolved && (resolved.optimized || resolved.src) ? (
 		resolved.sources.length ? (
 			<picture class={lightClass}>
 				{resolved.sources.map((source) => (
@@ -396,46 +401,7 @@ const astroClass = (variantClass: string | undefined) =>
 	) : null
 }
 {
-	resolvedDark && resolvedDark.astroImageSrc ? (
-		sourceFormats.length ? (
-			<AstroPicture
-				id={darkId}
-				src={resolvedDark.astroImageSrc}
-				alt={finalAlt}
-				width={resolvedDark.width}
-				height={resolvedDark.height}
-				sizes={responsiveSizes(resolvedDark.width)}
-				quality={quality}
-				priority={priority}
-				layout="constrained"
-				formats={sourceFormats}
-				fallbackFormat={imgFormat}
-				pictureAttributes={{ class: "emdash-image--dark" }}
-				loading={priority ? "eager" : "lazy"}
-				decoding="async"
-				class={astroClass("emdash-image--dark")}
-				style={resolvedDark.generatedStyle || undefined}
-				{...attrs}
-			/>
-		) : (
-			<AstroImage
-				id={darkId}
-				src={resolvedDark.astroImageSrc}
-				alt={finalAlt}
-				width={resolvedDark.width}
-				height={resolvedDark.height}
-				quality={quality}
-				priority={priority}
-				layout="constrained"
-				format={imgFormat}
-				loading={priority ? "eager" : "lazy"}
-				decoding="async"
-				class={astroClass("emdash-image--dark")}
-				style={resolvedDark.generatedStyle || undefined}
-				{...attrs}
-			/>
-		)
-	) : resolvedDark && resolvedDark.src ? (
+	resolvedDark && (resolvedDark.optimized || resolvedDark.src) ? (
 		resolvedDark.sources.length ? (
 			<picture class="emdash-image--dark">
 				{resolvedDark.sources.map((source) => (

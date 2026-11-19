@@ -38,6 +38,7 @@ const DEFAULT_WALL_TIME_MS = 30_000;
 import type { PluginManifest } from "emdash";
 
 import { createBridgeHandler } from "./bridge-handler.js";
+import { RealtimeInvocations } from "./realtime-invocations.js";
 import { generatePluginWrapper, parseRouteTransport, stringifyRouteTransport } from "./wrapper.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -150,6 +151,8 @@ export class MiniflareDevRunner implements SandboxRunner {
 		return this.contentActionsCallback;
 	}
 
+	readonly realtimeInvocations = new RealtimeInvocations();
+
 	setCronReschedule(callback: (() => void) | null): void {
 		this.cronRescheduleCallback = callback;
 	}
@@ -230,6 +233,7 @@ export class MiniflareDevRunner implements SandboxRunner {
 				now: this.options.now,
 				httpFetch: this.options.httpFetch,
 				storage: this.options.mediaStorage,
+				realtime: (invocationId) => this.realtimeInvocations.get(manifest.id, invocationId),
 			});
 
 			const wrapperCode = generatePluginWrapper(manifest, {
@@ -408,10 +412,17 @@ class MiniflareDevPlugin implements SandboxedPluginInstance {
 			}, wallTimeMs);
 		});
 
+		const closeRealtime = this.runner.realtimeInvocations.open(this.manifest, invocationId);
 		const invocation = fn(invocationId);
 		void invocation.then(
-			() => this.runner.contentActions?.flush(this.manifest.id, invocationId, true),
-			() => this.runner.contentActions?.flush(this.manifest.id, invocationId, true),
+			() => {
+				closeRealtime();
+				return this.runner.contentActions?.flush(this.manifest.id, invocationId, true);
+			},
+			() => {
+				closeRealtime();
+				return this.runner.contentActions?.flush(this.manifest.id, invocationId, true);
+			},
 		);
 		try {
 			return await Promise.race([invocation, timeout]);

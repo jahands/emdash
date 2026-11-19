@@ -1,13 +1,4 @@
-import {
-	Badge,
-	Button,
-	DropdownMenu,
-	LayerCard,
-	Loader,
-	Select,
-	Table,
-	Toast,
-} from "@cloudflare/kumo";
+import { Badge, Button, DropdownMenu, LayerCard, Select, Table, Toast } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { IdentificationCard, Pencil, Plus, Trash } from "@phosphor-icons/react";
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -18,6 +9,9 @@ import { BylineFormDialog, type BylineFormValues } from "../components/BylineFor
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
+	DataTableLoadError,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	RowTitleButton,
@@ -41,6 +35,8 @@ import {
 import { fetchManifest } from "../lib/api/client.js";
 import { useCurrentUser } from "../lib/api/current-user.js";
 import { useDebouncedValue } from "../lib/hooks.js";
+import { bylinesQueryOptions } from "../lib/route-queries.js";
+import { translationsLoadState } from "../lib/translations-load-state.js";
 
 const BYLINE_NAME_SEPARATOR = /\s+/;
 const BYLINE_INITIAL_SEGMENTER = new Intl.Segmenter(undefined, { granularity: "grapheme" });
@@ -141,31 +137,26 @@ export function BylinesPage() {
 		setSelectedId(null);
 	};
 
-	const { data, isLoading, error } = useQuery({
-		queryKey: ["bylines", debouncedSearch, guestFilter, activeLocale ?? null],
-		queryFn: () =>
-			fetchBylines({
-				search: debouncedSearch || undefined,
-				isGuest: guestFilter === "all" ? undefined : guestFilter === "guest",
-				locale: activeLocale,
-				limit: 50,
-			}),
+	const { data, isPending, isPlaceholderData, error, refetch } = useQuery({
+		...bylinesQueryOptions({ search: debouncedSearch, guest: guestFilter, locale: activeLocale }),
 		// Keep the previous results on screen while a new search/filter query
 		// loads. Without this, changing the query key drops `data` to
-		// `undefined`, the `isLoading && !data` gate re-engages, and the whole
-		// page collapses into the full-page loader on every settled keystroke —
-		// the focus-losing "reload" reported in #1220 that the debounce alone
-		// only reduced in frequency. Matches ContentEditor's search pattern.
+		// `undefined` and the rows give way to placeholders on every settled
+		// keystroke, taking keyboard focus with them.
 		placeholderData: keepPreviousData,
 	});
 
-	// Reset accumulated items when filters change
-	React.useEffect(() => {
+	// Reset accumulated items when filters change. Done while rendering, as an effect would
+	// paint the empty state for a frame between the answer and the rows.
+	// Starts empty so a list the route's loader already read is listed on the first render.
+	const [listedData, setListedData] = React.useState<typeof data>(undefined);
+	if (data !== listedData) {
+		setListedData(data);
 		if (data) {
 			setAllItems(data.items);
 			setNextCursor(data.nextCursor);
 		}
-	}, [data]);
+	}
 
 	// Snapshot filters at click-time and discard the response if the user
 	// changed any of them while the request was in flight — otherwise stale
@@ -204,12 +195,13 @@ export function BylinesPage() {
 	// Translations: only fetched when a multi-locale install has a byline
 	// open. The panel renders one row per configured locale, with Translate
 	// or Edit buttons depending on which siblings exist.
-	const { data: translationsData } = useQuery({
+	const translationsQuery = useQuery({
 		queryKey: ["byline-translations", selectedId],
 		queryFn: () =>
 			selectedId ? fetchBylineTranslations(selectedId) : Promise.resolve({ items: [] }),
 		enabled: !!selectedId && isMultiLocale,
 	});
+	const translationsData = translationsQuery.data;
 
 	const deleteMutation = useMutation({
 		mutationFn: (id: string) => deleteByline(id),
@@ -254,17 +246,8 @@ export function BylinesPage() {
 		},
 	});
 
-	if (isLoading && !data) {
-		return (
-			<div className="flex items-center justify-center min-h-[30vh]">
-				<Loader />
-			</div>
-		);
-	}
-
-	if (error) {
-		return <div className="text-kumo-danger">{t`Failed to load bylines: ${error.message}`}</div>;
-	}
+	const loadFailed = !!error && !data;
+	const showLoading = isPending && !loadFailed;
 
 	const openCreate = () => {
 		setSelectedId(null);
@@ -350,8 +333,8 @@ export function BylinesPage() {
 				/>
 			</TableToolbar>
 
-			{items.length > 0 ? (
-				<DataTable>
+			{showLoading || loadFailed || items.length > 0 ? (
+				<DataTable aria-busy={isPlaceholderData || undefined}>
 					<Table.Header>
 						<Table.Row>
 							<Table.Head>{t`Byline`}</Table.Head>
@@ -361,84 +344,90 @@ export function BylinesPage() {
 							<Table.Head className="w-48" {...tertiaryColumn}>
 								{t`Website`}
 							</Table.Head>
-							<Table.Head className="w-0">
-								<span className="sr-only">{t`Actions`}</span>
-							</Table.Head>
+							<DataTableActionsHeader />
 						</Table.Row>
 					</Table.Header>
 					<Table.Body>
-						{items.map((item) => (
-							<Table.Row key={item.id}>
-								<Table.Cell>
-									<div className="flex min-w-0 items-center gap-3">
-										<BylineMonogram name={item.displayName} />
-										<div className="min-w-0">
-											<RowTitleButton
-												dir="auto"
-												className="block"
-												aria-label={t`Edit ${item.displayName}`}
+						{loadFailed ? (
+							<DataTableLoadError colSpan={4} onRetry={() => void refetch()}>
+								{t`Failed to load bylines: ${error.message}`}
+							</DataTableLoadError>
+						) : showLoading ? (
+							<DataTablePlaceholderRows cells={["title", "secondary", "tertiary", "actions"]} />
+						) : null}
+						{!loadFailed &&
+							items.map((item) => (
+								<Table.Row key={item.id}>
+									<Table.Cell>
+										<div className="flex min-w-0 items-center gap-3">
+											<BylineMonogram name={item.displayName} />
+											<div className="min-w-0">
+												<RowTitleButton
+													dir="auto"
+													className="block"
+													aria-label={t`Edit ${item.displayName}`}
+													onClick={() => openEdit(item)}
+												>
+													{item.displayName}
+												</RowTitleButton>
+												<div className="text-xs text-kumo-subtle wrap-anywhere">
+													<bdi dir="ltr">/{item.slug}</bdi>
+												</div>
+												{item.bio && (
+													// A minmax(0, 1fr) track adds nothing to the cell's minimum width,
+													// so the truncated bio can't widen the column.
+													<div className="grid max-w-lg grid-cols-1">
+														<div
+															dir="auto"
+															className="w-fit max-w-full truncate text-sm text-kumo-subtle"
+														>
+															{item.bio}
+														</div>
+													</div>
+												)}
+												<RowMeta>
+													<BylineTypeBadge byline={item} />
+												</RowMeta>
+											</div>
+										</div>
+									</Table.Cell>
+									<Table.Cell {...secondaryColumn}>
+										<BylineTypeBadge byline={item} />
+									</Table.Cell>
+									<Table.Cell {...tertiaryColumn}>
+										{item.websiteUrl ? (
+											<bdi
+												dir="ltr"
+												className="block w-fit max-w-40 truncate text-sm text-kumo-subtle"
+												title={item.websiteUrl}
+											>
+												{item.websiteUrl}
+											</bdi>
+										) : (
+											<span className="text-kumo-subtle">—</span>
+										)}
+									</Table.Cell>
+									<Table.Cell className="text-end">
+										<RowActionsMenu label={t`Actions for ${item.displayName}`}>
+											<DropdownMenu.Item
+												icon={<Pencil className="size-4" aria-hidden="true" />}
 												onClick={() => openEdit(item)}
 											>
-												{item.displayName}
-											</RowTitleButton>
-											<div className="text-xs text-kumo-subtle wrap-anywhere">
-												<bdi dir="ltr">/{item.slug}</bdi>
-											</div>
-											{item.bio && (
-												// A minmax(0, 1fr) track adds nothing to the cell's minimum width,
-												// so the truncated bio can't widen the column.
-												<div className="grid max-w-lg grid-cols-1">
-													<div
-														dir="auto"
-														className="w-fit max-w-full truncate text-sm text-kumo-subtle"
-													>
-														{item.bio}
-													</div>
-												</div>
-											)}
-											<RowMeta>
-												<BylineTypeBadge byline={item} />
-											</RowMeta>
-										</div>
-									</div>
-								</Table.Cell>
-								<Table.Cell {...secondaryColumn}>
-									<BylineTypeBadge byline={item} />
-								</Table.Cell>
-								<Table.Cell {...tertiaryColumn}>
-									{item.websiteUrl ? (
-										<bdi
-											dir="ltr"
-											className="block w-fit max-w-44 truncate text-sm text-kumo-subtle"
-											title={item.websiteUrl}
-										>
-											{item.websiteUrl}
-										</bdi>
-									) : (
-										<span className="text-kumo-subtle">—</span>
-									)}
-								</Table.Cell>
-								<Table.Cell className="text-end">
-									<RowActionsMenu label={t`Actions for ${item.displayName}`}>
-										<DropdownMenu.Item
-											icon={<Pencil className="size-4" aria-hidden="true" />}
-											onClick={() => openEdit(item)}
-										>
-											{t`Edit`}
-										</DropdownMenu.Item>
-										<DropdownMenu.Separator />
-										<DropdownMenu.Item
-											variant="danger"
-											icon={<Trash className="size-4" aria-hidden="true" />}
-											aria-label={t`Delete byline ${item.displayName}`}
-											onClick={() => setDeleteTarget(item)}
-										>
-											{t`Delete byline`}
-										</DropdownMenu.Item>
-									</RowActionsMenu>
-								</Table.Cell>
-							</Table.Row>
-						))}
+												{t`Edit`}
+											</DropdownMenu.Item>
+											<DropdownMenu.Separator />
+											<DropdownMenu.Item
+												variant="danger"
+												icon={<Trash className="size-4" aria-hidden="true" />}
+												aria-label={t`Delete byline ${item.displayName}`}
+												onClick={() => setDeleteTarget(item)}
+											>
+												{t`Delete byline`}
+											</DropdownMenu.Item>
+										</RowActionsMenu>
+									</Table.Cell>
+								</Table.Row>
+							))}
 					</Table.Body>
 				</DataTable>
 			) : (
@@ -512,6 +501,7 @@ export function BylinesPage() {
 								defaultLocale={i18n.defaultLocale}
 								currentLocale={byline.locale}
 								translations={translationsData?.items ?? []}
+								{...translationsLoadState(translationsQuery)}
 								onOpen={(summary) => {
 									void navigate({
 										to: "/bylines",

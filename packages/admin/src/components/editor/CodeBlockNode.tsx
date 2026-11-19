@@ -28,6 +28,10 @@ import { Autocomplete, Popover, Toolbar, Tooltip, TooltipProvider } from "@cloud
 import { useLingui } from "@lingui/react/macro";
 import { CaretDown, Check, Copy, X } from "@phosphor-icons/react";
 import { CodeBlockLowlight } from "@tiptap/extension-code-block-lowlight";
+import type { Node as ProseMirrorNode } from "@tiptap/pm/model";
+import type { Plugin } from "@tiptap/pm/state";
+import type { Step } from "@tiptap/pm/transform";
+import type { DecorationSet } from "@tiptap/pm/view";
 import type { NodeViewProps } from "@tiptap/react";
 import { NodeViewContent, NodeViewWrapper, ReactNodeViewRenderer } from "@tiptap/react";
 import dockerfile from "highlight.js/lib/languages/dockerfile";
@@ -331,6 +335,68 @@ function CodeBlockNodeView({ node, updateAttributes }: NodeViewProps) {
 	);
 }
 
+type CodeBlockRange = { pos: number; nodeSize: number };
+
+/**
+ * Lowlight's plugin walks both documents for code blocks on every transaction to
+ * decide whether to highlight again: when the selection is in a code block, a
+ * code block was added or removed, or a step covered one. This answers the same
+ * question from code block positions cached per top-level node, so a keystroke
+ * outside code doesn't walk the document.
+ */
+function skipUntouchedCodeBlocks(plugins: Plugin[], typeName: string): Plugin[] {
+	const rangesInNode = new WeakMap<ProseMirrorNode, CodeBlockRange[]>();
+	const codeBlockRanges = (doc: ProseMirrorNode) => {
+		const ranges: CodeBlockRange[] = [];
+		doc.forEach((child, offset) => {
+			let inside = rangesInNode.get(child);
+			if (!inside) {
+				const found: CodeBlockRange[] = [];
+				if (child.type.name === typeName) {
+					found.push({ pos: 0, nodeSize: child.nodeSize });
+				} else if (!child.isTextblock) {
+					child.descendants((node, pos) => {
+						if (node.type.name === typeName) found.push({ pos: pos + 1, nodeSize: node.nodeSize });
+						return !node.isTextblock;
+					});
+				}
+				inside = found;
+				rangesInNode.set(child, inside);
+			}
+			for (const range of inside)
+				ranges.push({ pos: offset + range.pos, nodeSize: range.nodeSize });
+		});
+		return ranges;
+	};
+	for (const plugin of plugins) {
+		const field = plugin.spec.state;
+		if (!field) continue;
+		const apply = field.apply;
+		field.apply = (tr, value: DecorationSet, oldState, newState) => {
+			if (!tr.docChanged) return value;
+			const inCodeBlock =
+				oldState.selection.$head.parent.type.name === typeName ||
+				newState.selection.$head.parent.type.name === typeName;
+			if (!inCodeBlock) {
+				const before = codeBlockRanges(oldState.doc);
+				const coversCodeBlock = tr.steps.some((step) => {
+					const { from, to } = step as Step & { from?: number; to?: number };
+					return (
+						from !== undefined &&
+						to !== undefined &&
+						before.some((range) => range.pos >= from && range.pos + range.nodeSize <= to)
+					);
+				});
+				if (!coversCodeBlock && before.length === codeBlockRanges(newState.doc).length) {
+					return value.map(tr.mapping, tr.doc);
+				}
+			}
+			return apply.call(plugin, tr, value, oldState, newState);
+		};
+	}
+	return plugins;
+}
+
 /**
  * TipTap extension: code block with an inline language picker node view.
  *
@@ -339,6 +405,9 @@ function CodeBlockNodeView({ node, updateAttributes }: NodeViewProps) {
  * the editor's extensions array.
  */
 export const CodeBlockExtension = CodeBlockLowlight.extend({
+	addProseMirrorPlugins() {
+		return skipUntouchedCodeBlocks(this.parent?.() ?? [], this.name);
+	},
 	addKeyboardShortcuts() {
 		const shortcuts = this.parent?.() ?? {};
 		const selectionIsInCodeBlock = () => {

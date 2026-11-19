@@ -8,6 +8,8 @@ import { MenuEditor } from "../../src/components/MenuEditor";
 import { pressOutside } from "../utils/mouse.ts";
 import { render } from "../utils/render.tsx";
 
+const routeSearch = vi.hoisted(() => ({ current: {} as { locale?: string } }));
+
 vi.mock("@tanstack/react-router", async () => {
 	const actual = await vi.importActual("@tanstack/react-router");
 	return {
@@ -26,7 +28,7 @@ vi.mock("@tanstack/react-router", async () => {
 			</a>
 		),
 		useParams: () => ({ name: "main-menu" }),
-		useSearch: () => ({}),
+		useSearch: () => routeSearch.current,
 		useNavigate: () => vi.fn(),
 	};
 });
@@ -58,6 +60,7 @@ vi.mock("../../src/lib/api", async () => {
 			],
 		}),
 		fetchManifest: vi.fn().mockResolvedValue({ collections: {} }),
+		fetchMenuTranslations: vi.fn(),
 	};
 });
 
@@ -130,7 +133,106 @@ function Wrapper({ children }: { children: React.ReactNode }) {
 describe("MenuEditor", () => {
 	beforeEach(() => {
 		vi.clearAllMocks();
+		routeSearch.current = {};
 		vi.mocked(api.fetchMenu).mockResolvedValue(defaultMenu);
+	});
+
+	it("keeps the page's header while the menu loads, with item rows in outline", async () => {
+		vi.mocked(api.fetchMenu).mockReturnValue(new Promise(() => {}));
+		const screen = await render(<MenuEditor />, { wrapper: Wrapper });
+
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading menu...");
+		await expect.element(screen.getByRole("link", { name: "Back to menus" })).toBeVisible();
+		await expect.element(screen.getByRole("button", { name: "Add Content" })).toBeDisabled();
+		expect(screen.getByText("No menu items yet").query()).toBeNull();
+		expect(screen.getByText("Menu not found").query()).toBeNull();
+	});
+
+	it("puts the first item where its placeholder was", async () => {
+		let resolveMenu!: (menu: typeof defaultMenu) => void;
+		vi.mocked(api.fetchMenu).mockReturnValue(new Promise((resolve) => (resolveMenu = resolve)));
+		const screen = await render(<MenuEditor />, { wrapper: Wrapper });
+
+		const status = screen.getByRole("status");
+		await expect.element(status).toHaveTextContent("Loading menu...");
+		const placeholder = status.element().nextElementSibling!.firstElementChild!;
+		const placeholderBounds = placeholder.getBoundingClientRect();
+
+		resolveMenu(defaultMenu);
+		await expect.element(screen.getByText("Home")).toBeVisible();
+		const row = screen.getByText("Home").element().closest(".rounded-lg")!;
+		const rowBounds = row.getBoundingClientRect();
+		expect(rowBounds.top).toBe(placeholderBounds.top);
+		expect(rowBounds.height).toBe(placeholderBounds.height);
+	});
+
+	it("takes the title and row count from the menu list while the menu loads", async () => {
+		vi.mocked(api.fetchMenu).mockReturnValue(new Promise(() => {}));
+		const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		qc.setQueryData(
+			["menus", "en"],
+			[{ ...defaultMenu, items: undefined, itemCount: 4, label: "Main Menu" }],
+		);
+		const screen = await render(
+			<Toasty>
+				<QueryClientProvider client={qc}>
+					<MenuEditor />
+				</QueryClientProvider>
+			</Toasty>,
+		);
+
+		await expect.element(screen.getByRole("heading", { name: "Main Menu" })).toBeVisible();
+		const status = screen.getByRole("status");
+		expect(status.element().nextElementSibling!.children).toHaveLength(4);
+	});
+
+	it("never shows the empty state on the way to a menu with items", async () => {
+		let resolveMenu!: (menu: typeof defaultMenu) => void;
+		vi.mocked(api.fetchMenu).mockReturnValue(new Promise((resolve) => (resolveMenu = resolve)));
+		const screen = await render(<MenuEditor />, { wrapper: Wrapper });
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading menu...");
+
+		let sawEmptyState = false;
+		const observer = new MutationObserver((records) => {
+			for (const record of records) {
+				for (const node of record.addedNodes) {
+					if (node.textContent?.includes("No menu items yet")) sawEmptyState = true;
+				}
+			}
+		});
+		observer.observe(document.body, { childList: true, subtree: true });
+		try {
+			resolveMenu(defaultMenu);
+			await expect.element(screen.getByText("Home")).toBeVisible();
+			await new Promise((resolve) => requestAnimationFrame(resolve));
+		} finally {
+			observer.disconnect();
+		}
+		expect(sawEmptyState).toBe(false);
+	});
+
+	it("asks for the menu's translations without waiting for the menu", async () => {
+		routeSearch.current = { locale: "en" };
+		vi.mocked(api.fetchMenu).mockReturnValue(new Promise(() => {}));
+		vi.mocked(api.fetchMenuTranslations).mockReturnValue(new Promise(() => {}));
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+		});
+		qc.setQueryData(["manifest"], {
+			collections: {},
+			i18n: { defaultLocale: "en", locales: ["en", "fr"] },
+		});
+		const screen = await render(
+			<Toasty>
+				<QueryClientProvider client={qc}>
+					<MenuEditor />
+				</QueryClientProvider>
+			</Toasty>,
+		);
+
+		await expect.element(screen.getByRole("heading", { name: "Translations" })).toBeVisible();
+		expect(api.fetchMenuTranslations).toHaveBeenCalledWith("main-menu", { locale: "en" });
+		expect(screen.getByRole("button", { name: "Translate", exact: true }).query()).toBeNull();
 	});
 
 	it("links back to the menus list", async () => {

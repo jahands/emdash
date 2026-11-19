@@ -41,12 +41,15 @@ import {
 	MAX_RECOVERY_BYTES,
 	MAX_ROOM_CONNECTIONS,
 	MAX_SAVE_INTERVAL_MS,
+	MAX_SAVE_RETRIES,
 	MAX_UPDATE_BYTES,
 	MAX_USER_CONNECTIONS,
+	MAX_USER_NAME_LENGTH,
 	OPEN_AFTER_LAST_CONNECTION_MS,
 	OPERATION_HOLD_MS,
 	ROOM_STATE_LIFETIME_MS,
 	SAVE_DELAY_MS,
+	SITE_CALL_TIMEOUT_MS,
 	STORE_DELAY_MS,
 	TOKEN_LIFETIME_MS,
 } from "./limits.js";
@@ -118,6 +121,8 @@ interface LoadedState {
 	/** `editors` changed since the last record write. */
 	editorsChanged: boolean;
 	autosaveQueued: boolean;
+	/** Saves tried again since the site last couldn't be reached, reset by an update or a save. */
+	saveRetries: number;
 	/** The latest save ended in a conflict, so the next notification's merge saves again. */
 	saveConflicted: boolean;
 	/** Each user's latest credit, in credit order, to tell who updated after a save's snapshot. */
@@ -282,13 +287,19 @@ export class Room {
 	}
 
 	/**
-	 * Registers a socket with an unused token, or closes it with `busy`. Returns the connection's
-	 * info, which the room keeps and updates, so a host can keep it with the socket.
+	 * Registers a socket with an unused token, or closes it with `busy`. With `userId`, the token
+	 * must have been issued to that user. Returns the connection's info, which the room keeps and
+	 * updates, so a host can keep it with the socket.
 	 */
-	connect(connection: RoomConnection, token: string): ConnectionInfo | null {
+	connect(connection: RoomConnection, token: string, userId?: string): ConnectionInfo | null {
 		const grant = this.#tokens.get(token);
 		const state = this.#loaded();
-		if (!grant || !state || grant.expiresAt <= this.#timers.now()) {
+		if (
+			!grant ||
+			!state ||
+			grant.expiresAt <= this.#timers.now() ||
+			(userId !== undefined && grant.claims.userId !== userId)
+		) {
 			connection.close(CLOSE_CODES.busy, "No valid token");
 			return null;
 		}
@@ -297,7 +308,7 @@ export class Room {
 		this.#reopen();
 		const info: ConnectionInfo = {
 			userId: claims.userId,
-			name: claims.name,
+			name: truncate(claims.name, MAX_USER_NAME_LENGTH),
 			access: claims.access,
 			connectedAt: this.#timers.now(),
 			clientId: null,
@@ -497,11 +508,16 @@ export class Room {
 
 	/**
 	 * Claims the room and loads its stored state. State from another build or schema, or past its
-	 * hour, drops first. With `expiring`, state within its hour isn't loaded at all.
+	 * hour, drops first. With `expiring`, state within its hour isn't loaded at all. With
+	 * `resuming`, state with a stored schema loads without the site, as the room ran before it
+	 * left memory, and `entry` is undefined.
 	 */
 	async #loadStored(
 		expiring: boolean,
-	): Promise<"busy" | "failed" | "empty" | { state: LoadedState; entry: LoadedEntry | null }> {
+		resuming = false,
+	): Promise<
+		"busy" | "failed" | "empty" | { state: LoadedState; entry: LoadedEntry | null | undefined }
+	> {
 		let stored: Awaited<ReturnType<RoomStore["load"]>>;
 		try {
 			if (!(await this.#claim())) return "busy";
@@ -515,9 +531,13 @@ export class Room {
 		if (!record) return "empty";
 		const expired = updatedAt !== null && this.#timers.now() - updatedAt >= ROOM_STATE_LIFETIME_MS;
 		if (expiring && !expired) return "failed";
-		const entry = await this.#loadEntry();
-		if (entry === undefined) return "failed";
-		const fields = documentFields(entry?.fields ?? []);
+		const local =
+			resuming &&
+			record.schema !== undefined &&
+			!expired &&
+			sameBuild(record.fingerprint, this.#build);
+		const entry = local ? undefined : await this.#loadEntry();
+		if (entry === undefined && !local) return "failed";
 		// State that can't be read back drops like stale state, so recovery keeps what can be read.
 		let readable = true;
 		const doc = new Y.Doc({ gc: true });
@@ -539,20 +559,15 @@ export class Room {
 			this.#logError("couldn't read the stored checkpoint", error);
 			checkpoint = Y.emptySnapshot;
 		}
-		const state = this.#adopt(
-			doc,
-			record,
-			checkpoint,
-			entry,
-			new Set(fields.map((field) => field.slug)),
-		);
+		const state = this.#adopt(doc, record, checkpoint, entry, new Set());
+		state.pending = new Set(state.fields.map((field) => field.slug));
 		state.updatedAt = updatedAt ?? this.#timers.now();
 		// The first stored update is the initial or compacted state; compaction counts what follows.
 		state.storedBytes = updates.slice(1).reduce((total, update) => total + update.byteLength, 0);
 		const stale =
 			!readable ||
 			!sameBuild(record.fingerprint, this.#build) ||
-			(entry !== null && entry.hash !== record.fingerprint.hash);
+			(entry ? entry.hash !== record.fingerprint.hash : false);
 		if (stale || expired) {
 			const dropped = await this.#dropState(state, {
 				code: CLOSE_CODES.rejoin,
@@ -565,9 +580,9 @@ export class Room {
 	}
 
 	/** Loads the stored state of a room whose sockets outlived its memory, or closes them. */
-	async #resume(): Promise<{ state: LoadedState; entry: LoadedEntry | null } | null> {
+	async #resume(): Promise<{ state: LoadedState; entry: LoadedEntry | null | undefined } | null> {
 		if (this.#phase.kind !== "unloaded" || this.#connections.size === 0) return null;
-		const stored = await this.#loadStored(false);
+		const stored = await this.#loadStored(false, true);
 		if (typeof stored !== "string") return stored;
 		this.#closeAll(
 			stored === "busy" ? CLOSE_CODES.busy : CLOSE_CODES.rejoin,
@@ -605,7 +620,7 @@ export class Room {
 	/** The entry, null when it's gone, or undefined when the site can't be reached. */
 	async #loadEntry(): Promise<LoadedEntry | null | undefined> {
 		try {
-			return await this.#site.load(this.#entry);
+			return await this.#withDeadline(this.#site.load(this.#entry));
 		} catch (error) {
 			this.#logError("couldn't load the entry", error);
 			return undefined;
@@ -617,21 +632,24 @@ export class Room {
 		doc: Y.Doc,
 		record: RoomRecord,
 		checkpoint: Y.Snapshot,
-		entry: LoadedEntry | null,
+		entry: LoadedEntry | null | undefined,
 		pending: Set<string>,
 	): LoadedState {
+		if (entry) record.schema = { fields: entry.fields, pluginTypes: entry.pluginTypes };
+		const schema = entry === null ? undefined : record.schema;
 		const state: LoadedState = {
 			generation: ++this.#generation,
 			doc,
 			record,
 			checkpoint,
-			fields: documentFields(entry?.fields ?? []),
-			pluginTypes: entry?.pluginTypes ?? [],
+			fields: documentFields(schema?.fields ?? []),
+			pluginTypes: schema?.pluginTypes ?? [],
 			pending,
 			buffer: [],
 			mergeUpdates: [],
 			editorsChanged: false,
 			autosaveQueued: false,
+			saveRetries: 0,
 			saveConflicted: false,
 			credits: new Map(),
 			creditCount: 0,
@@ -719,6 +737,7 @@ export class Room {
 
 	#credit(state: LoadedState, userId: string, transaction: Y.Transaction): void {
 		for (const field of touchedFields(transaction)) state.pending.add(field);
+		state.saveRetries = 0;
 		state.credits.set(userId, ++state.creditCount);
 		const { editors } = state.record;
 		if (editors[0] !== userId) {
@@ -856,7 +875,18 @@ export class Room {
 			await this.#runMerge(state, {});
 		}
 		state.saveConflicted = outcome?.ok === false && outcome.reason === "CONFLICT";
+		if (outcome?.ok) state.saveRetries = 0;
+		const unreachable = outcome?.ok === false && outcome.code === SITE_UNAVAILABLE;
+		if (unreachable && request.kind !== "operation" && this.#live(state)) this.#retrySave(state);
 		return outcome;
+	}
+
+	/** Saves again after a backoff, unless an update already set the save timer. */
+	#retrySave(state: LoadedState): void {
+		if (state.cancelSave || state.saveRetries >= MAX_SAVE_RETRIES) return;
+		const delay = Math.min(SAVE_DELAY_MS * 2 ** state.saveRetries, MAX_SAVE_INTERVAL_MS);
+		state.saveRetries++;
+		state.cancelSave = this.#timers.set(delay, () => this.#saveTimerFired(state));
 	}
 
 	async #saveOnce(state: LoadedState, request: SaveRequest): Promise<SaveOutcome | null> {
@@ -954,7 +984,7 @@ export class Room {
 
 	async #callSave(input: CheckpointInput): Promise<SaveResult> {
 		try {
-			return await this.#site.save(this.#entry, input);
+			return await this.#withDeadline(this.#site.save(this.#entry, input));
 		} catch (error) {
 			this.#logError("couldn't reach the site to save", error);
 			return {
@@ -1097,6 +1127,7 @@ export class Room {
 		}
 		state.fields = fields;
 		state.pluginTypes = entry.pluginTypes;
+		state.record.schema = { fields: entry.fields, pluginTypes: entry.pluginTypes };
 		const written: Record<string, string> = {};
 		const kept: string[] = [];
 		for (const [field, decision] of decisions) {
@@ -1256,11 +1287,13 @@ export class Room {
 			}
 		}
 		try {
-			await this.#site.saveRecovery(this.#entry, {
-				data,
-				slug,
-				editedBy: [...state.record.editors],
-			});
+			await this.#withDeadline(
+				this.#site.saveRecovery(this.#entry, {
+					data,
+					slug,
+					editedBy: [...state.record.editors],
+				}),
+			);
 			return true;
 		} catch (error) {
 			this.#logError("couldn't save a recovery revision", error);
@@ -1435,6 +1468,17 @@ export class Room {
 		);
 	}
 
+	/** Settles as `call` does, or rejects once the site has had `SITE_CALL_TIMEOUT_MS`. */
+	#withDeadline<T>(call: Promise<T>): Promise<T> {
+		let cancel: (() => void) | undefined;
+		const deadline = new Promise<never>((_resolve, reject) => {
+			cancel = this.#timers.set(SITE_CALL_TIMEOUT_MS, () =>
+				reject(new Error(`The site didn't answer within ${SITE_CALL_TIMEOUT_MS} ms`)),
+			);
+		});
+		return Promise.race([call, deadline]).finally(() => cancel?.());
+	}
+
 	#enqueue<T>(task: () => Promise<T>): Promise<T> {
 		const run = this.#queue.then(task);
 		this.#queue = run.catch(() => {});
@@ -1517,6 +1561,18 @@ function randomId(bytes: number): string {
 	const value = new Uint8Array(bytes);
 	crypto.getRandomValues(value);
 	return encodeBase64urlNoPadding(value);
+}
+
+/** The first `length` code points, so no surrogate pair is split. */
+function truncate(text: string, length: number): string {
+	if (text.length <= length) return text;
+	let end = 0;
+	let count = 0;
+	for (const char of text) {
+		if (count++ === length) break;
+		end += char.length;
+	}
+	return text.slice(0, end);
 }
 
 function jsonBytes(value: unknown): number {

@@ -255,12 +255,22 @@ export function MediaUsedIn({ mediaId, open, navigationBlocked, onEntryClick }: 
 	);
 }
 
+// Fixed, so placeholders shown again after a remount don't change shape.
+const SKELETON_TITLE_WIDTHS = [70, 55];
+
+/** Usage rows in outline, shown while the first page of usage loads. */
 function UsageSkeleton() {
 	return (
-		<div className="space-y-2" aria-hidden="true">
-			<SkeletonLine blockHeight={40} minWidth={75} maxWidth={95} />
-			<SkeletonLine blockHeight={40} minWidth={65} maxWidth={90} />
-			<SkeletonLine blockHeight={40} minWidth={70} maxWidth={92} />
+		<div className="grid grid-cols-2 content-start gap-3 p-0.5" aria-hidden="true">
+			{SKELETON_TITLE_WIDTHS.map((width) => (
+				<div key={width} className={USAGE_ROW_CLASS_NAME}>
+					<div className="skeleton-line size-10 shrink-0 rounded-md" />
+					<div className="min-w-0 flex-1 space-y-0.5">
+						<SkeletonLine blockHeight={20} minWidth={width} maxWidth={width} />
+						<SkeletonLine blockHeight={20} minWidth={45} maxWidth={45} />
+					</div>
+				</div>
+			))}
 		</div>
 	);
 }

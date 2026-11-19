@@ -690,7 +690,7 @@ describe("ContentEditPage publish and autosave ordering", () => {
 		await expect
 			.element(screen.getByRole("button", { name: "Save", exact: true }))
 			.not.toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Saved", exact: true }).query()).toBeNull();
+		await expect.element(screen.getByRole("button", { name: "Saved", exact: true })).toBeDisabled();
 
 		const removeSchedule = screen.getByRole("button", { name: "Remove schedule" });
 		await expect.element(removeSchedule).toBeInTheDocument();
@@ -854,6 +854,25 @@ describe("ContentEditPage publish and autosave ordering", () => {
 		delayedRefresh.resolve(contentResponse(makeItem({ _rev: "rev-save-1", scheduledAt: null })));
 		await vi.advanceTimersByTimeAsync(0);
 		await expect.element(changeSchedule).toBeVisible();
+	});
+
+	it("keeps the publish result when the preceding save refetch resolves late", async () => {
+		const delayedRefresh = deferredResponse();
+		server = createMockServer({
+			onContentGet: (_request, index) =>
+				index === 0 ? contentResponse(makeItem()) : delayedRefresh.promise,
+		});
+		const screen = await renderEditPage();
+		const summary = screen.getByRole("group", { name: "Publishing summary" });
+		await expect.element(summary).toHaveTextContent("Draft changes");
+
+		await screen.getByRole("textbox", { name: "Title" }).fill("Published title");
+		await publishNow(screen);
+		await expect.element(summary).toHaveTextContent("No draft changes");
+
+		delayedRefresh.resolve(contentResponse(makeItem({ _rev: "rev-save-1" })));
+		await vi.advanceTimersByTimeAsync(100);
+		expect(summary.element().textContent).toContain("No draft changes");
 	});
 
 	it("does not create a draft revision for clean schedule changes", async () => {

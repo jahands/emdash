@@ -36,11 +36,11 @@ vi.mock("../../src/query.js", () => ({
 			},
 		],
 	}),
-	getPublishedDates: async (_collection: string, options: { locale?: string } = {}) => ({
-		dates:
+	getPublishedDateBuckets: async (_collection: string, options: { locale?: string } = {}) => ({
+		buckets:
 			options.locale === "en"
-				? ["2025-01-15T10:00:00.000Z", "2025-01-20T10:00:00.000Z"]
-				: ["2024-03-10T10:00:00.000Z"],
+				? [{ bucket: "2025-01-15", count: 2 }]
+				: [{ bucket: "2024-03-15", count: 1 }],
 	}),
 }));
 vi.mock("../../src/settings/index.js", () => ({ getSiteSettings: async () => ({}) }));

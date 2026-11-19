@@ -17,6 +17,7 @@ import {
 	type BylineSummary,
 	type ContentItem,
 } from "../../src/lib/api";
+import type { BlockType } from "../../src/lib/api/schema";
 import { RoomOperationsContext, type RoomOperations } from "../../src/lib/co-editing/operations";
 import { RoomSaveError, type RoomEditing } from "../../src/lib/co-editing/types";
 import { PluginAdminProvider, type PluginAdmins } from "../../src/lib/plugin-context";
@@ -906,7 +907,7 @@ describe("ContentEditor's notices in a room", () => {
 				const screen = await render(<ContentEditor {...props} />);
 				unmounts.push(() => screen.unmount());
 				await expect.element(screen.getByRole("button", { name: "Offline" })).toBeVisible();
-				const label = saveButton().querySelector("[data-save-button-visible-state] span")!;
+				const label = saveButton().querySelector('[data-save-button-state="offline"]')!;
 				const [icon, text] = [label.firstElementChild!, label.lastElementChild!].map((element) =>
 					element.getBoundingClientRect(),
 				);
@@ -1619,5 +1620,146 @@ describe("EntryLockNotice for a room", () => {
 			.toHaveTextContent("This browser can’t join them, so nothing you change here will be saved.");
 		expect(page.getByRole("alertdialog").elements()).toHaveLength(0);
 		expect(screen.getByRole("button").elements()).toHaveLength(0);
+	});
+});
+
+describe("ContentEditor's block links when the room goes live", () => {
+	const SECTION: BlockType = {
+		id: "section-id",
+		slug: "section",
+		label: "Section",
+		category: "Layout",
+		currentVersion: 1,
+		source: "user",
+		createdAt: "2026-01-01T00:00:00.000Z",
+		updatedAt: "2026-01-01T00:00:00.000Z",
+		versions: [
+			{
+				id: "section-v1",
+				blockTypeId: "section-id",
+				version: 1,
+				fields: [{ slug: "heading", label: "Heading", type: "string" }],
+				fingerprint: "section-v1",
+				active: true,
+				createdAt: "2026-01-01T00:00:00.000Z",
+				updatedAt: "2026-01-01T00:00:00.000Z",
+			},
+		],
+	};
+	const BLOCK_FIELDS: Record<string, FieldDescriptor> = {
+		title: { kind: "string", label: "Title" },
+		layout: {
+			kind: "blocks",
+			label: "Layout",
+			blockTypes: [SECTION],
+			validation: { allowedTypes: ["section"] },
+		},
+	};
+	const LAYOUT = [{ _type: "section", _key: "services", _version: 1, heading: "Services" }];
+
+	it("opens and focuses the linked block again in the room's fields", async () => {
+		const onFieldFocused = vi.fn();
+		const item = makeItem({ data: { title: "My Post", layout: LAYOUT } });
+		const props = { fields: BLOCK_FIELDS, item, onFieldFocused };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "layout.services.heading"));
+		unmounts.push(() => screen.unmount());
+		const heading = () => document.getElementById("field-layout.services.heading");
+
+		await expect.poll(() => document.activeElement === heading()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+
+		// The page takes the link off the URL, then the room goes live and the fields mount again.
+		await screen.rerender(editor(null));
+		const fake = createRoom({ title: "My Post", layout: LAYOUT, slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+
+		await expect
+			.element(screen.getByRole("button", { name: "Section", exact: true }))
+			.toHaveAttribute("aria-expanded", "true");
+		await expect.poll(() => document.activeElement === heading()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+	});
+	it("focuses a linked settings field again once the editor moves into the room", async () => {
+		const onFieldFocused = vi.fn();
+		const props = { item: makeItem(), onFieldFocused };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "slug"));
+		unmounts.push(() => screen.unmount());
+		const slug = () => document.querySelector<HTMLElement>('input[data-settings-field="slug"]');
+
+		await expect.poll(() => document.activeElement === slug()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+
+		await screen.rerender(editor(null));
+		const fake = createRoom({ title: "My Post", summary: "Room summary", slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+
+		await expect
+			.element(screen.getByRole("textbox", { name: "Summary" }))
+			.toHaveValue("Room summary");
+		await expect.poll(() => document.activeElement === slug()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+	});
+
+	it("focuses a linked top-level field again in the room's fields", async () => {
+		const onFieldFocused = vi.fn();
+		const props = { item: makeItem(), onFieldFocused };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "summary"));
+		unmounts.push(() => screen.unmount());
+		const summary = () => document.getElementById("field-summary");
+
+		await expect.poll(() => document.activeElement === summary()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+
+		await screen.rerender(editor(null));
+		const fake = createRoom({ title: "My Post", summary: "Room summary", slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+
+		await expect
+			.element(screen.getByRole("textbox", { name: "Summary" }))
+			.toHaveValue("Room summary");
+		await expect.poll(() => document.activeElement === summary()).toBe(true);
+		expect(onFieldFocused).toHaveBeenCalledOnce();
+	});
+
+	it.each([
+		["moves focus", async () => document.getElementById("field-title")?.focus()],
+		["types in the field", async () => userEvent.keyboard(" more")],
+	])("leaves focus alone once the person %s before the room goes live", async (_label, act) => {
+		const props = { item: makeItem(), onFieldFocused: vi.fn() };
+		const editor = (room: RoomEditing | null, focusField?: string) => (
+			<Toasty>
+				<ContentEditor {...editorProps(room, { ...props, focusField })} />
+			</Toasty>
+		);
+		const screen = await render(editor(null, "summary"));
+		unmounts.push(() => screen.unmount());
+		const summary = () => document.getElementById("field-summary");
+		await expect.poll(() => document.activeElement === summary()).toBe(true);
+		await screen.rerender(editor(null));
+
+		await act();
+		const fake = createRoom({ title: "My Post", summary: "Room summary", slug: "my-post" });
+		await screen.rerender(editor(fake.room));
+		await expect
+			.element(screen.getByRole("textbox", { name: "Summary" }))
+			.toHaveValue("Room summary");
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		expect(document.activeElement).not.toBe(summary());
 	});
 });

@@ -91,15 +91,19 @@ beforeEach(() => {
 });
 
 describe("ApiTokenSettings", () => {
-	it("shows the shared frame while tokens load", async () => {
+	it("shows the page's sections, with token creation unavailable, while tokens load", async () => {
 		mockFetchApiTokens.mockReturnValue(new Promise(() => undefined));
 		const screen = await renderApiTokenSettings();
 
 		await expect
 			.element(screen.getByRole("heading", { name: "API Tokens", level: 1 }))
 			.toBeInTheDocument();
-		await expect.element(screen.getByText("Loading...")).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Create Token" }).query()).toBeNull();
+		await expect.element(screen.getByText("Loading settings...")).toBeInTheDocument();
+		await expect
+			.element(screen.getByRole("heading", { name: "API Tokens", level: 2 }))
+			.toBeInTheDocument();
+		await expect.element(screen.getByRole("button", { name: "Create Token" })).toBeDisabled();
+		expect(screen.getByText("No API tokens yet. Create one to get started.").query()).toBeNull();
 	});
 
 	it("shows a load failure without token actions", async () => {

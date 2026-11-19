@@ -18,7 +18,8 @@ import {
 const RESERVED_SET: ReadonlySet<string> = new Set(RESERVED_BYLINE_FIELD_SLUGS);
 const TYPE_SET: ReadonlySet<string> = new Set(BYLINE_FIELD_TYPES);
 
-const VERSION_KEY = "byline_fields_version";
+export const BYLINE_FIELDS_VERSION_KEY = "byline_fields_version";
+const VERSION_KEY = BYLINE_FIELDS_VERSION_KEY;
 
 /** Hard cap on the choices array for a `select`-type field. */
 export const MAX_SELECT_OPTIONS = 200;
@@ -435,9 +436,7 @@ export class BylineSchemaRegistry {
 			.select("value")
 			.where("name", "=", VERSION_KEY)
 			.executeTakeFirst();
-		if (!row) return 0;
-		const parsed = Number.parseInt(row.value, 10);
-		return Number.isFinite(parsed) ? parsed : 0;
+		return parseBylineFieldsVersion(row?.value);
 	}
 
 	// ============================================
@@ -631,7 +630,14 @@ export class BylineSchemaRegistry {
 	}
 }
 
-function mapFieldRow(row: {
+/** The stored byline fields version; 0 when it is missing or unreadable. */
+export function parseBylineFieldsVersion(value: string | null | undefined): number {
+	if (value == null) return 0;
+	const parsed = Number.parseInt(value, 10);
+	return Number.isFinite(parsed) ? parsed : 0;
+}
+
+export function mapFieldRow(row: {
 	id: string;
 	slug: string;
 	label: string;

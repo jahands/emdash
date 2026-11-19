@@ -19,6 +19,7 @@ import type {
 	PluginEditorAction,
 	PluginEditorPanel,
 	PluginMcpManifestConfig,
+	PluginRealtimeConfig,
 	PortableTextBlockConfig,
 	ResolvedPlugin,
 	SettingField,
@@ -151,6 +152,8 @@ export interface PluginDescriptor<TOptions extends object = object> {
 	storage?: Record<string, StorageCollectionDeclaration>;
 	/** Serialized MCP declarations emitted by the plugin build. */
 	mcp?: PluginMcpManifestConfig;
+	/** Channels the plugin publishes live updates on. */
+	realtime?: PluginRealtimeConfig;
 	/**
 	 * Route declarations for sandboxed config-declared plugins. Mirrors
 	 * definePlugin({ routes }) and drives route auth decisions; omitted routes
@@ -250,6 +253,18 @@ export interface EmDashConfig {
 	 * service can fetch it over HTTP.
 	 */
 	images?: boolean;
+	/**
+	 * Compress responses from the `@astrojs/node` standalone server.
+	 *
+	 * The build stores Brotli and gzip copies of the client assets, and the
+	 * server sends them to browsers that accept them. Pages, API responses
+	 * and other text responses are compressed as they are sent. Set to
+	 * `false` to leave compression to a proxy or CDN in front of the server.
+	 * Other adapters and the adapter's middleware mode are unaffected.
+	 *
+	 * @default true
+	 */
+	compression?: boolean;
 	/**
 	 * Trusted plugins to load (run in main isolate)
 	 *

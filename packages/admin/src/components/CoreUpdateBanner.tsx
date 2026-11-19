@@ -4,7 +4,7 @@ import { ArrowCircleUp } from "@phosphor-icons/react";
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { fetchCoreUpdateStatus } from "../lib/api/core-update.js";
+import { fetchCoreUpdateStatus, type CoreUpdateStatus } from "../lib/api/core-update.js";
 import { useCurrentUser } from "../lib/api/current-user.js";
 
 /** Matches Role.ADMIN in @emdash-cms/auth (same constant as Sidebar). */
@@ -26,23 +26,27 @@ function readDismissedVersion(): string | null {
 	}
 }
 
+/** The cached core update status, requested only for admins. */
+export function useCoreUpdateStatus() {
+	const { data: user } = useCurrentUser();
+	return useQuery({
+		queryKey: ["core-update"],
+		queryFn: fetchCoreUpdateStatus,
+		enabled: (user?.role ?? 0) >= ROLE_ADMIN,
+		staleTime: 60 * 60 * 1000,
+		retry: false,
+	});
+}
+
 /**
  * Banner shown to admins on the dashboard when the npm registry reports a
  * newer `emdash` version than the one running. Dismissible per version:
  * hiding 0.24 re-arms the banner when 0.25 ships.
  */
-export function CoreUpdateBanner() {
+export function CoreUpdateBanner({ status }: { status: CoreUpdateStatus | undefined }) {
 	const { t } = useLingui();
 	const { data: user } = useCurrentUser();
 	const isAdmin = (user?.role ?? 0) >= ROLE_ADMIN;
-
-	const { data: status } = useQuery({
-		queryKey: ["core-update"],
-		queryFn: fetchCoreUpdateStatus,
-		enabled: isAdmin,
-		staleTime: 60 * 60 * 1000,
-		retry: false,
-	});
 
 	const [dismissedVersion, setDismissedVersion] = useState(readDismissedVersion);
 

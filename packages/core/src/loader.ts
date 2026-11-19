@@ -15,13 +15,13 @@ import type { LiveLoader } from "astro/loaders";
 import { Kysely, type RawBuilder, sql, type Dialect, type SqlBool } from "kysely";
 
 import { buildStatusCondition, isPostgres } from "./database/dialect-helpers.js";
+import { creditsFromFoldedBylines, foldedBylineSubqueries } from "./database/folded-bylines.js";
 import { kyselyLogOption } from "./database/instrumentation.js";
 import { jsonTextValues } from "./database/json-recordset.js";
 import {
 	parseTaxonomyCollections,
 	selectTaxonomyDefs,
 } from "./database/repositories/taxonomy-def.js";
-import type { BylineSummary, ContentBylineCredit } from "./database/repositories/types.js";
 import { decodeCursor, encodeCursor, InvalidCursorError } from "./database/repositories/types.js";
 import { validateIdentifier } from "./database/validate.js";
 import { getI18nConfig, getLocaleCandidates, type I18nConfig } from "./i18n/config.js";
@@ -44,6 +44,7 @@ import {
 import {
 	createRevalidatingCache,
 	invalidateRevalidatingCache,
+	primeRevalidatingCache,
 	revalidatingCached,
 	type RevalidatingCache,
 } from "./utils/revalidating-cache.js";
@@ -163,16 +164,6 @@ function foldedHydrationSelects(db: Kysely<any>, type: string, outer: string) {
 	const pg = isPostgres(db);
 	const obj = (pairs: string) =>
 		pg ? sql.raw(`json_build_object(${pairs})`) : sql.raw(`json_object(${pairs})`);
-	const agg = (inner: RawBuilder<unknown>) =>
-		pg ? sql`coalesce(json_agg(${inner}), '[]'::json)` : sql`json_group_array(${inner})`;
-
-	// Pin the byline join order on SQLite (#1722). Taxonomy hydration uses
-	// LEFT JOINs below, whose order is already fixed by SQL semantics. SQLite
-	// honours `CROSS JOIN` ordering, forcing the byline subquery to drive from
-	// its pivot by content reference and probe by translation_group. Postgres
-	// keeps statistics and rejects `CROSS JOIN … ON`, so it stays a plain JOIN.
-	const foldJoin = pg ? sql`JOIN` : sql`CROSS JOIN`;
-
 	const termObj = obj(
 		"'id', coalesce(exact_term.id, default_term.id), 'name', coalesce(exact_term.name, default_term.name), 'slug', coalesce(exact_term.slug, default_term.slug), 'label', coalesce(exact_term.label, default_term.label), 'parent_id', coalesce(exact_term.parent_id, default_term.parent_id), 'locale', coalesce(exact_term.locale, default_term.locale), 'translation_group', coalesce(exact_term.translation_group, default_term.translation_group)",
 	);
@@ -199,44 +190,10 @@ function foldedHydrationSelects(db: Kysely<any>, type: string, outer: string) {
 		WHERE ct.collection = ${type} AND ct.entry_id = ${o}.translation_group) AS ${sql.ref("_emdash_terms")}`
 		: sql`(SELECT ${termAgg} FROM ${sql.ref("content_taxonomies")} AS ct LEFT JOIN ${sql.ref("taxonomies")} AS exact_term ON exact_term.translation_group = ct.taxonomy_id AND exact_term.locale = ${o}.locale LEFT JOIN ${sql.ref("taxonomies")} AS default_term ON default_term.translation_group = ct.taxonomy_id AND default_term.locale = ${defaultLocale} WHERE ct.collection = ${type} AND ct.entry_id = ${o}.translation_group) AS ${sql.ref("_emdash_terms")}`;
 
-	const bylineInner = obj(
-		"'id', b.id, 'slug', b.slug, 'displayName', b.display_name, 'bio', b.bio, 'avatarMediaId', b.avatar_media_id, 'avatarStorageKey', m.storage_key, 'avatarAlt', m.alt, 'avatarBlurhash', m.blurhash, 'avatarDominantColor', m.dominant_color, 'websiteUrl', b.website_url, 'userId', b.user_id, 'isGuest', b.is_guest, 'createdAt', b.created_at, 'updatedAt', b.updated_at, 'locale', b.locale, 'translationGroup', b.translation_group",
-	);
-	const creditObj = pg
-		? sql.raw(
-				"json_build_object('roleLabel', cb.role_label, 'sortOrder', cb.sort_order, 'byline', ",
-			)
-		: sql.raw("json_object('roleLabel', cb.role_label, 'sortOrder', cb.sort_order, 'byline', ");
-	const credit = sql`${creditObj}${bylineInner})`;
-	// The locale match differs with locale aliases: a row's locale may be any
-	// of its configured locale's codes, so both subqueries compare canonical
-	// locales and pick one byline per match, as the query path does.
-	const credits = hasLocaleAliases
-		? sql`(SELECT ${agg(credit)} FROM ${sql.ref("_emdash_content_bylines")} AS cb
-		${foldJoin} ${sql.ref("_emdash_bylines")} AS b ON b.id = (
-			SELECT candidate.id FROM _emdash_bylines AS candidate
-			WHERE candidate.translation_group = cb.byline_id
-				AND ${canonicalLocaleColumn("candidate.locale")} = ${canonicalLocaleColumn(`${outer}.locale`)}
-			ORDER BY ${storedLocaleOrder("candidate.locale")}, candidate.id LIMIT 1
-		)
-		LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id
-		WHERE cb.collection_slug = ${type} AND cb.content_id = ${o}.id)`
-		: sql`(SELECT ${agg(credit)} FROM ${sql.ref("_emdash_content_bylines")} AS cb ${foldJoin} ${sql.ref("_emdash_bylines")} AS b ON b.translation_group = cb.byline_id LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id WHERE cb.collection_slug = ${type} AND cb.content_id = ${o}.id AND b.locale = ${o}.locale)`;
-	// The author fallback for an entry with no explicit credit: the byline
-	// linked to its author in its locale. Without aliases `(user_id, locale)`
-	// is unique, so this is one index probe per row and matches
-	// `findByUserIds` exactly; with them, the same canonical-locale match and
-	// ordering as the credits above picks one.
-	const author = hasLocaleAliases
-		? sql`(SELECT ${bylineInner} FROM ${sql.ref("_emdash_bylines")} AS b LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id
-		WHERE b.user_id = ${o}.author_id
-			AND ${canonicalLocaleColumn("b.locale")} = ${canonicalLocaleColumn(`${outer}.locale`)}
-		ORDER BY ${storedLocaleOrder("b.locale")}, b.id LIMIT 1)`
-		: sql`(SELECT ${bylineInner} FROM ${sql.ref("_emdash_bylines")} AS b LEFT JOIN ${sql.ref("media")} AS m ON m.id = b.avatar_media_id WHERE b.user_id = ${o}.author_id AND b.locale = ${o}.locale LIMIT 1)`;
+	const { credits, author, fieldsVersion } = foldedBylineSubqueries(db, type, outer);
 	// D1 caps result sets at 100 columns, so credits, author and schema version
 	// share one column to keep the entry read's width unchanged. SQLite's
 	// `json()` keeps each subquery's JSON text from being nested as a string.
-	const fieldsVersion = sql`(SELECT value FROM ${sql.ref("options")} WHERE name = ${"byline_fields_version"})`;
 	const bylines = pg
 		? sql`json_build_object('credits', ${credits}, 'author', ${author}, 'fieldsVersion', ${fieldsVersion}) AS ${sql.ref("_emdash_bylines")}`
 		: sql`json_object('credits', json(${credits}), 'author', json(${author}), 'fieldsVersion', ${fieldsVersion}) AS ${sql.ref("_emdash_bylines")}`;
@@ -315,36 +272,6 @@ function expandFoldedSeo(row: Record<string, unknown>): void {
 	for (const [col, alias] of Object.entries(SEO_COLUMN_ALIASES)) {
 		row[alias] = parsed[col] ?? null;
 	}
-}
-
-/**
- * A folded byline object as a `BylineSummary`. The fold's JSON keys are the
- * `BylineSummary` keys (see `bylineInner` in {@link foldedHydrationSelects}).
- */
-function foldedBylineSummary(raw: unknown): BylineSummary {
-	const byline = isPlainObject(raw) ? raw : {};
-	// Folded rows omit custom-field values.
-	// eslint-disable-next-line typescript/no-unsafe-type-assertion -- keys set by the fold's SQL
-	return { ...byline, isGuest: Boolean(byline.isGuest), customFields: {} } as BylineSummary;
-}
-
-export function creditsFromFoldedBylines(folded: unknown[]): ContentBylineCredit[] {
-	return folded
-		.map((raw) => {
-			const credit = isPlainObject(raw) ? raw : {};
-			return {
-				roleLabel: typeof credit.roleLabel === "string" ? credit.roleLabel : null,
-				sortOrder: Number(credit.sortOrder ?? 0),
-				source: "explicit" as const,
-				byline: foldedBylineSummary(credit.byline),
-			};
-		})
-		.toSorted((a, b) => a.sortOrder - b.sortOrder);
-}
-
-/** The inferred credit for a folded author-fallback byline. */
-export function creditFromFoldedAuthorByline(raw: Record<string, unknown>): ContentBylineCredit {
-	return { byline: foldedBylineSummary(raw), sortOrder: 0, roleLabel: null, source: "inferred" };
 }
 
 /**
@@ -467,18 +394,23 @@ const taxonomyNamesCache: RevalidatingCache<TaxonomyNames> =
 		return cache;
 	})();
 
+function taxonomyNamesOf(
+	defs: readonly { name: string; collections: string | null }[],
+): TaxonomyNames {
+	const namesByCollection: TaxonomyNames = new Map();
+	for (const def of defs) {
+		for (const collection of parseTaxonomyCollections(def.collections)) {
+			const names = namesByCollection.get(collection) ?? new Set<string>();
+			names.add(def.name);
+			namesByCollection.set(collection, names);
+		}
+	}
+	return namesByCollection;
+}
+
 async function fetchTaxonomyNames(db: Kysely<Database>): Promise<TaxonomyNames> {
 	try {
-		const defs = await selectTaxonomyDefs(db).execute();
-		const namesByCollection: TaxonomyNames = new Map();
-		for (const def of defs) {
-			for (const collection of parseTaxonomyCollections(def.collections)) {
-				const names = namesByCollection.get(collection) ?? new Set<string>();
-				names.add(def.name);
-				namesByCollection.set(collection, names);
-			}
-		}
-		return namesByCollection;
+		return taxonomyNamesOf(await selectTaxonomyDefs(db).execute());
 	} catch (error) {
 		if (!isMissingTableError(error) && !isMissingColumnError(error)) throw error;
 		return new Map();
@@ -493,6 +425,22 @@ async function getTaxonomyNames(db: Kysely<Database>, collection: string): Promi
 				console.error("[emdash:loader] revalidating taxonomy names failed:", error);
 			});
 	return names.get(collection) ?? new Set();
+}
+
+/** Take before reading definitions to prime the mappings with. @internal */
+export function taxonomyNamesGeneration(): number {
+	return taxonomyNamesCache.generation;
+}
+
+/**
+ * Cache mappings built from definitions a cold start read with its other reads, unless they were
+ * discarded after `generation` was taken. @internal
+ */
+export function primeTaxonomyNames(
+	defs: readonly { name: string; collections: string | null }[],
+	generation: number,
+): void {
+	primeRevalidatingCache(taxonomyNamesCache, taxonomyNamesOf(defs), generation);
 }
 
 /** Discard mappings after a local taxonomy-definition write. @internal */
@@ -1091,10 +1039,10 @@ function sortCursorCondition(
 			? sql`(${sort} IS NOT NULL OR ${id} ${cmp} ${cursorId})`
 			: sql`(${sort} IS NULL AND ${id} ${cmp} ${cursorId})`;
 	}
-	const past = sql`${sort} ${cmp} ${value} OR (${sort} = ${value} AND ${id} ${cmp} ${cursorId})`;
-	return nullsFirst || NON_NULL_SORT_COLUMNS.has(column)
-		? sql`(${past})`
-		: sql`(${past} OR ${sort} IS NULL)`;
+	// The row value, unlike the equivalent OR, is an index bound on Postgres.
+	// A NULL sort makes it NULL, which excludes the row as the OR form did.
+	const past = sql`(${sort}, ${id}) ${cmp} (${value}, ${cursorId})`;
+	return nullsFirst || NON_NULL_SORT_COLUMNS.has(column) ? past : sql`(${past} OR ${sort} IS NULL)`;
 }
 
 /**
@@ -1741,16 +1689,61 @@ export async function getDb(): Promise<Kysely<Database>> {
 	return dbInstance;
 }
 
-/** @internal Date projection for published archive entries. */
-export async function loadPublishedDates(type: string, locale?: string) {
+/** `MM-DD` of each month's last day, and February 28th, which ends most Februaries. */
+const MONTH_LAST_DAYS = [
+	"01-31",
+	"02-28",
+	"02-29",
+	"03-31",
+	"04-30",
+	"05-31",
+	"06-30",
+	"07-31",
+	"08-31",
+	"09-30",
+	"10-31",
+	"11-30",
+	"12-31",
+];
+
+/**
+ * @internal Published entry counts in buckets of `published_at` that each lie
+ * within one calendar month in every time zone, ordered by each bucket's
+ * latest `published_at`, newest first.
+ *
+ * A canonical UTC timestamp (`YYYY-MM-DDTHH:MM:SS[.sss]Z`) is bucketed by its
+ * UTC day. Every UTC offset is under a day, so a day other than the first or
+ * last of its month is in the same local month everywhere. Those two days can
+ * hold a local month boundary, so they are bucketed by UTC second instead;
+ * offsets and their transitions fall on whole seconds. Any other value is its
+ * own bucket. Each bucket parses with `new Date()` to an instant in it. SQLite's
+ * `LIKE` ignores the case of `T` and `Z`, as `new Date()` does.
+ */
+export async function loadPublishedDateBuckets(type: string, locale?: string) {
 	const tableName = getTableName(type);
 	const db = await getDb();
-	const result = await sql<{ published_at: string | null }>`
-		SELECT published_at FROM ${sql.ref(tableName)}
-		WHERE deleted_at IS NULL
-		AND ${buildStatusCondition(db, "published")}
-		${locale ? sql`AND ${localeMatches("locale", locale)}` : sql``}
-		ORDER BY published_at DESC, id DESC
+	const result = await sql<{ bucket: string; count: number | string | bigint }>`
+		SELECT bucket, COUNT(*) AS count
+		FROM (
+			SELECT published_at, CASE
+				WHEN NOT (
+					published_at LIKE '____-__-__T__:__:__Z'
+					OR published_at LIKE '____-__-__T__:__:__.___Z'
+				) THEN published_at
+				WHEN substr(published_at, 9, 2) BETWEEN '02' AND '27' THEN substr(published_at, 1, 10)
+				WHEN substr(published_at, 9, 2) = '01'
+					OR substr(published_at, 6, 5) IN (${sql.join(MONTH_LAST_DAYS)})
+				THEN substr(published_at, 1, 19) || 'Z'
+				ELSE substr(published_at, 1, 10)
+			END AS bucket
+			FROM ${sql.ref(tableName)}
+			WHERE deleted_at IS NULL
+			AND ${buildStatusCondition(db, "published")}
+			AND published_at IS NOT NULL
+			${locale ? sql`AND ${localeMatches("locale", locale)}` : sql``}
+		) AS published
+		GROUP BY bucket
+		ORDER BY MAX(published_at) DESC
 	`.execute(db);
 	return result.rows;
 }

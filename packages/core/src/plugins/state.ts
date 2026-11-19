@@ -10,6 +10,7 @@ import { sql, type Compilable, type Kysely, type RawBuilder } from "kysely";
 import { executeAtomicBatchIfSupported, isSqlite } from "../database/dialect-helpers.js";
 import { withTransaction } from "../database/transaction.js";
 import type { Database } from "../database/types.js";
+import { publishChange } from "../realtime/publish.js";
 
 export const PLUGIN_STATE_GENERATION_OPTION = "emdash:plugins:generation";
 export type PluginStateGeneration = bigint;
@@ -54,7 +55,7 @@ const receipts = ((globalThis as Record<symbol, unknown>)[GENERATION_RECEIPTS_KE
 const GENERATION_PATTERN = /^(?:0|[1-9][0-9]*)$/;
 const UNSUPPORTED_TRANSACTION_PATTERN = /^transactions are not supported$/i;
 
-function parseGeneration(value: string | null | undefined): bigint {
+export function parseGeneration(value: string | null | undefined): bigint {
 	if (value == null) return 0n;
 	if (!GENERATION_PATTERN.test(value)) {
 		throw new Error(`Invalid plugin state generation: ${value}`);
@@ -356,6 +357,7 @@ export class PluginStateRepository {
 					.returning("plugin_id"),
 			);
 		}
+		publishChange("plugins", { ids: [pluginId], op: existing ? "update" : "create" });
 
 		return (await this.get(pluginId))!;
 	}
@@ -398,7 +400,7 @@ export class PluginStateRepository {
 	}
 
 	async restoreIfVersion(expectedVersion: string, state: PluginState): Promise<boolean> {
-		return this.mutate((db) =>
+		const restored = await this.mutate((db) =>
 			db
 				.updateTable("_plugin_state")
 				.set({
@@ -421,6 +423,8 @@ export class PluginStateRepository {
 				.where("source", "=", state.source)
 				.returning("plugin_id"),
 		);
+		if (restored) publishChange("plugins", { ids: [state.pluginId], op: "update" });
+		return restored;
 	}
 
 	/**
@@ -444,7 +448,7 @@ export class PluginStateRepository {
 		pluginId: string,
 		conditions?: { version?: string; source?: PluginSource; status?: PluginStatus },
 	): Promise<boolean> {
-		return this.mutate((db) => {
+		const deleted = await this.mutate((db) => {
 			let query = db.deleteFrom("_plugin_state").where("plugin_id", "=", pluginId);
 			if (conditions?.version !== undefined)
 				query = query.where("version", "=", conditions.version);
@@ -452,13 +456,15 @@ export class PluginStateRepository {
 			if (conditions?.status !== undefined) query = query.where("status", "=", conditions.status);
 			return query.returning("plugin_id");
 		});
+		if (deleted) publishChange("plugins", { ids: [pluginId], op: "delete" });
+		return deleted;
 	}
 }
 
 /**
  * Map a `_plugin_state` row to the public `PluginState` shape. Every read
  * path uses this, so adding a column to the table means changing this
- * function and nothing else.
+ * function and `PLUGIN_STATE_COLUMNS`, and nothing else.
  */
 export interface PluginStateRow {
 	plugin_id: string;
@@ -476,6 +482,31 @@ export interface PluginStateRow {
 	mcp_tools_enabled: number;
 	mcp_tools_consent: string | null;
 }
+
+/** The columns of a `PluginStateRow`, for reads that name them. */
+export const PLUGIN_STATE_COLUMNS = [
+	"plugin_id",
+	"status",
+	"version",
+	"installed_at",
+	"activated_at",
+	"deactivated_at",
+	"source",
+	"marketplace_version",
+	"display_name",
+	"description",
+	"registry_publisher_did",
+	"registry_slug",
+	"mcp_tools_enabled",
+	"mcp_tools_consent",
+] as const satisfies readonly (keyof PluginStateRow)[];
+
+type UnlistedPluginStateColumn = Exclude<
+	keyof PluginStateRow,
+	(typeof PLUGIN_STATE_COLUMNS)[number]
+>;
+const pluginStateColumnsComplete: [UnlistedPluginStateColumn] extends [never] ? true : never = true;
+void pluginStateColumnsComplete;
 
 export function rowToPluginState(row: PluginStateRow): PluginState {
 	return {

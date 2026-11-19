@@ -108,7 +108,13 @@ export class RevisionRepository {
 	/**
 	 * Create a new revision
 	 */
-	async create(input: CreateRevisionInput): Promise<Revision> {
+	async create(
+		input: CreateRevisionInput,
+		options: {
+			/** Leave queueing for pruning to the caller, which calls {@link queuePruning} itself. */
+			skipPruneQueue?: boolean;
+		} = {},
+	): Promise<Revision> {
 		const id = createRevisionId();
 		const data =
 			input.kind === "recovery"
@@ -125,14 +131,19 @@ export class RevisionRepository {
 			edited_by: input.editedBy?.length ? JSON.stringify(input.editedBy) : null,
 		};
 
-		await this.db.insertInto("revisions").values(row).execute();
-
-		const revision = await this.findById(id);
+		const inserted = await this.db
+			.insertInto("revisions")
+			.values(row)
+			.returningAll()
+			.executeTakeFirst();
+		const revision = inserted ? await this.normalizeRow(inserted) : null;
 		if (!revision) {
 			throw new Error("Failed to create revision");
 		}
 
-		await this.queuePruning(input.collection, input.entryId, id);
+		if (!options.skipPruneQueue) {
+			await this.queuePruning(input.collection, input.entryId, id);
+		}
 
 		return revision;
 	}

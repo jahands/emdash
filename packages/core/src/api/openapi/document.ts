@@ -337,6 +337,10 @@ const contentPaths = {
 				}),
 				query: z.object({
 					locale: z.string().optional().meta({ description: "Locale filter" }),
+					draftSlug: z
+						.literal("1")
+						.optional()
+						.meta({ description: "Add the slug the draft stages as `item.draftSlug`" }),
 				}),
 			},
 			responses: {

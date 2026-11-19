@@ -670,6 +670,53 @@ describe("definePlugin", () => {
 		});
 	});
 
+	describe("realtime channels", () => {
+		it("keeps declared channels", () => {
+			const realtime = { channels: { queue: { permission: "settings:read" as const } } };
+			const plugin = definePlugin({
+				id: "live",
+				version: "1.0.0",
+				capabilities: ["realtime:publish"],
+				realtime,
+				admin: { pages: [{ path: "/queue", label: "Queue", refreshOn: ["queue"] }] },
+			});
+
+			expect(plugin.realtime).toEqual(realtime);
+			expect(plugin.capabilities).toEqual(["realtime:publish"]);
+		});
+
+		it.each([
+			[
+				"a channel name that isn't one",
+				{ "Bad Name": { permission: "settings:read" } },
+				/Invalid realtime channel/,
+			],
+			[
+				"a permission outside the Permissions map",
+				{ queue: { permission: "queue:read" } },
+				/needs a permission/,
+			],
+		])("refuses %s", (_name, channels, error) => {
+			expect(() =>
+				definePlugin({
+					id: "live",
+					version: "1.0.0",
+					realtime: { channels: channels as never },
+				}),
+			).toThrow(error);
+		});
+
+		it("refuses refreshOn naming an undeclared channel", () => {
+			expect(() =>
+				definePlugin({
+					id: "live",
+					version: "1.0.0",
+					admin: { widgets: [{ id: "queue", refreshOn: ["queue"] }] },
+				}),
+			).toThrow(/doesn't declare/);
+		});
+	});
+
 	describe("admin passthrough", () => {
 		it.each([
 			{ response: "raw" as const },

@@ -10,6 +10,7 @@ import type {
 } from "@emdash-cms/admin/internal/co-editing/types";
 
 import type { ContentWrite } from "../api/content-save.js";
+import type { Change } from "../realtime/publish.js";
 import type { FieldType, FieldValidation } from "../schema/types.js";
 
 export { CLOSE_CODES } from "@emdash-cms/admin/internal/co-editing/types";
@@ -26,6 +27,16 @@ export function roomId(entry: EntryRef): string {
 	return `${entry.collection}:${entry.id}`;
 }
 
+/** The realtime hub's name in the room namespace. Room IDs start with a collection slug, so none is this. */
+export const HUB_NAME = "_realtime";
+
+const REALTIME_PATH = /\/_emdash\/api\/realtime$/;
+
+/** Whether a path is the hub's socket and ticket route, `/_emdash/api/realtime` under any base path. */
+export function isRealtimePath(pathname: string): boolean {
+	return REALTIME_PATH.test(pathname);
+}
+
 const ROOM_PATH = /\/_emdash\/api\/content\/([^/]+)\/([^/]+)\/room$/;
 
 /**
@@ -35,32 +46,34 @@ const ROOM_PATH = /\/_emdash\/api\/content\/([^/]+)\/([^/]+)\/room$/;
 export function roomIdFromPath(pathname: string): string | null {
 	const match = ROOM_PATH.exec(pathname);
 	if (!match) return null;
+	let id: string;
 	try {
-		return roomId({
+		id = roomId({
 			collection: decodeURIComponent(match[1] ?? ""),
 			id: decodeURIComponent(match[2] ?? ""),
 		});
 	} catch {
 		return null;
 	}
+	return parseRoomId(id) ? id : null;
 }
 
-/** The entry a room ID names, or null when it isn't one. */
+const COLLECTION_SLUG = /^[a-z][a-z0-9_]*$/;
+
+/**
+ * The entry a room ID names, or null when it isn't one. The collection must be a collection slug,
+ * so names other objects in the room namespace use, such as `_realtime`, never parse as rooms.
+ */
 export function parseRoomId(id: string): EntryRef | null {
 	const colon = id.indexOf(":");
 	if (colon <= 0 || colon === id.length - 1) return null;
-	return { collection: id.slice(0, colon), id: id.slice(colon + 1) };
+	const collection = id.slice(0, colon);
+	if (!COLLECTION_SLUG.test(collection)) return null;
+	return { collection, id: id.slice(colon + 1) };
 }
 
-/** A room token's random bytes. The token is their base64url encoding, without padding. */
+/** A room token's random bytes, base64url-encoded without padding as the signed token's nonce. */
 export const ROOM_TOKEN_BYTES = 32;
-const ROOM_TOKEN_LENGTH = Math.ceil((ROOM_TOKEN_BYTES * 4) / 3);
-const BASE64URL = /^[\w-]*$/;
-
-/** Whether a string has the shape of a token a room issues. */
-export function isRoomToken(token: string): boolean {
-	return token.length === ROOM_TOKEN_LENGTH && BASE64URL.test(token);
-}
 
 /** An EmDash build and its editor schema: the admin manifest's `version`, `commit` and `hash`. */
 export interface Fingerprint {
@@ -123,6 +136,11 @@ export interface RuntimeRoomHost extends RoomHost {
 	shutdown(): Promise<void>;
 	/** Makes this the host notifications and upgrades reach. Called once the runtime is published. */
 	activate(): void;
+	/**
+	 * Sends changes to the site's realtime hub, which tells admin tabs. Absent where the host runs
+	 * no hub, which turns live updates off.
+	 */
+	publish?(changes: Change[]): Promise<void>;
 }
 
 export interface TokenClaims {
@@ -251,6 +269,11 @@ export interface RoomRecord {
 	/** The entry's status and author when the room last loaded it. */
 	status: string;
 	authorId: string | null;
+	/**
+	 * The entry's fields and plugin block types when the room last loaded it, so a room that
+	 * outlived its memory resumes without the site. Records stored before it existed lack it.
+	 */
+	schema?: Pick<LoadedEntry, "fields" | "pluginTypes">;
 }
 
 /** A socket, from the host. */

@@ -11,6 +11,8 @@ import type { APIRoute } from "astro";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { withTransaction } from "#db/transaction.js";
 
+import { publishChange } from "../../../../../../realtime/publish.js";
+
 export const prerender = false;
 
 export const POST: APIRoute = async ({ params, locals }) => {
@@ -53,6 +55,8 @@ export const POST: APIRoute = async ({ params, locals }) => {
 				if (adminCount <= 1) return true;
 			}
 			await trxAdapter.updateUser(id, { disabled: true });
+			// Closes the user's live updates sockets; a disabled user gets no new ticket.
+			publishChange(`users/${id}`, { op: "update" });
 			return false;
 		});
 

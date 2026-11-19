@@ -6,7 +6,8 @@ const virtualStubs: Record<string, string> = {
 	"virtual:emdash/scheduler": "export const createScheduler = null;",
 	"virtual:emdash/rooms": "export const createRoomHost = null;",
 	"virtual:emdash/room-engine":
-		'export const loadRoomEngine = () => import("emdash/internal/co-editing/room");',
+		'export const loadRoomEngine = () => import("emdash/internal/co-editing/room");' +
+		'export const loadHubEngine = () => import("emdash/internal/realtime/hub");',
 	"virtual:emdash/config": "export default {};",
 	"virtual:emdash/env": "export const env = undefined;",
 	"virtual:emdash/object-cache":

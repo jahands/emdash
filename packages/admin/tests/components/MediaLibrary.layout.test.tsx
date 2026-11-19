@@ -1,12 +1,13 @@
 import { Sidebar, Toasty } from "@cloudflare/kumo";
 import * as React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { page, userEvent } from "vitest/browser";
 
 import "../../dist/styles.css";
 import { MediaLibrary } from "../../src/components/MediaLibrary.js";
 import type { LocalMediaItem, MediaFolder, MediaItem } from "../../src/lib/api/media.js";
 import { formatFileSize } from "../../src/lib/media-utils.js";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 vi.mock("../../src/lib/api", async (importOriginal) => ({
@@ -124,6 +125,10 @@ function lineCount(element: Element) {
 	return tops.size;
 }
 
+beforeEach(() => {
+	localStorage.clear();
+});
+
 afterEach(async () => {
 	await page.viewport(1280, 800);
 });
@@ -154,6 +159,7 @@ describe("Media Library pagination layout", () => {
 			</Toasty>,
 		);
 		const main = screen.getByRole("main").element();
+		await expect.element(screen.getByRole("combobox", { name: "Page size" })).toBeVisible();
 		const footer = screen.getByRole("combobox", { name: "Page size" }).element().closest("footer")!;
 		const sidebarFooter = screen.getByTestId("sidebar-footer").element();
 		for (const [width, height] of [
@@ -200,6 +206,9 @@ describe("Media Library pagination layout", () => {
 				</Toasty>,
 			);
 			const main = screen.getByRole("main").element() as HTMLElement;
+			await expect
+				.element(screen.getByRole("navigation", { name: "Media pagination" }))
+				.toBeVisible();
 			const pagination = screen.getByRole("navigation", { name: "Media pagination" }).element();
 			const pageSize = screen.getByRole("combobox", { name: "Page size" }).element();
 			const footer = pageSize.closest("footer")!;
@@ -405,5 +414,28 @@ describe("Media Library list view hover", () => {
 		await hoverRow(folderRow);
 		expect(backgrounds(hovered)).toEqual(resting);
 		expect(backgrounds(folderRow)).toEqual(folderResting);
+	});
+});
+
+describe("Media Library list view while files load", () => {
+	it("keeps its columns when a folder's files arrive in a 1000px table", async () => {
+		const library = (props: React.ComponentProps<typeof MediaLibrary>) => (
+			<Toasty>
+				<div style={{ width: 1000 }}>
+					<MediaLibrary folders={folders} {...props} />
+				</div>
+			</Toasty>
+		);
+		const screen = await render(library({ items: listItems }));
+		await screen.getByRole("tab", { name: "List view" }).click();
+		await screen.rerender(library({ items: [], isLoading: true }));
+		const table = screen.getByRole("table");
+		await expect.element(table.getByRole("status")).toBeInTheDocument();
+		const before = snapshotPositions(table.element().querySelectorAll("th"));
+
+		await screen.rerender(library({ items: listItems }));
+
+		await expect.element(screen.getByRole("button", { name: "a.txt", exact: true })).toBeVisible();
+		expect(largestMovement(before)).toBeLessThan(1);
 	});
 });

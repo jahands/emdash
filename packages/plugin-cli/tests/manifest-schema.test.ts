@@ -445,6 +445,34 @@ describe("ManifestSchema (full document)", () => {
 		).toBe(true);
 	});
 
+	it("accepts realtime channels that admin surfaces refresh on", () => {
+		const result = ManifestSchema.safeParse({
+			...minimal,
+			capabilities: ["realtime:publish"],
+			realtime: { channels: { queue: { permission: "settings:read" } } },
+			admin: {
+				pages: [{ path: "/queue", label: "Queue", refreshOn: ["queue"] }],
+				widgets: [{ id: "queue", refreshOn: ["queue"] }],
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects refreshOn naming an undeclared channel, and a malformed channel", () => {
+		expect(
+			ManifestSchema.safeParse({
+				...minimal,
+				admin: { widgets: [{ id: "queue", refreshOn: ["queue"] }] },
+			}).success,
+		).toBe(false);
+		expect(
+			ManifestSchema.safeParse({
+				...minimal,
+				realtime: { channels: { Queue: { permission: "settings:read" } } },
+			}).success,
+		).toBe(false);
+	});
+
 	it("accepts a manifest with a release.artifacts block", () => {
 		const result = ManifestSchema.safeParse({
 			...minimal,

@@ -16,7 +16,7 @@ import {
 	_prosemirrorToPortableText as prosemirrorToPortableText,
 	type PortableTextEditorProps,
 } from "../../src/components/PortableTextEditor";
-import { fetchMediaItem, uploadMedia, type MediaItem } from "../../src/lib/api/media.js";
+import { fetchMediaItemBatched, uploadMedia, type MediaItem } from "../../src/lib/api/media.js";
 import { render } from "../utils/render";
 
 import "../../src/styles.css";
@@ -93,7 +93,7 @@ vi.mock("../../src/lib/api/media.js", async () => {
 	const actual = await vi.importActual<typeof import("../../src/lib/api/media.js")>(
 		"../../src/lib/api/media.js",
 	);
-	return { ...actual, fetchMediaItem: vi.fn(), uploadMedia: vi.fn() };
+	return { ...actual, fetchMediaItemBatched: vi.fn(), uploadMedia: vi.fn() };
 });
 
 type Block = { _type: string; _key: string; [key: string]: unknown };
@@ -167,7 +167,7 @@ beforeAll(async () => {
 });
 
 afterEach(() => {
-	vi.mocked(fetchMediaItem).mockReset();
+	vi.mocked(fetchMediaItemBatched).mockReset();
 	vi.mocked(uploadMedia).mockReset();
 });
 
@@ -191,8 +191,8 @@ function videoFile(name: string) {
 }
 
 async function renderEditor(props: Partial<PortableTextEditorProps> = {}) {
-	if (!vi.mocked(fetchMediaItem).getMockImplementation()) {
-		vi.mocked(fetchMediaItem).mockRejectedValue(new Error("Not in this test"));
+	if (!vi.mocked(fetchMediaItemBatched).getMockImplementation()) {
+		vi.mocked(fetchMediaItemBatched).mockRejectedValue(new Error("Not in this test"));
 	}
 	let editor: Editor | null = null;
 	const changes: Block[][] = [];
@@ -582,11 +582,13 @@ describe("Video block editor", () => {
 	it("calls a block saved without a file URL unplayable, as the site does", async () => {
 		const saved: Block = { _type: "video", _key: "video1", asset: { _ref: "01VIDEO" } };
 		const { url: _url, ...item } = mediaItem("01VIDEO", "");
-		vi.mocked(fetchMediaItem).mockResolvedValue(item as Awaited<ReturnType<typeof fetchMediaItem>>);
+		vi.mocked(fetchMediaItemBatched).mockResolvedValue(
+			item as Awaited<ReturnType<typeof fetchMediaItemBatched>>,
+		);
 		const { screen } = await renderEditor({ value: [saved] });
 
 		await expect.element(screen.getByText("This video can't be played.")).toBeVisible();
-		await vi.waitFor(() => expect(vi.mocked(fetchMediaItem)).toHaveBeenCalled());
+		await vi.waitFor(() => expect(vi.mocked(fetchMediaItemBatched)).toHaveBeenCalled());
 		expect(player().getAttribute("src")).toBeNull();
 		expect(prosemirrorToPortableText(portableTextToProsemirror([saved]))).toStrictEqual([saved]);
 	});

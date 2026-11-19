@@ -20,7 +20,13 @@ import {
 	Pencil,
 	WarningCircle,
 } from "@phosphor-icons/react";
-import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+	keepPreviousData,
+	useInfiniteQuery,
+	useMutation,
+	useQuery,
+	useQueryClient,
+} from "@tanstack/react-query";
 import type { InfiniteData, QueryClient } from "@tanstack/react-query";
 import { useEffect, useId, useRef, useState } from "react";
 
@@ -29,7 +35,6 @@ import {
 	createRedirect,
 	deleteRedirect,
 	fetch404Summary,
-	fetchRedirects,
 	updateRedirect,
 } from "../lib/api/redirects.js";
 import type {
@@ -45,12 +50,17 @@ import {
 	useSingleFlight,
 	useTakenValue,
 } from "../lib/dialog-form.js";
+import { REDIRECT_LIST_KEY, redirectsQueryOptions } from "../lib/route-queries.js";
 import { cn, formatDate } from "../lib/utils.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { ArrowNext } from "./ArrowIcons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
+	DataTableLoadError,
+	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	RowTitleButton,
@@ -61,12 +71,10 @@ import { DialogError, getMutationError } from "./DialogError.js";
 import { PageHeader } from "./PageHeader.js";
 import { TableToolbarSearch } from "./TableToolbar.js";
 
-const REDIRECT_LIST_KEY = ["redirects", "list"] as const;
-
 /**
  * Refetches the redirects after a change, with each list back on its first page. The page
- * stays on screen while it reloads: an empty list would swap the table for the loading
- * message and drop keyboard focus.
+ * stays on screen while it reloads: an empty list would swap the rows for placeholders and
+ * drop keyboard focus.
  */
 function refreshRedirects(queryClient: QueryClient) {
 	queryClient.setQueriesData<InfiniteData<RedirectListResult>>(
@@ -325,21 +333,20 @@ function RedirectFormDialog({
 
 function NotFoundPanel({
 	items,
+	loadFailed,
+	onRetry,
 	onCreateRedirect,
 	onMarkGone,
 }: {
-	items: NotFoundSummary[];
+	/** Undefined while the summary loads. */
+	items: NotFoundSummary[] | undefined;
+	loadFailed: boolean;
+	onRetry: () => void;
 	onCreateRedirect: (path: string) => void;
 	onMarkGone: (path: string) => void;
 }) {
 	const { t, i18n } = useLingui();
 	const goneDescriptionId = useId();
-
-	if (items.length === 0) {
-		return (
-			<p className="text-sm text-kumo-subtle py-4 text-center">{t`No 404 errors recorded yet.`}</p>
-		);
-	}
 
 	const goneDescription = t`Mark as Gone (410) — tells search engines it was permanently deleted`;
 
@@ -352,19 +359,29 @@ function NotFoundPanel({
 				<thead>
 					<tr>
 						<th scope="col">{t`Path`}</th>
-						<th scope="col" className="text-end" {...secondaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-24 text-end" {...secondaryColumn}>
 							{t`Hits`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-36" {...tertiaryColumn}>
 							{t`Last seen`}
 						</th>
-						<th scope="col" className="w-0">
+						<th scope="col" className="w-28">
 							<span className="sr-only">{t`Actions`}</span>
 						</th>
 					</tr>
 				</thead>
 				<tbody>
-					{items.map((item) => {
+					{loadFailed && !items ? (
+						<DataTableLoadError colSpan={4} onRetry={onRetry}>
+							{t`The 404 errors couldn't be loaded.`}
+						</DataTableLoadError>
+					) : !items ? (
+						<DataTablePlaceholderRows cells={["title", "secondary", "tertiary", "actions"]} />
+					) : items.length === 0 ? (
+						<DataTableMessage colSpan={4}>{t`No 404 errors recorded yet.`}</DataTableMessage>
+					) : null}
+					{items?.map((item) => {
 						const date = new Date(item.lastSeen);
 						const lastSeen = Number.isNaN(date.getTime()) ? (
 							item.lastSeen
@@ -584,18 +601,13 @@ export function Redirects() {
 		!!debouncedSearch || enabledFilter !== undefined || autoFilter !== undefined || !!groupFilter;
 
 	const redirectsQuery = useInfiniteQuery({
-		queryKey: [...REDIRECT_LIST_KEY, debouncedSearch, enabledFilter, autoFilter, groupFilter],
-		queryFn: ({ pageParam }) =>
-			fetchRedirects({
-				search: debouncedSearch || undefined,
-				group: groupFilter,
-				enabled: enabledFilter,
-				auto: autoFilter,
-				cursor: pageParam,
-				limit: 100,
-			}),
-		initialPageParam: undefined as string | undefined,
-		getNextPageParam: (lastPage) => lastPage.nextCursor,
+		...redirectsQueryOptions({
+			search: debouncedSearch,
+			enabled: enabledFilter,
+			auto: autoFilter,
+			group: groupFilter,
+		}),
+		placeholderData: keepPreviousData,
 	});
 
 	// Cancelling a refetch in flight would keep the stale first page on screen, so a press during
@@ -729,12 +741,20 @@ export function Redirects() {
 									aria-hidden="true"
 								/>
 								{t`Redirects`}
-								{redirectsQuery.data && (
+								{redirectsQuery.data ? (
 									<Badge variant="secondary">
 										{redirects.length}
 										{redirectsQuery.hasNextPage ? "+" : ""}
 									</Badge>
-								)}
+								) : redirectsQuery.isPending ? (
+									// An empty badge as wide as a one-digit count, so the tabs and the filters
+									// beside them stay put when the count arrives.
+									<span aria-hidden="true" className="flex">
+										<Badge variant="secondary" className="text-transparent">
+											0
+										</Badge>
+									</span>
+								) : null}
 							</span>
 						),
 					},
@@ -758,108 +778,123 @@ export function Redirects() {
 			{/* Tab content */}
 			{tab === "redirects" && (
 				<>
-					{/* Loop warning banner */}
-					{loopRedirectIds.size > 0 && (
-						<div
-							role="alert"
-							className="flex items-start gap-3 rounded-lg border border-kumo-warning/50 bg-kumo-warning-tint p-4"
-						>
-							<WarningCircle
-								size={20}
-								className="mt-0.5 shrink-0 text-kumo-warning"
-								weight="fill"
-								aria-hidden="true"
-							/>
-							<div>
-								<p className="text-sm font-medium text-kumo-warning">{t`Redirect loop detected`}</p>
-								<p className="mt-1 text-sm text-kumo-subtle">
-									{plural(loopRedirectIds.size, {
-										one: "# redirect is part of a loop.",
-										other: "# redirects are part of a loop.",
-									})}{" "}
-									{t`Visitors hitting these paths will see an error.`}
-								</p>
-							</div>
-						</div>
-					)}
-
 					{/* Redirect list */}
-					{redirectsQuery.isLoading ? (
-						<div className="py-12 text-center text-kumo-subtle">{t`Loading redirects...`}</div>
-					) : redirects.length === 0 ? (
-						<div className="py-10 text-center text-kumo-subtle">
-							<ADMIN_NAV_ICONS.redirects size={40} className="mx-auto mb-3 opacity-30" />
-							<p className="text-base font-medium">
-								{hasFilters ? t`No redirects match these filters` : t`No redirects yet`}
-							</p>
-							<p className="text-sm mt-1">
-								{hasFilters
-									? t`Try changing or clearing your filters.`
-									: t`Create redirect rules to manage URL changes.`}
-							</p>
-						</div>
-					) : (
-						<>
-							<DataTable>
-								<thead>
-									<tr>
-										<th scope="col">
-											<span className="flex flex-wrap items-center gap-x-1.5">
-												{t`Source`}
-												<span className="flex items-center gap-1.5">
-													<ArrowNext className="size-3.5" aria-hidden="true" />
-													{t`Destination`}
-												</span>
-												<span className="flex items-center gap-1.5">
-													<FolderSimple className="size-3.5" aria-hidden="true" />
-													{t`Group`}
-												</span>
-											</span>
-										</th>
-										<th scope="col" {...tertiaryColumn}>
-											{t`Code`}
-										</th>
-										<th scope="col" className="text-end" {...tertiaryColumn}>
-											{t`Hits`}
-										</th>
-										<th scope="col">{t`Status`}</th>
-										<th scope="col" className="w-0">
-											<span className="sr-only">{t`Actions`}</span>
-										</th>
-									</tr>
-								</thead>
-								<tbody>
-									{redirects.map((redirect) => (
-										<RedirectRow
-											key={redirect.id}
-											redirect={redirect}
-											inLoop={loopRedirectIds.has(redirect.id)}
-											onToggle={(enabled) => toggleMutation.mutate({ id: redirect.id, enabled })}
-											onEdit={() => openForm({ redirect })}
-											onDelete={() => setDeleteId(redirect.id)}
-										/>
-									))}
-								</tbody>
-							</DataTable>
-							{redirectsQuery.hasNextPage && (
-								<div className="flex justify-center">
-									<Button
-										variant="outline"
-										onClick={() => void loadMoreRedirects()}
-										disabled={redirectsQuery.isFetchingNextPage}
-									>
-										{redirectsQuery.isFetchingNextPage ? t`Loading...` : t`Load more`}
-									</Button>
-								</div>
+					<DataTable aria-busy={redirectsQuery.isPlaceholderData || undefined}>
+						<thead>
+							<tr>
+								<th scope="col">
+									<span className="flex flex-wrap items-center gap-x-1.5">
+										{t`Source`}
+										<span className="flex items-center gap-1.5">
+											<ArrowNext className="size-3.5" aria-hidden="true" />
+											{t`Destination`}
+										</span>
+										<span className="flex items-center gap-1.5">
+											<FolderSimple className="size-3.5" aria-hidden="true" />
+											{t`Group`}
+										</span>
+									</span>
+								</th>
+								{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+								<th scope="col" className="w-24" {...tertiaryColumn}>
+									{t`Code`}
+								</th>
+								<th scope="col" className="w-24 text-end" {...tertiaryColumn}>
+									{t`Hits`}
+								</th>
+								<th scope="col" className="w-20">
+									{t`Status`}
+								</th>
+								<DataTableActionsHeader />
+							</tr>
+						</thead>
+						<tbody>
+							{loopRedirectIds.size > 0 && (
+								// In the table, so the warning arriving with the rows can't move the table.
+								<tr>
+									<td colSpan={5}>
+										<div role="alert" className="flex items-start gap-3">
+											<WarningCircle
+												size={20}
+												className="mt-0.5 shrink-0 text-kumo-warning"
+												weight="fill"
+												aria-hidden="true"
+											/>
+											<div className="text-start">
+												<p className="text-sm font-medium text-kumo-warning">
+													{t`Redirect loop detected`}
+												</p>
+												<p className="mt-1 text-sm text-kumo-subtle">
+													{plural(loopRedirectIds.size, {
+														one: "# redirect is part of a loop.",
+														other: "# redirects are part of a loop.",
+													})}{" "}
+													{t`Visitors hitting these paths will see an error.`}
+												</p>
+											</div>
+										</div>
+									</td>
+								</tr>
 							)}
-						</>
+							{redirectsQuery.isError && !redirectsQuery.data ? (
+								<DataTableLoadError colSpan={5} onRetry={() => void redirectsQuery.refetch()}>
+									{t`The redirects couldn't be loaded.`}
+								</DataTableLoadError>
+							) : redirectsQuery.isPending ? (
+								<DataTablePlaceholderRows
+									cells={["title", "tertiary", "tertiary", "text", "actions"]}
+								/>
+							) : redirects.length === 0 ? (
+								<DataTableMessage colSpan={5}>
+									<div className="py-5.5">
+										<ADMIN_NAV_ICONS.redirects
+											size={40}
+											className="mx-auto mb-3 opacity-30"
+											aria-hidden="true"
+										/>
+										<p className="text-base font-medium">
+											{hasFilters ? t`No redirects match these filters` : t`No redirects yet`}
+										</p>
+										<p className="text-sm mt-1">
+											{hasFilters
+												? t`Try changing or clearing your filters.`
+												: t`Create redirect rules to manage URL changes.`}
+										</p>
+									</div>
+								</DataTableMessage>
+							) : (
+								redirects.map((redirect) => (
+									<RedirectRow
+										key={redirect.id}
+										redirect={redirect}
+										inLoop={loopRedirectIds.has(redirect.id)}
+										onToggle={(enabled) => toggleMutation.mutate({ id: redirect.id, enabled })}
+										onEdit={() => openForm({ redirect })}
+										onDelete={() => setDeleteId(redirect.id)}
+									/>
+								))
+							)}
+						</tbody>
+					</DataTable>
+					{redirectsQuery.hasNextPage && (
+						<div className="flex justify-center">
+							<Button
+								variant="outline"
+								onClick={() => void loadMoreRedirects()}
+								disabled={redirectsQuery.isFetchingNextPage}
+							>
+								{redirectsQuery.isFetchingNextPage ? t`Loading...` : t`Load more`}
+							</Button>
+						</div>
 					)}
 				</>
 			)}
 
 			{tab === "404s" && (
 				<NotFoundPanel
-					items={notFoundQuery.data ?? []}
+					items={notFoundQuery.data}
+					loadFailed={notFoundQuery.isError}
+					onRetry={() => void notFoundQuery.refetch()}
 					onCreateRedirect={handleCreateFrom404}
 					onMarkGone={(path) => markGoneMutation.mutate(path)}
 				/>

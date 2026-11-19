@@ -5,7 +5,7 @@
  * site's time zone.
  */
 
-import { Banner, Button } from "@cloudflare/kumo";
+import { Banner, Button, Popover } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { WarningCircle } from "@phosphor-icons/react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -193,7 +193,7 @@ function Calendar({ manifest }: { manifest: AdminManifest }) {
 		[calendar.data, calendar.dataUpdatedAt, display.timeZone, collectionOrder],
 	);
 	const visibleItems = React.useMemo(() => filterItems(items, filters), [items, filters]);
-	// Pages load oldest first, so a truncated range is complete before its last loaded day.
+	// Entries load oldest first, so a truncated range is complete before its last loaded day.
 	const loadedThrough = calendar.data?.truncated ? items.at(-1)?.day : undefined;
 	const days = React.useMemo(() => groupByDay(visibleItems), [visibleItems]);
 	const unfilteredDays = React.useMemo(
@@ -296,6 +296,33 @@ function Calendar({ manifest }: { manifest: AdminManifest }) {
 					onToday={() => goToMonth(undefined)}
 					onPreviewPrevious={() => prefetchMonth(shiftMonth(month, -1))}
 					onPreviewNext={() => prefetchMonth(shiftMonth(month, 1))}
+					notice={
+						calendar.data?.truncated && (
+							<Popover>
+								<Popover.Trigger
+									render={
+										<Button
+											variant="ghost"
+											shape="square"
+											size="sm"
+											aria-label={t`This range has more than ${maxEntries} entries`}
+											icon={<WarningCircle aria-hidden="true" className="text-kumo-warning" />}
+										/>
+									}
+								/>
+								<Popover.Content className="w-72 max-w-[calc(100vw-2rem)]" align="end">
+									<Popover.Title className="text-sm font-semibold">
+										{t`This range has more than ${maxEntries} entries`}
+									</Popover.Title>
+									<Popover.Description className="mt-1 text-sm text-kumo-subtle">
+										{cutOffDay
+											? t`The calendar shows the first ${maxEntries}, which end on ${cutOffDay}.`
+											: t`The calendar shows the first ${maxEntries}.`}
+									</Popover.Description>
+								</Popover.Content>
+							</Popover>
+						)
+					}
 					tools={
 						<CalendarFilters
 							display={display}
@@ -321,17 +348,6 @@ function Calendar({ manifest }: { manifest: AdminManifest }) {
 						}
 					/>
 				)}
-				{calendar.data?.truncated && (
-					<Banner
-						variant="alert"
-						title={t`This range has more than ${maxEntries} entries`}
-						description={
-							cutOffDay
-								? t`The calendar shows the first ${maxEntries}, which end on ${cutOffDay}.`
-								: t`The calendar shows the first ${maxEntries}.`
-						}
-					/>
-				)}
 
 				{!(error && !calendar.data) &&
 					(view === "month" ? (
@@ -352,7 +368,8 @@ function Calendar({ manifest }: { manifest: AdminManifest }) {
 							onClearFilters={filtered ? clearFilters : undefined}
 						/>
 					) : (
-						<div className="min-h-0 flex-1 overflow-y-auto">
+						// `isolate` keeps the agenda's sticky day headers under popovers opened over it.
+						<div className="isolate min-h-0 flex-1 overflow-y-auto">
 							<CalendarAgenda
 								key={month}
 								month={month}

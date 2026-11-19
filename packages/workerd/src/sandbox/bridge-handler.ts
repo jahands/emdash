@@ -48,7 +48,9 @@ import type {
 	Database,
 	I18nConfig,
 	CommentListOptions,
+	PluginChange,
 	PluginCommentStatus,
+	RealtimeAccess,
 	SandboxCommentModerateCallback,
 	RedirectCreateInput,
 	RedirectListOptions,
@@ -200,6 +202,8 @@ export interface BridgeHandlerOptions {
 	httpFetch?: typeof fetch;
 	/** Storage for media uploads. Optional; media/upload throws if not provided. */
 	storage?: BridgeStorage | null;
+	/** Publishing for an invocation of this plugin that is running, by its ID. */
+	realtime?: (invocationId: string) => RealtimeAccess | undefined;
 }
 
 type RedirectBridgeResult<T> =
@@ -824,6 +828,17 @@ async function dispatch(
 		case "http/fetch":
 			requireCapability(opts, "network:request");
 			return httpFetch(requireString(body, "url"), body.init, opts);
+
+		// ── Realtime ────────────────────────────────────────────────────
+		case "realtime/publish": {
+			requireCapability(opts, "realtime:publish");
+			const access = opts.realtime?.(requireString(body, "invocationId"));
+			if (!access)
+				throw new Error("Realtime publishing is only available while a hook or route runs");
+			// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- createRealtimeAccess validates the change
+			await access.publish(requireString(body, "channel"), body.change as PluginChange | undefined);
+			return null;
+		}
 
 		// ── Email ───────────────────────────────────────────────────────
 		case "email/send": {

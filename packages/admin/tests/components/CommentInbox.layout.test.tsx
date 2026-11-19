@@ -5,6 +5,7 @@ import { page } from "vitest/browser";
 import "../../dist/styles.css";
 import { CommentInbox } from "../../src/components/comments/CommentInbox.js";
 import type { AdminComment } from "../../src/lib/api/comments.js";
+import { largestMovement, snapshotPositions } from "../utils/geometry.js";
 import { render } from "../utils/render.js";
 
 const createdAt = "2026-01-02T00:00:00Z";
@@ -132,7 +133,7 @@ describe("Comment inbox at phone width", () => {
 		await screen.getByRole("checkbox", { name: "Select comment by Sam" }).click();
 		await screen.getByRole("checkbox", { name: "Select comment by Maya Chen" }).click();
 
-		const bar = screen.getByText("2 selected").element().parentElement!;
+		const bar = screen.getByText("2 selected").element().closest("div")!;
 		expectInside(bar, box);
 		expect(bar.scrollWidth).toBeLessThanOrEqual(bar.clientWidth);
 		for (const name of ["Approve", "Spam", "Trash", "Delete", "Clear"]) {
@@ -151,4 +152,123 @@ describe("Comment inbox at desktop width", () => {
 		await expect.element(screen.getByRole("columnheader", { name: "Content" })).toBeVisible();
 		expect(tray.scrollWidth).toBeLessThanOrEqual(tray.clientWidth);
 	});
+});
+
+describe("Comment inbox while its comments load", () => {
+	function inbox(props: {
+		isLoading: boolean;
+		width?: number;
+		searchQuery?: string;
+		comments?: AdminComment[];
+		counts?: { pending: number; approved: number; spam: number; trash: number };
+		activeStatus?: "pending" | "approved";
+	}) {
+		return (
+			<div style={{ width: props.width ?? 716 }}>
+				<CommentInbox
+					comments={[]}
+					counts={{ pending: 0, approved: 1, spam: 0, trash: 0 }}
+					collections={{ posts: { label: "Posts" } }}
+					activeStatus="pending"
+					onStatusChange={vi.fn()}
+					collectionFilter=""
+					onCollectionFilterChange={vi.fn()}
+					searchQuery=""
+					onSearchChange={vi.fn()}
+					onCommentStatusChange={vi.fn().mockResolvedValue(undefined)}
+					onCommentDelete={vi.fn().mockResolvedValue(undefined)}
+					onBulkAction={vi.fn().mockResolvedValue(undefined)}
+					onLoadMore={vi.fn()}
+					isAdmin={true}
+					isStatusPending={false}
+					deleteError={null}
+					onDeleteErrorReset={vi.fn()}
+					bulkError={null}
+					onBulkErrorReset={vi.fn()}
+					{...props}
+				/>
+			</div>
+		);
+	}
+
+	it.each([1000, 716])(
+		"keeps its columns when the comments arrive in a %ipx table",
+		async (width) => {
+			const counts = { pending: 2, approved: 0, spam: 0, trash: 0 };
+			const screen = await render(inbox({ isLoading: true, counts, width }));
+			const before = snapshotPositions(screen.getByRole("table").element().querySelectorAll("th"));
+
+			const loaded = [
+				makeComment({ id: "comment-1" }),
+				makeComment({
+					id: "comment-2",
+					authorName: "Jonas Weber",
+					body: "I tried this on a much larger site and the numbers held up, thanks for writing it.",
+				}),
+			];
+			await screen.rerender(inbox({ isLoading: false, counts, width, comments: loaded }));
+
+			await expect.element(screen.getByText("Jonas Weber")).toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
+
+	it("doesn't move or replace anything when an empty tab finishes loading", async () => {
+		const screen = await render(inbox({ isLoading: true }));
+		const table = screen.getByRole("table").element();
+		const empty = screen.getByText("No comments awaiting moderation.").element();
+		const before = snapshotPositions([table, empty]);
+
+		await screen.rerender(inbox({ isLoading: false }));
+
+		expect(screen.getByRole("table").element()).toBe(table);
+		expect(largestMovement(before)).toBe(0);
+	});
+
+	it("holds the page controls in place while a tab with more than a page of comments loads", async () => {
+		const counts = { pending: 45, approved: 0, spam: 0, trash: 0 };
+		const screen = await render(inbox({ isLoading: true, counts }));
+		const next = screen.getByRole("button", { name: "Next page" });
+		await expect.element(next).toBeDisabled();
+		const before = snapshotPositions([next.element()]);
+
+		const loaded = Array.from({ length: 45 }, (_, index) =>
+			makeComment({ id: `comment-${index}`, authorName: `Reader ${index}`, body: "Thanks!" }),
+		);
+		await screen.rerender(inbox({ isLoading: false, counts, comments: loaded }));
+
+		await expect.element(screen.getByText("1 / 3")).toBeVisible();
+		await expect.element(next).toBeEnabled();
+		expect(largestMovement(before)).toBe(0);
+	});
+
+	it("keeps the table and its header in place when a search finishes loading with no results", async () => {
+		const screen = await render(inbox({ isLoading: true, searchQuery: "watches" }));
+		const table = screen.getByRole("table").element();
+		const header = table.querySelector("thead")!;
+		const before = snapshotPositions([header]);
+
+		await screen.rerender(inbox({ isLoading: false, searchQuery: "watches" }));
+
+		await expect.element(screen.getByText("No comments match your filters.")).toBeVisible();
+		expect(screen.getByRole("table").element()).toBe(table);
+		expect(largestMovement(before)).toBe(0);
+	});
+
+	it.each([
+		{ width: 1000, activeStatus: "pending" },
+		{ width: 716, activeStatus: "approved" },
+	] as const)(
+		"keeps its columns when a search finds nothing in a $width px $activeStatus tab",
+		async ({ width, activeStatus }) => {
+			const props = { searchQuery: "watches", width, activeStatus };
+			const screen = await render(inbox({ isLoading: true, ...props }));
+			const before = snapshotPositions(screen.getByRole("table").element().querySelectorAll("th"));
+
+			await screen.rerender(inbox({ isLoading: false, ...props }));
+
+			await expect.element(screen.getByText("No comments match your filters.")).toBeVisible();
+			expect(largestMovement(before)).toBeLessThan(1);
+		},
+	);
 });

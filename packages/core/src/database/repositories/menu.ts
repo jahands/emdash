@@ -18,6 +18,7 @@ import { ulid } from "ulidx";
 
 import { localeMatches, localeOrder } from "../../i18n/query.js";
 import { invalidateMenuObjectCache } from "../../object-cache/index.js";
+import { publishChange, type ChangeOp } from "../../realtime/publish.js";
 import { SQL_BATCH_SIZE, chunks } from "../../utils/chunks.js";
 import {
 	executeAtomicBatchIfSupported,
@@ -46,6 +47,14 @@ export class MenuItemParentError extends Error {
 		super(message);
 		this.name = "MenuItemParentError";
 	}
+}
+
+/**
+ * Tells admin tabs a menu changed. Item writes know only the menu's ID, and finding its name
+ * would cost a query, so changes go to `menus` with the menu's ID.
+ */
+function menuChanged(menuId: string, op: ChangeOp = "update"): void {
+	publishChange("menus", { ids: [menuId], op });
 }
 
 interface MenuWriteStatement extends Compilable {
@@ -466,6 +475,7 @@ export class MenuRepository {
 		]);
 
 		invalidateMenuObjectCache();
+		menuChanged(id, "create");
 
 		const created = await this.findById(id);
 		if (!created) throw new Error("Failed to create menu");
@@ -482,6 +492,7 @@ export class MenuRepository {
 		if (Object.keys(values).length > 0) {
 			await this.db.updateTable("_emdash_menus").set(values).where("id", "=", id).execute();
 			invalidateMenuObjectCache();
+			menuChanged(id);
 		}
 
 		return (await this.findById(id))!;
@@ -504,6 +515,7 @@ export class MenuRepository {
 			target.deleteFrom("_emdash_menus").where("id", "=", id),
 		]);
 		invalidateMenuObjectCache();
+		menuChanged(id, "delete");
 		return true;
 	}
 
@@ -595,6 +607,7 @@ export class MenuRepository {
 			.execute();
 
 		invalidateMenuObjectCache();
+		menuChanged(menuId);
 
 		const row = await this.db
 			.selectFrom("_emdash_menu_items")
@@ -641,6 +654,7 @@ export class MenuRepository {
 				.where("id", "=", itemId)
 				.execute();
 			invalidateMenuObjectCache();
+			menuChanged(menuId);
 		}
 
 		const row = await this.db
@@ -686,7 +700,10 @@ export class MenuRepository {
 			.where("id", "in", subtree)
 			.execute();
 		const deleted = result[0]?.numDeletedRows !== 0n;
-		if (deleted) invalidateMenuObjectCache();
+		if (deleted) {
+			invalidateMenuObjectCache();
+			menuChanged(menuId);
+		}
 		return deleted;
 	}
 
@@ -755,6 +772,7 @@ export class MenuRepository {
 		);
 
 		invalidateMenuObjectCache();
+		menuChanged(menuId);
 		return { itemCount: items.length };
 	}
 
@@ -776,6 +794,7 @@ export class MenuRepository {
 			(target) => validateItemParents(target, menuId, items),
 		);
 		invalidateMenuObjectCache();
+		menuChanged(menuId);
 		return this.findItems(menuId);
 	}
 }

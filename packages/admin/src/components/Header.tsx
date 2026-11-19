@@ -6,7 +6,7 @@ import * as React from "react";
 
 import { apiFetch } from "../lib/api/client";
 import { useCurrentUser } from "../lib/api/current-user";
-import { Sidebar } from "./Sidebar";
+import { Sidebar, useSidebar } from "./Sidebar";
 import { ThemeToggle } from "./ThemeToggle";
 import { UserAvatar } from "./UserAvatar.js";
 
@@ -42,6 +42,8 @@ export function Header({ staging = false }: { staging?: boolean }) {
 	const [userMenuOpen, setUserMenuOpen] = React.useState(false);
 
 	const { data: user } = useCurrentUser();
+	const { isMobile, open, openMobile } = useSidebar();
+	const navigationOpen = isMobile ? openMobile : open;
 
 	const displayName = user?.name || user?.email || t`User`;
 
@@ -50,7 +52,11 @@ export function Header({ staging = false }: { staging?: boolean }) {
 		// (the settings sheet offsets its body by it) — change both together.
 		<header className="sticky top-0 z-10 flex h-[58px] items-center justify-end border-b bg-kumo-elevated px-4">
 			{/* The desktop trigger lives in the sidebar footer; mobile keeps it here so the closed sheet can reopen. */}
-			<Sidebar.Trigger className="me-auto cursor-pointer md:hidden rtl:rotate-180" />
+			<Sidebar.Trigger
+				className="me-auto cursor-pointer md:hidden rtl:rotate-180"
+				aria-expanded={navigationOpen}
+				aria-label={navigationOpen ? t`Close navigation` : t`Open navigation`}
+			/>
 
 			{/* Right side actions */}
 			<div className="flex items-center gap-2">

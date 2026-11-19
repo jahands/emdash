@@ -14,6 +14,7 @@ import {
 } from "../../database/repositories/revision.js";
 import { ContentMutationConflictError } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
+import { hashString } from "../../utils/hash.js";
 import { encodeRev } from "../rev.js";
 import type { ApiResult, ContentResponse } from "../types.js";
 import {
@@ -24,8 +25,17 @@ import {
 } from "./staged-references.js";
 
 export interface RevisionListResponse {
-	items: RevisionWithAuthor[];
+	/** `fingerprint` is optional so fixtures written for earlier versions still fit. */
+	items: Array<RevisionWithAuthor & { fingerprint?: string }>;
 	total: number;
+}
+
+/**
+ * Equal for two reads of a revision exactly when its stored data is the same, so a client can
+ * tell which of two responses saw a revision that was changed in place.
+ */
+export function revisionFingerprint(data: Record<string, unknown>): Promise<string> {
+	return hashString(JSON.stringify(data));
 }
 
 export interface RevisionResponse {
@@ -50,9 +60,12 @@ export async function handleRevisionList(
 			repo.countByEntry(collection, entryId),
 		]);
 
+		const fingerprinted = await Promise.all(
+			items.map(async (item) => ({ ...item, fingerprint: await revisionFingerprint(item.data) })),
+		);
 		return {
 			success: true,
-			data: { items, total },
+			data: { items: fingerprinted, total },
 		};
 	} catch {
 		return {

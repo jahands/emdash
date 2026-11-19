@@ -3,7 +3,7 @@
  * Validates an invite token, then registers a passkey to complete signup.
  */
 
-import { Input, Loader } from "@cloudflare/kumo";
+import { Input, SkeletonLine } from "@cloudflare/kumo";
 import { Trans } from "@lingui/react/macro";
 import { useLingui } from "@lingui/react/macro";
 import { useSearch } from "@tanstack/react-router";
@@ -227,10 +227,38 @@ export function InviteAcceptPage() {
 
 	if (isLoading) {
 		return (
-			<div className="min-h-screen flex items-center justify-center bg-kumo-base">
-				<div className="text-center">
-					<Loader />
-					<p className="mt-4 text-kumo-subtle">{t`Verifying your invite...`}</p>
+			<div className="min-h-screen flex items-center justify-center bg-kumo-base p-4">
+				<div className="w-full max-w-md">
+					<div className="text-center mb-8">
+						<BrandLogo logoUrl={brandLogo} siteName={brandSiteName} className="h-10 mx-auto mb-2" />
+						<div aria-hidden="true" className="mx-auto w-48">
+							<SkeletonLine blockHeight={32} minWidth={100} maxWidth={100} />
+						</div>
+					</div>
+					<span role="status" className="sr-only">
+						{t`Verifying your invite...`}
+					</span>
+					<div
+						aria-hidden="true"
+						className="bg-kumo-base border rounded-lg shadow-sm p-6 space-y-6"
+					>
+						<div className="flex flex-col items-center">
+							<div className="skeleton-line size-16 mb-4 rounded-full" />
+							<div className="w-1/2">
+								<SkeletonLine blockHeight={28} minWidth={100} maxWidth={100} />
+							</div>
+							<div className="mt-2 w-3/4">
+								<SkeletonLine blockHeight={24} minWidth={100} maxWidth={100} />
+							</div>
+						</div>
+						{[20, 40].map((width) => (
+							<div key={width} className="grid gap-2 text-base">
+								<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+								<div className="skeleton-line h-9 w-full rounded-lg" />
+							</div>
+						))}
+						<div className="skeleton-line h-9 w-full rounded-lg" />
+					</div>
 				</div>
 			</div>
 		);

@@ -125,6 +125,7 @@ export function createSandboxedPluginProxy(
 			portableTextBlocks: manifest.admin.portableTextBlocks,
 			fieldWidgets: manifest.admin.fieldWidgets,
 			mcp: manifest.mcp,
+			realtime: manifest.realtime,
 		},
 	);
 }

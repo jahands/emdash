@@ -6,6 +6,7 @@ import type { Element } from "@emdash-cms/blocks";
 import { i18n } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 
+import { TAB_ID, TAB_ID_HEADER } from "../realtime/tab-id.js";
 import type { EditorDraftAccessDeclaration } from "../sandboxed-editor-extensions.js";
 
 export const API_BASE = "/_emdash/api";
@@ -14,7 +15,8 @@ const forbiddenResponseListeners = new Set<() => void>();
 
 /**
  * Fetch wrapper that adds the X-EmDash-Request CSRF protection header
- * to all requests. All API calls should use this instead of raw fetch().
+ * to all requests, and the tab's ID, so live updates skip the tab's own changes.
+ * All API calls should use this instead of raw fetch().
  */
 export async function apiFetch(
 	input: string | URL | Request,
@@ -22,6 +24,7 @@ export async function apiFetch(
 ): Promise<Response> {
 	const headers = new Headers(init?.headers);
 	headers.set("X-EmDash-Request", "1");
+	headers.set(TAB_ID_HEADER, TAB_ID);
 	const response = await fetch(input, { ...init, headers });
 	if (response.status === 403) {
 		for (const listener of forbiddenResponseListeners) listener();
@@ -230,11 +233,15 @@ export interface AdminManifest {
 				label?: string;
 				icon?: string;
 				group?: string;
+				/** The plugin's realtime channels whose changes reload the Block Kit page. */
+				refreshOn?: string[];
 			}>;
 			dashboardWidgets?: Array<{
 				id: string;
 				title?: string;
 				size?: "full" | "half" | "third";
+				/** The plugin's realtime channels whose changes reload the Block Kit widget. */
+				refreshOn?: string[];
 			}>;
 			editorPanels?: Array<{
 				id: string;
@@ -289,10 +296,19 @@ export interface AdminManifest {
 	 * Used by the login page to conditionally show the "Sign up" link.
 	 */
 	signupEnabled?: boolean;
+	/** Whether the site has a storage backend for media uploads and backups. */
+	storageAvailable?: boolean;
 	/** Whether the site is in staging (hidden from search engines). */
 	staging?: boolean;
+	/** The site's address, as `fetchSiteDomain` returns it. */
+	siteDomain?: {
+		configuredUrl: string | null;
+		siteOrigin: string | null;
+	};
 	/** Whether this host runs co-editing rooms. When false, the editor doesn't ask to join one. */
 	coEditing?: boolean;
+	/** Whether this host runs the realtime hub. When false, the admin opens no live updates socket. */
+	realtime?: boolean;
 	/**
 	 * i18n configuration. Present when multiple locales are configured.
 	 */
@@ -393,15 +409,13 @@ export async function fetchManifest(): Promise<AdminManifest> {
  * Fetch auth mode (public endpoint — works without authentication).
  * Used by the login page to determine which login UI to render.
  */
-export async function fetchAuthMode(): Promise<{
+export interface AuthModeInfo {
 	authMode: string;
 	signupEnabled?: boolean;
 	providers?: Array<{ id: string; label: string }>;
-}> {
+}
+
+export async function fetchAuthMode(): Promise<AuthModeInfo> {
 	const response = await apiFetch(`${API_BASE}/auth/mode`);
-	return parseApiResponse<{
-		authMode: string;
-		signupEnabled?: boolean;
-		providers?: Array<{ id: string; label: string }>;
-	}>(response, i18n._(msg`Failed to fetch auth mode`));
+	return parseApiResponse<AuthModeInfo>(response, i18n._(msg`Failed to fetch auth mode`));
 }

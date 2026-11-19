@@ -1,4 +1,3 @@
-import { Loader } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
@@ -10,13 +9,7 @@ export function RequireAdmin({ children }: { children: React.ReactNode }) {
 	const { t } = useLingui();
 	const { data: currentUser, isLoading: userLoading } = useCurrentUser();
 
-	if (userLoading) {
-		return (
-			<div className="flex items-center justify-center min-h-[50vh]">
-				<Loader />
-			</div>
-		);
-	}
+	if (userLoading) return null;
 
 	if (!currentUser || currentUser.role < ROLE_ADMIN) {
 		return (

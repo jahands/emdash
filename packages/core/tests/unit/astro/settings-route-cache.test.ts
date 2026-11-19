@@ -10,7 +10,7 @@ vi.mock("virtual:emdash/config", () => ({ default: config }));
 
 import { onRequest as redirectMiddleware } from "../../../src/astro/middleware/redirect.js";
 import requestContextMiddleware from "../../../src/astro/middleware/request-context.js";
-import { prefetchLayoutData } from "../../../src/astro/prefetch.js";
+import { resetLayoutPrefetchForTests } from "../../../src/astro/prefetch.js";
 import { runMigrations } from "../../../src/database/migrations/runner.js";
 import { OptionsRepository } from "../../../src/database/repositories/options.js";
 import type { Database } from "../../../src/database/types.js";
@@ -28,6 +28,7 @@ import {
 	invalidateSiteSettingsSnapshot,
 	setSiteSettings,
 } from "../../../src/settings/index.js";
+import { prefetchLayoutReads, renderWithLayoutPrefetch } from "../../utils/layout-prefetch.js";
 
 interface QueryCounts {
 	selects: number;
@@ -44,6 +45,18 @@ function createCountingDatabase(counts: QueryCounts): Kysely<Database> {
 			if (event.query.sql.includes("_emdash_redirect_state")) counts.redirectStateSelects++;
 		},
 	});
+}
+
+/** Render "/" once so the layout prefetch learns its settings and menu reads. */
+async function learnLayoutReads(db: Kysely<Database>): Promise<void> {
+	await renderWithLayoutPrefetch(
+		"/",
+		async () => {
+			await getSiteSettings();
+			await getMenu("primary");
+		},
+		{ editMode: false, db },
+	);
 }
 
 function resetCounts(counts: QueryCounts): void {
@@ -137,6 +150,7 @@ describe("settings freshness in route-cache renders", () => {
 		await publishRedirectArtifacts(db);
 		invalidateRedirectCache();
 		invalidateSiteSettingsSnapshot();
+		resetLayoutPrefetchForTests();
 	});
 
 	afterEach(async () => {
@@ -327,6 +341,7 @@ describe("settings freshness in route-cache renders", () => {
 			options: { tags: ["emdash:settings"], maxAge: 3600 },
 			set: vi.fn(),
 		});
+		await learnLayoutReads(db);
 		resetCounts(counts);
 		const cache = {
 			enabled: true,
@@ -335,7 +350,7 @@ describe("settings freshness in route-cache renders", () => {
 		};
 
 		await runWithContext({ editMode: false, db }, async () => {
-			await prefetchLayoutData();
+			await prefetchLayoutReads("/");
 			resetCounts(counts);
 			const context = buildContext(cache, db) as unknown as MiddlewareContext;
 			await redirectMiddleware(context, () =>
@@ -360,9 +375,10 @@ describe("settings freshness in route-cache renders", () => {
 		};
 		await renderPipeline(db, cache);
 		await waitForDeferredTasks();
+		await learnLayoutReads(db);
 
 		await runWithContext({ editMode: false, db }, async () => {
-			await prefetchLayoutData();
+			await prefetchLayoutReads("/");
 			await new OptionsRepository(db).set("site:seo", { googleVerification: "new" });
 			invalidateSiteSettingsSnapshot();
 			const freshSettings = await runWithContext({ editMode: false, db }, () => getSiteSettings());
@@ -420,8 +436,9 @@ describe("settings freshness in route-cache renders", () => {
 		__setObjectCacheBackendForTests(createMemoryCache({}), {
 			keyPrefix: `settings-route-${crypto.randomUUID()}`,
 		});
+		await learnLayoutReads(db);
 		await runWithContext({ editMode: false, db }, async () => {
-			await prefetchLayoutData();
+			await prefetchLayoutReads("/");
 			await new OptionsRepository(db).set("site:seo", { googleVerification: "new" });
 			await db
 				.updateTable("_emdash_menus")

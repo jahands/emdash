@@ -130,6 +130,8 @@ On Cloudflare, EmDash publishes scheduled entries only from the Worker's `schedu
 
 If either is missing, scheduled entries do not go live. In local development with `astro dev`, EmDash publishes scheduled entries on a timer, so a schedule that works locally does not confirm the deployed configuration.
 
+Purges made from the `scheduled` handler don't reach the Workers Cache. If the site uses [route caching](/deployment/route-caching/) with `cacheCloudflare()`, run scheduled publishing from the default entrypoint instead, as shown in [Scheduled publishing with the Workers Cache](/deployment/route-caching/#scheduled-publishing-with-the-workers-cache).
+
 When the Cron Trigger runs every minute (`* * * * *`, as in the starter templates), an entry scheduled about a minute or more ahead goes live at its scheduled time. Each run waits for entries scheduled up to 70 seconds after it starts and publishes each one at its time, so a trigger that starts late does not delay them. Waiting uses no CPU time, but a run that is waiting stays open for up to about a minute, so consecutive runs can overlap in Workers logs. An entry scheduled less than a minute ahead goes live on the next run. A Worker entry point that calls `runScheduledTasks()` from `emdash/middleware` instead of using `createScheduledHandler()` publishes only entries that are already due, unless it passes `publishUpcomingWithinMs` with the number of milliseconds to wait.
 
 Run `emdash doctor` from the project root to check the Cron Trigger and the `scheduled` handler in the local project files:
@@ -155,6 +157,8 @@ After deployment, the admin dashboard shows **Scheduled publishing needs attenti
 - The `EMDASH_ROOMS` binding and the `exports` entry for `EmDashRoom`, as shown in [Configure bindings](#configure-bindings).
 - `EmDashRoom` and `EmDashRoomSite` exported from the Worker entry point, as shown in [Add the Worker entry point](#add-the-worker-entry-point). Rooms load and save entries through `EmDashRoomSite`, a named entrypoint that isn't reachable from the internet.
 - A `fetch` handler that forwards room connections. The default export of `@emdash-cms/cloudflare/worker` has one.
+
+The same binding runs [live updates](/reference/configuration/#coediting) for admin tabs, in one more `EmDashRoom` object per site, which stores nothing. `handleRoomUpgrade` forwards its connections on `/_emdash/api/realtime`.
 
 Without the `EMDASH_ROOMS` binding, the editor uses [single-editor mode](/guides/working-with-content/#single-editor-mode), with edit locks. That includes Worker Previews and named environments that don't list the binding. If the Worker doesn't forward room connections, they never open, and each browser session switches to single-editor mode after its first three connections fail.
 
@@ -296,7 +300,7 @@ Public bucket access applies to every reachable object, not only media. Automati
 
 ## Image transformation
 
-EmDash resizes and re-encodes R2 media inside the Worker, through Cloudflare's `IMAGES` binding. The `Image` component from `emdash/ui` and images in rich text both render through the image endpoint EmDash installs under the Cloudflare adapter. For media on the internal `/_emdash/api/media/file/…` route, that endpoint reads the source bytes straight from the R2 binding, without an HTTP fetch. Those transforms keep working behind Cloudflare Access and with `global_fetch_strictly_public`. Media served from a bucket URL — see [Public R2 Access](#public-r2-access) — takes the adapter's own transform endpoint instead, which fetches the file over HTTP before transforming it.
+EmDash resizes and re-encodes R2 media inside the Worker, through Cloudflare's `IMAGES` binding. The `Image` component from `emdash/ui` and images in rich text both render through the image endpoint EmDash installs under the Cloudflare adapter. For media on the internal `/_emdash/api/media/file/…` route, that endpoint reads the source bytes straight from the R2 binding, without an HTTP fetch. Those transforms keep working behind Cloudflare Access and with `global_fetch_strictly_public`, and they need no `siteUrl` or `EMDASH_SITE_URL`. Media served from a bucket URL — see [Public R2 Access](#public-r2-access) — takes the adapter's own transform endpoint instead, which fetches the file over HTTP before transforming it.
 
 You do not have to declare the binding. `@astrojs/cloudflare` adds it to the Worker config it generates during `astro build`, the same way it adds `cache` for Workers Caching. It does so whenever the runtime image service is `cloudflare-binding`: `imageService` unset, the string itself, or `{ runtime: "cloudflare-binding" }`. Every other value — `"passthrough"`, `"compile"`, `"cloudflare"`, `"custom"` — leaves the binding out. Listing it in your own `wrangler.jsonc` keeps the intent obvious:
 
@@ -320,6 +324,18 @@ To see what a deploy actually gets, read the generated config rather than `wrang
 </Aside>
 
 Cloudflare bills these transforms as [Images transformations](https://developers.cloudflare.com/images/pricing/#images-transformed). Each unique combination of source image and parameters is billed once per calendar month, and repeat requests within that month are free. If a site has 500 source images and requests one thumbnail size and one hero size for every image, those two parameter sets count as 1,000 transformed images for that month. The Images Free plan covers 5,000 unique transformations per month. Past that limit, cached transformations are still served, but new ones return a `9422` error and the image request fails.
+
+### URL-based transformations
+
+With `imageService: "cloudflare"`, `@astrojs/cloudflare` transforms images through your zone's `/cdn-cgi/image/` URLs instead of the `IMAGES` binding. EmDash detects this setting at build time and installs an endpoint that redirects each media rendition, such as an admin thumbnail, to the matching `/cdn-cgi/image/` URL for the internal `/_emdash/api/media/file/…` route. Cloudflare then resizes the file at the edge and caches the result.
+
+```js title="astro.config.mjs"
+adapter: cloudflare({ imageService: "cloudflare" }),
+```
+
+[Enable transformations](https://developers.cloudflare.com/images/get-started/) for the zone under **Images > Transformations** before you deploy. Without them, public images and admin thumbnails do not load as resized renditions.
+
+Cloudflare fetches the source file from the media route without the visitor's cookies. If Cloudflare Access protects the whole hostname, that fetch fails and Cloudflare redirects the browser to the original file, which loads with the visitor's Access session. `astro dev` has no `/cdn-cgi/image/` service, so renditions are full-size originals during development.
 
 ## Cloudflare Access authentication
 

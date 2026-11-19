@@ -237,6 +237,28 @@ describe("MediaPickerModal", () => {
 			expect(image?.style.objectPosition).toBe("20% 80%");
 		});
 
+		it("shows a page of placeholder tiles, not a spinner, until media arrives", async () => {
+			const api = await import("../../src/lib/api");
+			let resolveList!: (value: Awaited<ReturnType<typeof api.fetchMediaList>>) => void;
+			const originalList = await vi.mocked(api.fetchMediaList).getMockImplementation()?.({});
+			vi.mocked(api.fetchMediaList).mockReturnValueOnce(
+				new Promise((resolve) => {
+					resolveList = resolve;
+				}),
+			);
+			const screen = await renderModal();
+
+			await expect
+				.element(screen.getByRole("region", { name: "Media results" }).getByRole("status"))
+				.toHaveTextContent("Loading media");
+			expect(document.querySelectorAll("[data-media-placeholder]")).toHaveLength(12);
+			expect(document.querySelector("[role='dialog'] svg[role='status']")).toBeNull();
+
+			resolveList(originalList!);
+			await expect.element(screen.getByRole("button", { name: "photo.jpg" })).toBeInTheDocument();
+			expect(document.querySelectorAll("[data-media-placeholder]")).toHaveLength(0);
+		});
+
 		it("shows the modal title", async () => {
 			const screen = await renderModal({ title: "Pick an Image" });
 			await expect.element(screen.getByText("Pick an Image")).toBeInTheDocument();
@@ -1021,6 +1043,26 @@ describe("MediaPickerModal", () => {
 					expect.objectContaining({ search: undefined, folderId: "folder-1", page: 1 }),
 				);
 			});
+		});
+
+		it("keeps the folders shown while a search's folders load", async () => {
+			const api = await import("../../src/lib/api");
+			const screen = await renderModal();
+			const folder = screen.getByRole("button", { name: "Open folder Photography" });
+			await expect.element(folder).toBeVisible();
+			vi.mocked(api.fetchMediaFolders).mockImplementationOnce(() => new Promise(() => {}));
+
+			await screen.getByRole("searchbox", { name: "Search media" }).fill("report");
+			await vi.waitFor(() =>
+				expect(api.fetchMediaFolders).toHaveBeenLastCalledWith(
+					expect.objectContaining({ search: "report" }),
+				),
+			);
+
+			await expect.element(folder).toBeVisible();
+			const section = screen.getByRole("heading", { name: "Folders" }).element().closest("section");
+			expect(section).toHaveAttribute("aria-busy", "true");
+			expect(screen.getByText("Loading folders").query()).toBeNull();
 		});
 	});
 });

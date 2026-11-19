@@ -21,6 +21,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 
 import type { QueryRecorder } from "./database/instrumentation.js";
 import { createDeferredTaskTracker, type DeferredTaskTracker } from "./deferred-tasks.js";
+import type { LayoutReadLog } from "./layout-reads.js";
 import type { SiteSettings } from "./settings/types.js";
 
 /**
@@ -121,6 +122,8 @@ export interface EmDashRequestContext {
 	metrics?: RequestMetrics;
 	/** Deferred work that owns resources scoped to this request. */
 	deferredTasks?: DeferredTaskTracker;
+	/** Layout reads this render made, for the layout prefetch. @internal */
+	layoutReads?: LayoutReadLog;
 	/**
 	 * Resolves a storage key to its public URL through the configured storage
 	 * adapter, so code without `Astro.locals` (site settings) honors `publicUrl`.
@@ -170,6 +173,14 @@ export function runInFreshRequestContext<T>(fn: () => Promise<T>): Promise<T> {
 			deferredTasks.settle();
 		}
 	});
+}
+
+/**
+ * Run `fn` with no request context, for work that outlives the request that
+ * starts it.
+ */
+export function runOutsideRequestContext<T>(fn: () => T): T {
+	return storage.exit(fn);
 }
 
 /**

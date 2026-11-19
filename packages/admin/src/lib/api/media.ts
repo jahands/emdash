@@ -7,6 +7,7 @@ import { msg } from "@lingui/core/macro";
 
 import {
 	API_BASE,
+	ApiResponseError,
 	apiFetch,
 	parseApiResponse,
 	throwResponseError,
@@ -197,6 +198,81 @@ export async function fetchMediaItem(
 		i18n._(msg`Failed to fetch media item`),
 	);
 	return data.item;
+}
+
+/** Most ids one `GET /media?ids=` request accepts. */
+const MEDIA_IDS_LIMIT = 100;
+
+/** Fetch media items by id, in one request per 100 ids. Unknown ids are left out. */
+export async function fetchMediaItems(
+	ids: readonly string[],
+	options?: { signal?: AbortSignal },
+): Promise<LocalMediaItem[]> {
+	const unique = [...new Set(ids)];
+	const requests: Promise<LocalMediaItem[]>[] = [];
+	for (let start = 0; start < unique.length; start += MEDIA_IDS_LIMIT) {
+		const params = new URLSearchParams({
+			ids: unique.slice(start, start + MEDIA_IDS_LIMIT).join(","),
+		});
+		requests.push(
+			apiFetch(`${API_BASE}/media?${params}`, { signal: options?.signal })
+				.then((response) =>
+					parseApiResponse<{ items: LocalMediaItem[] }>(
+						response,
+						i18n._(msg`Failed to fetch media`),
+					),
+				)
+				.then((data) => data.items),
+		);
+	}
+	return (await Promise.all(requests)).flat();
+}
+
+let pendingMediaItems: Map<
+	string,
+	Array<{ resolve: (item: LocalMediaItem) => void; reject: (error: unknown) => void }>
+> | null = null;
+
+async function flushMediaItemBatch() {
+	const batch = pendingMediaItems;
+	pendingMediaItems = null;
+	if (!batch) return;
+	let items: LocalMediaItem[];
+	try {
+		items = await fetchMediaItems([...batch.keys()]);
+	} catch (error) {
+		for (const waiters of batch.values()) for (const waiter of waiters) waiter.reject(error);
+		return;
+	}
+	const byId = new Map(items.map((item) => [item.id, item]));
+	for (const [id, waiters] of batch) {
+		const item = byId.get(id);
+		for (const waiter of waiters) {
+			if (item) waiter.resolve(item);
+			else {
+				waiter.reject(
+					new ApiResponseError(404, "NOT_FOUND", i18n._(msg`Failed to fetch media item`)),
+				);
+			}
+		}
+	}
+}
+
+/**
+ * Fetch a media item by id, sharing one request with every other item asked
+ * for in the same moment, as the images of an opening entry are. An unknown id
+ * rejects with a 404 `ApiResponseError`, as {@link fetchMediaItem} does.
+ */
+export function fetchMediaItemBatched(id: string): Promise<LocalMediaItem> {
+	return new Promise((resolve, reject) => {
+		if (!pendingMediaItems) {
+			pendingMediaItems = new Map();
+			setTimeout(() => void flushMediaItemBatch(), 0);
+		}
+		const waiters = pendingMediaItems.get(id);
+		if (waiters) waiters.push({ resolve, reject });
+		else pendingMediaItems.set(id, [{ resolve, reject }]);
+	});
 }
 
 export async function fetchMediaUsageDetails(

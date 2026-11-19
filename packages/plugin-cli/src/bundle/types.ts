@@ -36,6 +36,7 @@ export {
 import type {
 	PluginAdminConfig,
 	PluginCapability,
+	PluginRealtimeManifestConfig,
 	PluginStorageConfig,
 	RouteOptions,
 } from "@emdash-cms/plugin-types";
@@ -82,4 +83,5 @@ export interface ResolvedPlugin {
 	>;
 	mcp?: { tools: Record<string, ResolvedMcpTool> };
 	admin: PluginAdminConfig;
+	realtime?: PluginRealtimeManifestConfig;
 }

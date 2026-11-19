@@ -16,7 +16,7 @@ import {
 	type PortableTextEditorProps,
 } from "../../src/components/PortableTextEditor";
 import type { MediaItem } from "../../src/lib/api";
-import { fetchMediaItem, type LocalMediaItem } from "../../src/lib/api/media.js";
+import { fetchMediaItemBatched, type LocalMediaItem } from "../../src/lib/api/media.js";
 import { render } from "../utils/render.js";
 
 const REPLACEMENT: MediaItem = {
@@ -64,7 +64,7 @@ vi.mock("../../src/lib/api/media.js", async () => {
 		"../../src/lib/api/media.js",
 	);
 	// Media items stay loading unless a test resolves them.
-	return { ...actual, fetchMediaItem: vi.fn(() => new Promise<never>(() => {})) };
+	return { ...actual, fetchMediaItemBatched: vi.fn(() => new Promise<never>(() => {})) };
 });
 
 vi.mock("../../src/components/SectionPickerModal", () => ({
@@ -690,7 +690,7 @@ describe("Image toolbar", () => {
 
 	it("treats a file name as no description, also while the media item loads", async () => {
 		let resolveMedia: (item: LocalMediaItem) => void = () => {};
-		vi.mocked(fetchMediaItem)
+		vi.mocked(fetchMediaItemBatched)
 			.mockReset()
 			.mockReturnValue(new Promise((resolve) => (resolveMedia = resolve)));
 		const { img } = await setup({
@@ -713,7 +713,7 @@ describe("Image toolbar", () => {
 		} satisfies LocalMediaItem);
 		await vi.waitFor(() => expect(img.getAttribute("src")).toContain("/img-current.jpg"));
 		expect(button(toolbar, "Alt text")).toHaveAttribute("aria-pressed", "false");
-		expect(fetchMediaItem).toHaveBeenCalledOnce();
+		expect(fetchMediaItemBatched).toHaveBeenCalledOnce();
 
 		await userEvent.click(button(toolbar, "Alt text"));
 		await userEvent.keyboard("A red bike{Enter}");
@@ -723,7 +723,7 @@ describe("Image toolbar", () => {
 	});
 
 	it("knows a replacement image's description before its media item loads", async () => {
-		vi.mocked(fetchMediaItem).mockReset();
+		vi.mocked(fetchMediaItemBatched).mockReset();
 		const { editor, img } = await setup();
 		const toolbar = await selectImage(img);
 		await userEvent.click(button(toolbar, "Replace"));

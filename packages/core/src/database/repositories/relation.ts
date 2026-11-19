@@ -1,6 +1,7 @@
 import { sql, type Kysely, type Selectable } from "kysely";
 import { ulid } from "ulidx";
 
+import { publishChange } from "../../realtime/publish.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
 import type { Database, RelationTable, ContentReferenceTable } from "../types.js";
 import {
@@ -152,6 +153,7 @@ export class RelationRepository {
 				updated_at: now,
 			})
 			.execute();
+		publishChange("schema", { op: "update" });
 
 		const relation = await this.findById(id);
 		if (!relation) throw new Error("Failed to create relation");
@@ -232,6 +234,7 @@ export class RelationRepository {
 		if (Object.keys(updates).length > 0) {
 			updates.updated_at = new Date().toISOString();
 			await this.db.updateTable("_emdash_relations").set(updates).where("id", "=", id).execute();
+			publishChange("schema", { op: "update" });
 		}
 
 		return this.findById(id);
@@ -251,7 +254,9 @@ export class RelationRepository {
 			.deleteFrom("_emdash_relations")
 			.where("id", "=", id)
 			.executeTakeFirst();
-		return (result.numDeletedRows ?? 0n) > 0n;
+		const deleted = (result.numDeletedRows ?? 0n) > 0n;
+		if (deleted) publishChange("schema", { op: "update" });
+		return deleted;
 	}
 
 	/**

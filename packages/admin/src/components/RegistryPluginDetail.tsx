@@ -13,7 +13,7 @@
  * legacy DID-based links for backward compatibility.
  */
 
-import { Badge, Button, LinkButton, Select, Tabs } from "@cloudflare/kumo";
+import { Badge, Button, LinkButton, Select, SkeletonLine, Tabs } from "@cloudflare/kumo";
 import type { TabsItem } from "@cloudflare/kumo";
 import { declaredAccessToCapabilities, type DeclaredAccess } from "@emdash-cms/plugin-types";
 import { checkEnvCompatibility } from "@emdash-cms/registry-client/env";
@@ -31,6 +31,7 @@ import {
 	PluginMcpConsentRequiredError,
 	type PluginMcpConsentTool,
 } from "../lib/api/marketplace.js";
+import { fetchPlugins } from "../lib/api/plugins.js";
 import {
 	artifactProxyUrl,
 	canonicalCapabilitiesForDriftCheck,
@@ -84,10 +85,7 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 	// refresh.
 	const { data: installedPlugins } = useQuery({
 		queryKey: ["plugins"],
-		queryFn: async () => {
-			const { fetchPlugins } = await import("../lib/api/plugins.js");
-			return fetchPlugins();
-		},
+		queryFn: fetchPlugins,
 		refetchOnMount: "always",
 		refetchOnWindowFocus: "always",
 	});
@@ -462,16 +460,28 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 		return (
 			<div className="space-y-6">
 				<BackLink />
-				<div className="animate-pulse space-y-4">
-					<div className="flex items-center gap-4">
-						<div className="h-16 w-16 rounded-xl bg-kumo-subtle" />
-						<div className="space-y-2">
-							<div className="h-6 w-48 rounded bg-kumo-subtle" />
-							<div className="h-4 w-32 rounded bg-kumo-subtle" />
+				<span role="status" className="sr-only">
+					{t`Loading...`}
+				</span>
+				<div aria-hidden="true" className="flex flex-wrap items-start gap-4">
+					<div className="skeleton-line size-16 rounded-xl" />
+					<div className="min-w-0 flex-1">
+						<SkeletonLine blockHeight={32} minWidth={40} maxWidth={40} />
+						<div className="mt-1">
+							<SkeletonLine blockHeight={16} minWidth={30} maxWidth={30} />
+						</div>
+						<div className="text-sm">
+							<SkeletonLine blockHeight="1lh" minWidth={45} maxWidth={45} />
+						</div>
+						<div className="mt-1">
+							<SkeletonLine blockHeight={16} minWidth={20} maxWidth={20} />
 						</div>
 					</div>
-					<div className="h-4 w-full rounded bg-kumo-subtle" />
-					<div className="h-4 w-3/4 rounded bg-kumo-subtle" />
+					<div className="skeleton-line h-9 w-20 rounded-lg" />
+				</div>
+				<div aria-hidden="true" className="text-base">
+					<SkeletonLine blockHeight="1lh" minWidth={95} maxWidth={95} />
+					<SkeletonLine blockHeight="1lh" minWidth={70} maxWidth={70} />
 				</div>
 			</div>
 		);
@@ -511,16 +521,6 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 	return (
 		<div className="space-y-6">
 			<BackLink />
-
-			{/* Banner */}
-			{bannerSrc ? (
-				<img
-					src={bannerSrc}
-					alt={t`${displayName ?? slug} banner`}
-					className="h-40 w-full rounded-xl object-cover"
-					loading="lazy"
-				/>
-			) : null}
 
 			{/* Header */}
 			<div className="flex flex-wrap items-start gap-4">
@@ -723,6 +723,16 @@ export function RegistryPluginDetail({ pluginId, config }: RegistryPluginDetailP
 						</ul>
 					</div>
 				</div>
+			) : null}
+
+			{/* Below the header, so a banner the placeholder couldn't know about doesn't push it down. */}
+			{bannerSrc ? (
+				<img
+					src={bannerSrc}
+					alt={t`${displayName ?? slug} banner`}
+					className="h-40 w-full rounded-xl object-cover"
+					loading="lazy"
+				/>
 			) : null}
 
 			{/* Description */}

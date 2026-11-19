@@ -358,7 +358,7 @@ vi.mock("../../src/lib/api/client.js", async () => {
 	return {
 		...actual,
 		apiFetch: vi.fn(),
-		fetchManifest: vi.fn(async () => ({ collections: {}, i18n: manifestI18n })),
+		fetchManifest: vi.fn(async () => ({ collections: {}, taxonomies: [], i18n: manifestI18n })),
 	};
 });
 
@@ -1606,5 +1606,107 @@ describe("TaxonomyManager", () => {
 		} finally {
 			i18n.activate(previousLocale);
 		}
+	});
+
+	it("draws the page from the manifest's copy while the taxonomy loads", async () => {
+		const base = vi.mocked(apiFetch).getMockImplementation()!;
+		vi.mocked(apiFetch).mockImplementation((url, init) =>
+			typeof url === "string" && url.endsWith("/taxonomies")
+				? new Promise(() => {})
+				: base(url, init),
+		);
+		const qc = new QueryClient({
+			defaultOptions: { queries: { retry: false, staleTime: Number.POSITIVE_INFINITY } },
+		});
+		qc.setQueryData(["manifest"], {
+			collections: {},
+			taxonomies: [
+				{
+					id: "t1",
+					name: "categories",
+					label: "Categories",
+					labelSingular: "Category",
+					hierarchical: true,
+					collections: ["posts"],
+					locale: "en",
+					translationGroup: "t1",
+				},
+			],
+		});
+
+		const screen = await render(
+			<Toasty>
+				<QueryClientProvider client={qc}>
+					<TaxonomyManager taxonomyName="categories" />
+				</QueryClientProvider>
+			</Toasty>,
+		);
+
+		await expect.element(screen.getByRole("heading", { name: "Categories" })).toBeVisible();
+		await expect.element(screen.getByRole("button", { name: "Add Category" })).toBeVisible();
+		await expect.element(screen.getByText("Technology", { exact: true })).toBeVisible();
+	});
+
+	it("shows the header and table in outline until a taxonomy missing from the manifest loads", async () => {
+		const base = vi.mocked(apiFetch).getMockImplementation()!;
+		vi.mocked(apiFetch).mockImplementation((url, init) =>
+			typeof url === "string" && url.endsWith("/taxonomies")
+				? new Promise(() => {})
+				: base(url, init),
+		);
+		const screen = await render(<TaxonomyManager taxonomyName="categories" />, {
+			wrapper: Wrapper,
+		});
+
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading...");
+		await expect.element(screen.getByRole("columnheader", { name: "Name" })).toBeVisible();
+		expect(screen.getByText(NO_CATEGORIES_REGEX).query()).toBeNull();
+	});
+
+	it("keeps one locale's terms on screen, inert, while another locale's load", async () => {
+		manifestI18n = { defaultLocale: "en", locales: ["en", "de"] };
+		const screen = await render(<TaxonomyManager taxonomyName="categories" />, {
+			wrapper: Wrapper,
+		});
+		await expect.element(screen.getByText("Technology", { exact: true })).toBeVisible();
+
+		const base = vi.mocked(apiFetch).getMockImplementation()!;
+		vi.mocked(apiFetch).mockImplementation((url, init) =>
+			typeof url === "string" && url.includes("locale=de")
+				? new Promise(() => {})
+				: base(url, init),
+		);
+		await screen.getByRole("combobox", { name: "Locale" }).selectOptions("de");
+
+		await vi.waitFor(() =>
+			expect(
+				vi
+					.mocked(apiFetch)
+					.mock.calls.some(([url]) => typeof url === "string" && url.includes("locale=de")),
+			).toBe(true),
+		);
+		const row = screen.getByText("Technology", { exact: true }).element();
+		expect(row.closest("tbody")).toHaveAttribute("inert");
+		expect(row.closest("[aria-busy]")).toHaveAttribute("aria-busy", "true");
+	});
+
+	it("does not offer to translate a term into a locale before its translations load", async () => {
+		manifestI18n = { defaultLocale: "en", locales: ["en", "de"] };
+		const base = vi.mocked(apiFetch).getMockImplementation()!;
+		vi.mocked(apiFetch).mockImplementation((url, init) =>
+			typeof url === "string" && url.includes("/translations")
+				? new Promise(() => {})
+				: base(url, init),
+		);
+		const screen = await render(<TaxonomyManager taxonomyName="categories" />, {
+			wrapper: Wrapper,
+		});
+		await expect.element(screen.getByRole("combobox", { name: "Locale" })).toBeVisible();
+
+		await screen.getByRole("button", { name: "Edit Technology" }).click();
+		const dialog = screen.getByRole("dialog", { name: EDIT_CATEGORY_HEADING_REGEX });
+		await expect.element(dialog.getByRole("heading", { name: "Translations" })).toBeVisible();
+		expect(dialog.getByRole("button", { name: "Translate", exact: true }).query()).toBeNull();
+		expect(dialog.getByRole("button", { name: "Edit", exact: true }).query()).toBeNull();
 	});
 });

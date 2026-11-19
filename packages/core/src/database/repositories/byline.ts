@@ -8,6 +8,7 @@ import {
 	invalidateBylineObjectCache,
 	invalidateCollectionCache,
 } from "../../object-cache/index.js";
+import { publishChange } from "../../realtime/publish.js";
 import { clearRequestCacheEntry, peekRequestCache, requestCached } from "../../request-cache.js";
 import { hasRoomNotifier, notifyRoom } from "../../rooms/notifications.js";
 import type { BylineFieldDefinition, CustomFieldValue } from "../../schema/types.js";
@@ -843,6 +844,7 @@ export class BylineRepository {
 			clearRequestCacheEntry(`byline-field-group-values:${translationGroup}`);
 		}
 		invalidateBylineObjectCache();
+		publishChange("bylines", { ids: [id], op: "create" });
 
 		const byline = await this.findById(id);
 		if (!byline) {
@@ -894,6 +896,7 @@ export class BylineRepository {
 			clearRequestCacheEntry(`byline-field-values:${id}`);
 		}
 		invalidateBylineObjectCache();
+		publishChange("bylines", { ids: [id], op: "update" });
 
 		return await this.findById(id);
 	}
@@ -993,6 +996,7 @@ export class BylineRepository {
 		});
 
 		invalidateBylineObjectCache();
+		publishChange("bylines", { ids: [id], op: "delete" });
 		return true;
 	}
 

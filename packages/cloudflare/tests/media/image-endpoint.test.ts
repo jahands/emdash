@@ -13,21 +13,27 @@ vi.mock(
 	async () => import("../../../core/src/media/image-endpoint.js"),
 );
 
+import {
+	IMMUTABLE_IMAGE_CACHE,
+	MAX_VERIFIED_MEDIA_BYTES,
+	MUTABLE_MEDIA_CACHE_CONTROL,
+} from "../../../core/src/media/image-endpoint.js";
+import { computeContentHash } from "../../../core/src/utils/hash.js";
 import { GET } from "../../src/image-endpoint.js";
 
 const sourceBytes = new TextEncoder().encode("source");
 const transformedBytes = new TextEncoder().encode("transformed");
 
-function context(query: string, contentType = "image/jpeg") {
+function context(query: string, contentType = "image/jpeg", bytes = sourceBytes, version?: string) {
 	const input = {
 		body: new ReadableStream({
 			start(controller) {
-				controller.enqueue(sourceBytes);
+				controller.enqueue(bytes);
 				controller.close();
 			},
 		}),
 		contentType,
-		size: sourceBytes.length,
+		size: bytes.length,
 		downloads: 0,
 	};
 	const storage = {
@@ -41,7 +47,9 @@ function context(query: string, contentType = "image/jpeg") {
 		storage,
 		ctx: {
 			request: new Request(
-				`https://example.test/_image?href=/_emdash/api/media/file/photo.jpg&${query}`,
+				`https://example.test/_image?href=${encodeURIComponent(
+					`/_emdash/api/media/file/photo.jpg${version ? `?_emdash_media=${version}` : ""}`,
+				)}&${query}`,
 			),
 			locals: { emdash: { storage } },
 		},
@@ -120,6 +128,36 @@ describe("Cloudflare image endpoint", () => {
 		},
 	);
 
+	it("transforms an oversized candidate at the largest size instead of serving the original", async () => {
+		const { images, transform } = installImages();
+		const { ctx } = context("w=3024&h=4032&f=webp");
+
+		const response = await GET(ctx as never);
+
+		expect(images.input).toHaveBeenCalledOnce();
+		expect(transform).toHaveBeenCalledWith({ width: 3000, height: 4000 });
+		expect(response.headers.get("Content-Type")).toBe("image/webp");
+		expect(await response.text()).toBe("transformed");
+	});
+
+	it("answers a rendition's revalidation with the 200's metadata", async () => {
+		installImages();
+		const first = await GET(context("w=120&f=webp").ctx as never);
+		const { ctx } = context("w=120&f=webp");
+		ctx.request = new Request(ctx.request.url, {
+			headers: { "If-None-Match": first.headers.get("ETag")! },
+		});
+
+		const revalidated = await GET(ctx as never);
+
+		expect(revalidated.status).toBe(304);
+		for (const name of ["Content-Type", "Cache-Control", "ETag"]) {
+			const value = revalidated.headers.get(name);
+			if (value !== null) expect(value).toBe(first.headers.get(name));
+		}
+		expect(revalidated.headers.get("Content-Type")).not.toBe("image/jpeg");
+	});
+
 	it("streams the original when Images is unavailable", async () => {
 		const { ctx } = context("w=120&q=70");
 
@@ -142,6 +180,50 @@ describe("Cloudflare image endpoint", () => {
 			expect(await response.text()).toBe("source");
 		},
 	);
+});
+
+describe("Cloudflare image endpoint version-pinned caching", () => {
+	it("serves a rendition and original pinned to the stored bytes as immutable", async () => {
+		const version = await computeContentHash(sourceBytes);
+		const { images } = installImages();
+
+		const rendition = await GET(context("w=120", "image/jpeg", sourceBytes, version).ctx as never);
+		const original = await GET(
+			context("w=120", "application/pdf", sourceBytes, version).ctx as never,
+		);
+
+		expect(rendition.headers.get("Cache-Control")).toBe(IMMUTABLE_IMAGE_CACHE);
+		expect(await rendition.text()).toBe("transformed");
+		expect(original.headers.get("Cache-Control")).toBe(IMMUTABLE_IMAGE_CACHE);
+		expect(await original.text()).toBe("source");
+		expect(images.input).toHaveBeenCalledOnce();
+	});
+
+	it("revalidates when storage holds a same-size file other than the pinned version", async () => {
+		const version = await computeContentHash(sourceBytes);
+		const replacement = new TextEncoder().encode("SOURCE");
+		installImages();
+
+		const rendition = await GET(context("w=120", "image/jpeg", replacement, version).ctx as never);
+		const original = await GET(
+			context("w=120", "application/pdf", replacement, version).ctx as never,
+		);
+
+		expect(rendition.headers.get("Cache-Control")).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		expect(original.headers.get("Cache-Control")).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		expect(await original.text()).toBe("SOURCE");
+	});
+
+	it("streams a pinned source too large to verify to Images, revalidating", async () => {
+		const large = new Uint8Array(MAX_VERIFIED_MEDIA_BYTES + 1);
+		const { images } = installImages();
+		const { ctx, input } = context("w=120", "image/jpeg", large, await computeContentHash(large));
+
+		const response = await GET(ctx as never);
+
+		expect(response.headers.get("Cache-Control")).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		expect(images.input).toHaveBeenCalledWith(input.body);
+	});
 });
 
 interface TrackedBody {

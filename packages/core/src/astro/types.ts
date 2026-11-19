@@ -10,7 +10,7 @@ import type { Kysely } from "kysely";
 
 import type { ContentWrite } from "../api/content-save.js";
 import type { ContentFieldFilters } from "../content-list-query.js";
-import type { ContentSeoInput } from "../database/repositories/types.js";
+import type { ContentItem, ContentSeoInput } from "../database/repositories/types.js";
 import type {
 	PluginEditorExtensionDispatch,
 	ResolvedPluginEditorExtension,
@@ -112,11 +112,15 @@ export interface ManifestPlugin {
 		label?: string;
 		icon?: string;
 		group?: string;
+		/** The plugin's realtime channels whose changes reload the Block Kit page. */
+		refreshOn?: string[];
 	}>;
 	dashboardWidgets?: Array<{
 		id: string;
 		title?: string;
 		size?: string;
+		/** The plugin's realtime channels whose changes reload the Block Kit widget. */
+		refreshOn?: string[];
 	}>;
 	editorPanels?: import("../plugins/types.js").PluginEditorPanel[];
 	editorActions?: import("../plugins/types.js").PluginEditorAction[];
@@ -181,10 +185,19 @@ export interface EmDashManifest {
 	 * Used by the login page to conditionally show the "Sign up" link.
 	 */
 	signupEnabled?: boolean;
+	/** Whether the site has a storage backend for media uploads and backups. */
+	storageAvailable?: boolean;
 	/** Whether the site is in staging (hidden from search engines). */
 	staging?: boolean;
+	/** The site's address, as `GET /_emdash/api/settings/domain` reports it. */
+	siteDomain?: {
+		configuredUrl: string | null;
+		siteOrigin: string | null;
+	};
 	/** Whether this host runs co-editing rooms. When false, the editor doesn't ask to join one. */
 	coEditing?: boolean;
+	/** Whether this host runs the realtime hub. When false, the admin opens no live updates socket. */
+	realtime?: boolean;
 	/**
 	 * i18n configuration from Astro config.
 	 * Only present when i18n is enabled (multiple locales configured).
@@ -321,6 +334,10 @@ export interface EmDashHandlers {
 			bylinesNone?: boolean;
 			includeInferredBylines?: boolean;
 			fieldFilters?: ContentFieldFilters;
+			/** Field slugs to return in each item's `data`; omit for every field. */
+			fields?: string[];
+			/** Count the trashed entries in `locale` too, as `trashTotal`. */
+			trashTotal?: boolean;
 		},
 	) => Promise<HandlerResponse>;
 
@@ -331,7 +348,13 @@ export interface EmDashHandlers {
 		id: string,
 		locale?: string,
 		referenceOptions?: { includeDrafts: boolean },
-		draftOptions?: { includeStagedSlug?: boolean },
+		options?: {
+			includeStagedSlug?: boolean;
+			/** Adds the draft's staged slug as `item.draftSlug`, leaving `slug` the live one. */
+			includeDraftSlug?: boolean;
+			/** Return the stored row alone, without SEO, byline or draft hydration. */
+			rowOnly?: boolean;
+		},
 	) => Promise<
 		HandlerResponse<{
 			item: {
@@ -391,6 +414,7 @@ export interface EmDashHandlers {
 			/** Users whose edits this save holds, latest first. Defaults to the actor alone. */
 			editedBy?: readonly string[];
 		},
+		options?: { existing?: ContentItem },
 	) => Promise<
 		HandlerResponse & {
 			/** This save's own write, when it staged a draft revision and wrote no live metadata. */
@@ -439,6 +463,7 @@ export interface EmDashHandlers {
 			currentTime?: Date;
 			actor?: ActorInfo;
 			origin?: ContentActionOrigin;
+			existing?: ContentItem;
 		},
 	) => Promise<HandlerResponse>;
 
@@ -689,6 +714,9 @@ export interface EmDashHandlers {
 	// routes; logged-out requests don't need it. Per-request, deduplicated
 	// by `requestCached`.
 	getManifest: () => Promise<EmDashManifest>;
+
+	// The permission each enabled plugin's realtime channel needs, for hub tickets.
+	getRealtimeChannels: () => Record<string, string>;
 
 	// Co-editing rooms. Null where co-editing is off or the host can't run
 	// rooms, which gives every join single-editor mode.

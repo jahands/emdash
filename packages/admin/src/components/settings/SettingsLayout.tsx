@@ -1,19 +1,31 @@
+import { Field, Input, SkeletonLine } from "@cloudflare/kumo";
+import { useLingui } from "@lingui/react/macro";
 import { Link } from "@tanstack/react-router";
 import * as React from "react";
 
 import { cn } from "../../lib/utils.js";
 import { CaretNext } from "../ArrowIcons.js";
 import { EditorHeader } from "../EditorHeader.js";
+import { SaveButton } from "../SaveButton.js";
 import { BackToSettingsLink } from "./BackToSettingsLink.js";
 
 interface SettingsFrameProps {
 	title: React.ReactNode;
 	description: React.ReactNode;
 	actions?: React.ReactNode;
+	/** The page's sections are in outline while its settings load. */
+	loading?: boolean;
 	children: React.ReactNode;
 }
 
-export function SettingsFrame({ title, description, actions, children }: SettingsFrameProps) {
+export function SettingsFrame({
+	title,
+	description,
+	actions,
+	loading = false,
+	children,
+}: SettingsFrameProps) {
+	const { t } = useLingui();
 	return (
 		<div className="max-w-4xl pb-6">
 			<EditorHeader
@@ -31,9 +43,82 @@ export function SettingsFrame({ title, description, actions, children }: Setting
 					</p>
 				</div>
 			</EditorHeader>
-			<div className="mt-6">{children}</div>
+			<div className="mt-6">
+				{loading && (
+					<span role="status" className="sr-only">
+						{t`Loading settings...`}
+					</span>
+				)}
+				{children}
+			</div>
 		</div>
 	);
+}
+
+/**
+ * Takes the space of a page's Save button while its settings load, so the
+ * header doesn't change height when the button appears.
+ */
+export function PendingSaveAction() {
+	return (
+		<div className="invisible" aria-hidden="true" inert>
+			<SaveButton isDirty={false} isSaving={false} announce={false} />
+		</div>
+	);
+}
+
+interface SettingsFieldPlaceholderProps {
+	label: React.ReactNode;
+	description?: React.ReactNode;
+	/** The height of the control it stands in for. */
+	controlClassName?: string;
+}
+
+/**
+ * A field whose value is loading: its label and description around a block the size of
+ * the input that replaces it.
+ */
+export function SettingsFieldPlaceholder({
+	label,
+	description,
+	controlClassName = "h-9",
+}: SettingsFieldPlaceholderProps) {
+	return (
+		<Field label={label} description={description}>
+			<div aria-hidden="true" className={cn("skeleton-line w-full rounded-lg", controlClassName)} />
+		</Field>
+	);
+}
+
+/** An `Input` that keeps its label and description around a placeholder while `loading`. */
+export function SettingsInput({
+	loading,
+	...props
+}: React.ComponentProps<typeof Input> & { loading: boolean }) {
+	if (!loading) return <Input {...props} />;
+	return <SettingsFieldPlaceholder label={props.label} description={props.description} />;
+}
+
+// Fixed, so the outline keeps its shape if the page remounts while loading.
+const PLACEHOLDER_ROW_WIDTHS = [
+	[42, 64],
+	[30, 52],
+	[48, 38],
+] as const;
+
+/** Rows of a settings list whose items are loading, each a name and a line of details. */
+export function SettingsPlaceholderRows({ rows = 2 }: { rows?: number }) {
+	return Array.from({ length: rows }, (_, row) => {
+		const [name, details] = PLACEHOLDER_ROW_WIDTHS[row % PLACEHOLDER_ROW_WIDTHS.length]!;
+		return (
+			<SettingRow key={row}>
+				<div aria-hidden="true">
+					<SkeletonLine blockHeight={20} minWidth={name} maxWidth={name} />
+					<SkeletonLine blockHeight={20} minWidth={details} maxWidth={details} />
+				</div>
+			</SettingRow>
+		);
+	});
 }
 
 interface SettingsSectionProps {

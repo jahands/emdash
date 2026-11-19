@@ -26,6 +26,7 @@ import { withTransaction } from "../../database/transaction.js";
 import type { Database, TaxonomyDefTable } from "../../database/types.js";
 import { getI18nConfig, getLocaleChainRank, resolveConfiguredLocale } from "../../i18n/config.js";
 import { localeMatches } from "../../i18n/query.js";
+import { publishChange, withChangeQueue, type ChangeOp } from "../../realtime/publish.js";
 import { invalidateTaxonomyDefsCache, invalidateTermCache } from "../../taxonomies/index.js";
 import { fetchVisibleTermCounts } from "../../taxonomies/term-counts.js";
 import type { ApiResult } from "../types.js";
@@ -165,6 +166,14 @@ function buildTree(flatTerms: TermWithCount[], resolveByGroup = false): TermWith
 type TaxonomyDefLookup =
 	| { success: true; def: Selectable<TaxonomyDefTable> }
 	| { success: false; error: { code: string; message: string } };
+
+/** Definitions are in the admin manifest too, which refetches on `schema`. One batch, one hub call. */
+function taxonomyDefChanged(name: string, op: ChangeOp): Promise<void> {
+	return withChangeQueue(async () => {
+		publishChange(`taxonomies/${name}`, { op });
+		publishChange("schema", { op: "update" });
+	});
+}
 
 function taxonomyDefNotFound(name: string, locale?: string): TaxonomyDefLookup {
 	return {
@@ -472,6 +481,7 @@ export async function handleTaxonomyCreate(
 		// A new def changes which taxonomies exist — drop the isolate-wide
 		// defs/names caches so this isolate reflects it immediately.
 		invalidateTaxonomyDefsCache();
+		await taxonomyDefChanged(input.name, "create");
 
 		const row = await selectTaxonomyDefs(db).where("d.id", "=", id).executeTakeFirstOrThrow();
 		return { success: true, data: { taxonomy: rowToDef(row) } };
@@ -569,6 +579,7 @@ export async function handleTaxonomyUpdate(
 				}
 			});
 			invalidateTaxonomyDefsCache();
+			await taxonomyDefChanged(name, "update");
 		}
 
 		const row = await selectTaxonomyDefs(db)
@@ -620,6 +631,7 @@ export async function handleTaxonomyDelete(
 
 		// Covers the term caches too — see `invalidateTaxonomyDefsCache`.
 		invalidateTaxonomyDefsCache();
+		await taxonomyDefChanged(name, "delete");
 
 		return { success: true, data: { deleted: true } };
 	} catch (error) {
@@ -845,6 +857,7 @@ export async function handleTermReorder(
 
 		await repo.reorder(groups, siblings);
 		invalidateTermCache();
+		publishChange(`taxonomies/${taxonomyName}`, { op: "update" });
 
 		return { success: true, data: { reordered: true } };
 	} catch (error) {

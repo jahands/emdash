@@ -162,9 +162,6 @@ catalogs:
     '@tiptap/core':
       specifier: 3.32.0
       version: 3.32.0
-    '@tiptap/extension-character-count':
-      specifier: 3.32.0
-      version: 3.32.0
     '@tiptap/extension-code':
       specifier: 3.32.0
       version: 3.32.0
@@ -315,6 +312,9 @@ catalogs:
     semver:
       specifier: ^7.6.3
       version: 7.7.4
+    sharp:
+      specifier: ^0.35.4
+      version: 0.35.4
     tsdown:
       specifier: 0.20.3
       version: 0.20.3
@@ -1578,9 +1578,6 @@ importers:
       '@tiptap/core':
         specifier: 'catalog:'
         version: 3.32.0(@tiptap/pm@3.32.0)
-      '@tiptap/extension-character-count':
-        specifier: 'catalog:'
-        version: 3.32.0(@tiptap/extensions@3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0))
       '@tiptap/extension-code':
         specifier: 'catalog:'
         version: 3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))
@@ -3232,6 +3229,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3257,6 +3257,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3328,6 +3331,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3399,6 +3405,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -3464,6 +3473,9 @@ importers:
       react-dom:
         specifier: 'catalog:'
         version: 19.2.4(react@19.2.4)
+      sharp:
+        specifier: 'catalog:'
+        version: 0.35.4(@types/node@26.1.1)
     devDependencies:
       '@astrojs/check':
         specifier: 'catalog:'
@@ -8202,11 +8214,6 @@ packages:
     resolution: {integrity: sha512-Y5P/l06pVCUG46vXpBl3z0fW2b6JpSMX4Cvr+5sfQh8zB3TxwSiLQaaPwI3R5MFD1KfRk3AjiPRieEyXdWcNHw==}
     peerDependencies:
       '@tiptap/extension-list': 3.32.0
-
-  '@tiptap/extension-character-count@3.32.0':
-    resolution: {integrity: sha512-/O2tdGr7MPDIWIWzPzmaqPwSrnrW17/K1tFZVL+LbvVs1ur+QTCKcJgvQls6OpKDqL3tDmlZbI8bUCvBhB2/7Q==}
-    peerDependencies:
-      '@tiptap/extensions': 3.32.0
 
   '@tiptap/extension-code-block-lowlight@3.20.0':
     resolution: {integrity: sha512-9lN9rn07lOWkLnByT5C1axtq56MHpOI7MpLaCmX3p+x1bDl6Uvixm6AoBdTLfZUmUYeEFBsf7t5cR+QepMbkiA==}
@@ -17748,10 +17755,6 @@ snapshots:
   '@tiptap/extension-bullet-list@3.32.0(@tiptap/extension-list@3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0))':
     dependencies:
       '@tiptap/extension-list': 3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0)
-
-  '@tiptap/extension-character-count@3.32.0(@tiptap/extensions@3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0))':
-    dependencies:
-      '@tiptap/extensions': 3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0)
 
   '@tiptap/extension-code-block-lowlight@3.20.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/extension-code-block@3.32.0(@tiptap/core@3.32.0(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0))(@tiptap/pm@3.32.0)(highlight.js@11.11.2)(lowlight@3.3.0)':
     dependencies:

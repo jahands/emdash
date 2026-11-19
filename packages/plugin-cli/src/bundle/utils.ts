@@ -216,6 +216,7 @@ export function extractManifest(plugin: ResolvedPlugin): PluginManifest {
 			editorPanels: plugin.admin.editorPanels,
 			editorActions: plugin.admin.editorActions,
 		},
+		...(plugin.realtime ? { realtime: plugin.realtime } : {}),
 	};
 }
 

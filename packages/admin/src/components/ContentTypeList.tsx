@@ -39,6 +39,7 @@ import { ConfirmDialog } from "./ConfirmDialog";
 import {
 	DataTable,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	cellCodeClassName,
@@ -67,6 +68,8 @@ export interface ContentTypeListProps {
 	collections: SchemaCollection[];
 	orphanedTables?: OrphanedTable[];
 	isLoading?: boolean;
+	/** How many content types to hold rows for while loading, when known. */
+	expectedCount?: number;
 	/** Return the request's promise to keep the confirmation open until it lands. */
 	onDelete?: (slug: string) => Promise<unknown> | void;
 	isDeleting?: boolean;
@@ -83,6 +86,7 @@ export function ContentTypeList({
 	collections,
 	orphanedTables,
 	isLoading,
+	expectedCount,
 	onDelete,
 	isDeleting = false,
 	deleteError,
@@ -119,7 +123,9 @@ export function ContentTypeList({
 		return orderedSlugs.map((slug) => bySlug.get(slug)).filter((c) => c !== undefined);
 	}, [collections, orderedSlugs]);
 
+	const placeholderRows = expectedCount ?? 5;
 	const canReorder = !!onReorder && collections.length > 1;
+	const showHandleColumn = canReorder || (isLoading && !!onReorder && placeholderRows > 1);
 
 	const sensors = useSensors(
 		useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -205,32 +211,44 @@ export function ContentTypeList({
 
 			{/* Table */}
 			<DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
-				<DataTable aria-labelledby={headingId}>
+				{/* A fixed layout takes column widths from the header alone, so the columns stay put when
+				    rows replace the placeholders. */}
+				<DataTable aria-labelledby={headingId} className="table-fixed">
 					<thead>
 						<tr>
-							{canReorder && (
-								<th scope="col" {...handleColumn}>
+							{showHandleColumn && (
+								<th scope="col" className="!w-10" {...handleColumn}>
 									<span className="sr-only">{t`Reorder`}</span>
 								</th>
 							)}
 							<th scope="col">{t`Name`}</th>
-							<th scope="col" {...tertiaryColumn}>
+							<th scope="col" className="w-48" {...tertiaryColumn}>
 								{t`Slug`}
 							</th>
-							<th scope="col" {...tertiaryColumn}>
+							<th scope="col" className="w-32" {...tertiaryColumn}>
 								{t`Source`}
 							</th>
-							<th scope="col" {...tertiaryColumn}>
+							<th scope="col" className="w-1/4" {...tertiaryColumn}>
 								{t`Features`}
 							</th>
-							<th scope="col" className="w-0">
+							<th scope="col" className="w-15 @max-md:w-12.5">
 								<span className="sr-only">{t`Actions`}</span>
 							</th>
 						</tr>
 					</thead>
 					<tbody>
-						{isLoading ? (
-							<DataTableMessage colSpan={columnCount}>{t`Loading collections...`}</DataTableMessage>
+						{isLoading && placeholderRows > 0 ? (
+							<DataTablePlaceholderRows
+								cells={[
+									...(showHandleColumn ? (["handle"] as const) : []),
+									"iconTitle",
+									"tertiary",
+									"tertiary",
+									"tertiary",
+									"actions",
+								]}
+								rows={placeholderRows}
+							/>
 						) : collections.length === 0 && !hasOrphans ? (
 							<DataTableMessage colSpan={columnCount}>
 								{t`No content types yet.`}{" "}

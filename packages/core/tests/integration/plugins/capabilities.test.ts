@@ -25,6 +25,7 @@ import { RedirectRepository } from "../../../src/database/repositories/redirect.
 import { RevisionRepository } from "../../../src/database/repositories/revision.js";
 import { UserRepository } from "../../../src/database/repositories/user.js";
 import type { Database as DbSchema } from "../../../src/database/types.js";
+import { waitForDeferredTasks } from "../../../src/deferred-tasks.js";
 import { setI18nConfig } from "../../../src/i18n/config.js";
 import {
 	PluginContextFactory,
@@ -46,6 +47,8 @@ import {
 	RedirectAccessError,
 } from "../../../src/plugins/context.js";
 import type { PluginCommentStatus, ResolvedPlugin } from "../../../src/plugins/types.js";
+import { MAX_PLUGIN_PUBLISHES } from "../../../src/realtime/plugin.js";
+import { setChangePublisher, type Change } from "../../../src/realtime/publish.js";
 import { SchemaRegistry } from "../../../src/schema/registry.js";
 
 // Test regex patterns
@@ -1496,6 +1499,39 @@ describe("Capability Enforcement Integration (v2)", () => {
 
 			const ctx = factory.createContext(plugin);
 			expect(ctx.users).toBeUndefined();
+		});
+
+		it("gives realtime publishing only to plugins with realtime:publish, one budget per context", async () => {
+			const published: Change[] = [];
+			setChangePublisher({
+				publish: (changes) => {
+					published.push(...changes);
+					return Promise.resolve();
+				},
+			});
+			try {
+				const factory = new PluginContextFactory({ db });
+				const realtime = { channels: { queue: { permission: "settings:read" as const } } };
+
+				const without = factory.createContext(createTestPlugin({ id: "quiet", realtime }));
+				const plugin = createTestPlugin({
+					id: "live",
+					capabilities: ["realtime:publish"],
+					realtime,
+				});
+				const first = factory.createContext(plugin);
+				for (let index = 0; index <= MAX_PLUGIN_PUBLISHES; index++) {
+					await first.realtime!.publish("queue");
+				}
+				await factory.createContext(plugin).realtime!.publish("queue", { op: "update" });
+				await waitForDeferredTasks();
+
+				expect(without.realtime).toBeUndefined();
+				expect(published).toHaveLength(MAX_PLUGIN_PUBLISHES + 1);
+				expect(published.at(-1)).toEqual({ topic: "plugin/live/queue", op: "update" });
+			} finally {
+				setChangePublisher(null);
+			}
 		});
 
 		it("gates native comment reads and moderation independently", async () => {

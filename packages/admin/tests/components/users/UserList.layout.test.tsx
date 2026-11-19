@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import "../../../dist/styles.css";
 import { UserList } from "../../../src/components/users/UserList.js";
 import type { UserListItem } from "../../../src/lib/api/index.js";
+import { largestMovement, snapshotPositions } from "../../utils/geometry.js";
 import { render } from "../../utils/render.js";
 
 function makeUser(overrides: Partial<UserListItem> = {}): UserListItem {
@@ -47,20 +48,24 @@ const users = [
 
 const noop = () => {};
 
-async function renderUserList(width: number) {
-	const screen = await render(
+function userList(width: number, props: { users: UserListItem[]; isLoading?: boolean }) {
+	return (
 		<div style={{ width }}>
 			<UserList
-				users={users}
 				searchQuery=""
 				roleFilter={undefined}
 				onSearchChange={noop}
 				onRoleFilterChange={noop}
 				onSelectUser={noop}
 				onInviteUser={noop}
+				{...props}
 			/>
-		</div>,
+		</div>
 	);
+}
+
+async function renderUserList(width: number) {
+	const screen = await render(userList(width, { users }));
 	const table = screen.getByRole("table").element() as HTMLTableElement;
 	const userCell = (name: string) =>
 		screen.getByRole("button", { name, exact: true }).element().closest("td")!;
@@ -99,5 +104,18 @@ describe("UserList layout", () => {
 
 		await expect.element(screen.getByRole("columnheader", { name: "Status" })).toBeVisible();
 		expect(visibleRowText("Ada Lovelace")).toContain("Active");
+	});
+});
+
+describe("UserList while the first page loads", () => {
+	it.each([1000, 560])("keeps its columns when the users arrive in a %ipx table", async (width) => {
+		const screen = await render(userList(width, { users: [], isLoading: true }));
+		const table = screen.getByRole("table").element();
+		const before = snapshotPositions(table.querySelectorAll("th"));
+
+		await screen.rerender(userList(width, { users }));
+
+		await expect.element(screen.getByRole("button", { name: "Maya Chen" })).toBeVisible();
+		expect(largestMovement(before)).toBeLessThan(1);
 	});
 });

@@ -4,7 +4,7 @@
  * Allows admins to list, create, and revoke Personal Access Tokens.
  */
 
-import { Banner, Button, Checkbox, Input, Loader, Select, Tooltip } from "@cloudflare/kumo";
+import { Banner, Button, Checkbox, Input, Select, Tooltip } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
@@ -23,7 +23,12 @@ import {
 import { fetchPlugins } from "../../lib/api/plugins.js";
 import { parseTimestamp } from "../../lib/utils.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	SettingRow,
+	SettingsFrame,
+	SettingsPlaceholderRows,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 // =============================================================================
 // Expiry options
@@ -210,20 +215,6 @@ export function ApiTokenSettings() {
 	const title = t`API Tokens`;
 	const description = t`Create personal access tokens for programmatic API access`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
-			</SettingsFrame>
-		);
-	}
-
 	if (loadError && tokens === undefined) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -238,7 +229,7 @@ export function ApiTokenSettings() {
 	}
 
 	return (
-		<SettingsFrame title={title} description={description}>
+		<SettingsFrame title={title} description={description} loading={isLoading}>
 			<div className="grid gap-8">
 				<SettingsSection
 					title={t(msg`Create New Token`)}
@@ -249,7 +240,7 @@ export function ApiTokenSettings() {
 								{t`Cancel`}
 							</Button>
 						) : (
-							<Button icon={<Plus />} onClick={() => setShowCreateForm(true)}>
+							<Button icon={<Plus />} disabled={isLoading} onClick={() => setShowCreateForm(true)}>
 								{t(msg`Create Token`)}
 							</Button>
 						)
@@ -350,10 +341,14 @@ export function ApiTokenSettings() {
 				<SettingsSection
 					title={t`API Tokens`}
 					contentClassName={
-						tokens && tokens.length > 0 ? undefined : "border-2 border-dashed border-kumo-subtle/60"
+						isLoading || (tokens && tokens.length > 0)
+							? undefined
+							: "border-2 border-dashed border-kumo-subtle/60"
 					}
 				>
-					{tokens && tokens.length > 0 ? (
+					{isLoading ? (
+						<SettingsPlaceholderRows />
+					) : tokens && tokens.length > 0 ? (
 						tokens.map((token) => (
 							<SettingRow key={token.id}>
 								<div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">

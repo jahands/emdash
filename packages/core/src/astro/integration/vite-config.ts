@@ -15,7 +15,12 @@ import type { Plugin } from "vite";
 
 import { COMMIT, VERSION } from "../../version.js";
 import { shutdownRuntime } from "../runtime-holder.js";
-import { createAdminLocaleResolverPlugin, readAdminLocaleManifest } from "./admin-locales.js";
+import {
+	createAdminLocaleResolverPlugin,
+	generateAdminMessagesModule,
+	readAdminLocaleManifest,
+} from "./admin-locales.js";
+import { createAdminPreloadsPlugin } from "./admin-preloads.js";
 import type { EmDashConfig, PluginDescriptor } from "./runtime.js";
 import {
 	VIRTUAL_CONFIG_ID,
@@ -80,6 +85,8 @@ import {
 const VIRTUAL_ADMIN_LOADER_ID = "virtual:emdash/admin-loader";
 const RESOLVED_ADMIN_LOADER_ID = "\0" + VIRTUAL_ADMIN_LOADER_ID;
 const RESOLVED_ADMIN_ENTRY_ID = "\0virtual:emdash/admin-entry";
+const VIRTUAL_ADMIN_MESSAGES_ID = "virtual:emdash/admin-messages";
+const RESOLVED_ADMIN_MESSAGES_ID = "\0" + VIRTUAL_ADMIN_MESSAGES_ID;
 
 const LOCALE_MESSAGES_RE = /[/\\]([a-z]{2}(?:-[A-Z]{2})?)[/\\]messages\.mjs$/;
 
@@ -235,6 +242,7 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 		resolveId(id: string) {
 			if (id === VIRTUAL_ADMIN_LOADER_ID) return RESOLVED_ADMIN_LOADER_ID;
 			if (id === RESOLVED_ADMIN_ENTRY_ID) return id;
+			if (id === VIRTUAL_ADMIN_MESSAGES_ID) return RESOLVED_ADMIN_MESSAGES_ID;
 			if (id === VIRTUAL_CONFIG_ID) {
 				return RESOLVED_VIRTUAL_CONFIG_ID;
 			}
@@ -294,6 +302,14 @@ export function createVirtualModulesPlugin(options: VitePluginOptions): Plugin {
 			}
 		},
 		load(id: string) {
+			if (id === RESOLVED_ADMIN_MESSAGES_ID) {
+				const adminDistPath = resolveAdminDist();
+				return generateAdminMessagesModule(
+					adminDistPath,
+					readAdminLocaleManifest(adminDistPath),
+					resolvedConfig.admin?.locales,
+				);
+			}
 			if (id === RESOLVED_ADMIN_ENTRY_ID) {
 				return `export const load = () => import("${VIRTUAL_ADMIN_REGISTRY_ID}");`;
 			}
@@ -481,6 +497,66 @@ const ROOM_ENGINE_DEPS = [
  * What the admin's co-editing chunk imports beyond the editor. It loads on the first room join,
  * and discovering these then would re-optimize and reload the admin.
  */
+/**
+ * Third-party modules that only lazily loaded admin screens import, such as
+ * the content editor. Run from source, the admin loads the first screen's
+ * dependencies only, so opening another screen would discover these, rebuild
+ * the optimized dependencies and reload the page under the user.
+ */
+const ADMIN_SCREEN_CLIENT_DEPS = [
+	"@atcute/lexicons",
+	"@atcute/lexicons/syntax",
+	"@cloudflare/kumo/components/badge",
+	"@cloudflare/kumo/components/checkbox",
+	"@cloudflare/kumo/components/input-group",
+	"@cloudflare/kumo/components/layer-card",
+	"@cloudflare/kumo/components/text",
+	"@cloudflare/kumo/components/toast",
+	"@cloudflare/kumo/primitives/menu",
+	"@cloudflare/kumo/primitives/popover",
+	"@cloudflare/kumo/primitives/scroll-area",
+	"@dnd-kit/core",
+	"@dnd-kit/sortable",
+	"@dnd-kit/utilities",
+	"@floating-ui/react",
+	"@tiptap/core",
+	"@tiptap/extension-code",
+	"@tiptap/extension-code-block",
+	"@tiptap/extension-code-block-lowlight",
+	"@tiptap/extension-drag-handle-react",
+	"@tiptap/extension-focus",
+	"@tiptap/extension-link",
+	"@tiptap/extension-list",
+	"@tiptap/extension-subscript",
+	"@tiptap/extension-superscript",
+	"@tiptap/extension-table",
+	"@tiptap/extension-table-cell",
+	"@tiptap/extension-table-header",
+	"@tiptap/extension-table-row",
+	"@tiptap/extension-text-align",
+	"@tiptap/extension-typography",
+	"@tiptap/pm/commands",
+	"@tiptap/pm/gapcursor",
+	"@tiptap/pm/history",
+	"@tiptap/pm/model",
+	"@tiptap/pm/schema-list",
+	"@tiptap/pm/state",
+	"@tiptap/pm/tables",
+	"@tiptap/pm/transform",
+	"@tiptap/pm/view",
+	"@tiptap/react",
+	"@tiptap/react/menus",
+	"@tiptap/starter-kit",
+	"@tiptap/suggestion",
+	"@tiptap/y-tiptap",
+	"date-fns",
+	"dompurify",
+	"highlight.js/lib/languages/dockerfile",
+	"marked",
+	"modern-tar",
+	"react-image-crop",
+].map((dep) => `emdash > @emdash-cms/admin > ${dep}`);
+
 const ROOM_CLIENT_DEPS = [
 	"emdash > @emdash-cms/admin > @tiptap/extension-collaboration",
 	"emdash > @emdash-cms/admin > yjs",
@@ -620,6 +696,11 @@ export function createViteConfig(
 		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Monorepo has both vite 6 (docs) and vite 7 (core). tsgo resolves correctly.
 		plugins: [
 			createVirtualModulesPlugin(options),
+			createAdminPreloadsPlugin({
+				adminDistPath,
+				pluginAdminEntryId: RESOLVED_ADMIN_ENTRY_ID,
+				astroConfig: options.astroConfig,
+			}),
 			...(isDev && !cloudflare
 				? [{ name: "emdash-runtime-shutdown", apply: "serve", closeBundle: shutdownRuntime }]
 				: []),
@@ -802,6 +883,7 @@ export function createViteConfig(
 						"emdash > @emdash-cms/admin > @lezer/highlight",
 						// Each admin language loads its date locale on first use.
 						"emdash > @emdash-cms/admin > react-day-picker/locale/*",
+						...ADMIN_SCREEN_CLIENT_DEPS,
 						...(options.resolvedConfig.coEditing ? ROOM_CLIENT_DEPS : []),
 					]
 				: [

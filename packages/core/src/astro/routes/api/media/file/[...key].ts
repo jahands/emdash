@@ -11,17 +11,22 @@ import { MediaRepository } from "#db/repositories/media.js";
 import { contentDisposition } from "#media/content-disposition.js";
 import {
 	IMMUTABLE_IMAGE_CACHE,
+	MEDIA_VERSION_PARAM,
 	MUTABLE_MEDIA_CACHE_CONTROL,
 	isNotModified,
+	resolveOriginalBody,
 	validatorHeaders,
 } from "#media/image-endpoint.js";
 
 import { parseRangeHeader, resolveByteRange } from "../../../../../storage/range.js";
+import type { Storage, StoredFileInfo } from "../../../../../storage/types.js";
 import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
 
 export const prerender = false;
 
 const MAX_KEY_DECODES = 3;
+/** What a response header can carry: no line breaks or control characters, and nothing past Latin-1. */
+const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]+$/;
 
 /**
  * Whether a key is, or percent-decodes to, a key this route must refuse.
@@ -64,6 +69,35 @@ const SAFE_INLINE_TYPES = new Set([
 	"audio/ogg",
 ]);
 
+/**
+ * What an adapter says about the file at `key`: null for no file, undefined when it can't say.
+ * A custom adapter's answer is checked, and one that doesn't fit is ignored.
+ */
+async function describeStoredFile(
+	storage: Storage,
+	key: string,
+): Promise<StoredFileInfo | null | undefined> {
+	// Everything a custom adapter hands back is read in here, getters included.
+	try {
+		if (typeof storage.describeStoredFile !== "function") return undefined;
+		const details: unknown = await storage.describeStoredFile(key);
+		if (details === null) return null;
+		if (typeof details !== "object") return undefined;
+		const contentType = "contentType" in details ? details.contentType : undefined;
+		const size = "size" in details ? details.size : undefined;
+		const lastModified = "lastModified" in details ? details.lastModified : undefined;
+		if (typeof contentType !== "string" || !HEADER_VALUE.test(contentType)) return undefined;
+		if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return undefined;
+		if (lastModified === undefined) return { contentType, size };
+		// Throws for anything that isn't a real Date, whatever it overrides.
+		const time: number = Date.prototype.getTime.call(lastModified);
+		if (Number.isNaN(time)) return undefined;
+		return { contentType, size, lastModified: new Date(time) };
+	} catch {
+		return undefined;
+	}
+}
+
 export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 	const { key } = params;
 	const { emdash } = locals;
@@ -85,18 +119,26 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 
 	// An unread download retains its storage connection even for a bodyless response.
 	let unusedBody: ReadableStream<Uint8Array> | undefined;
+	const version = new URL(request.url).searchParams.get(MEDIA_VERSION_PARAM);
 	try {
+		// A HEAD answered from the file's details reads none of it.
+		const details =
+			request.method === "HEAD" ? await describeStoredFile(emdash.storage, key) : undefined;
+		if (details === null) return apiError("NOT_FOUND", "File not found", 404);
 		// Range requests that include If-Range are served as whole-file responses
 		// because this route does not compare If-Range validators.
-		const range = request.headers.has("If-Range")
-			? null
-			: parseRangeHeader(request.headers.get("Range"));
+		const range =
+			details || request.headers.has("If-Range")
+				? null
+				: parseRangeHeader(request.headers.get("Range"));
 		// The route cache keys entries by URL alone, so a cached partial
 		// response would be served to requests for the whole file.
 		if (range && cache?.enabled) cache.set(false);
-		const result = range
-			? await emdash.storage.download(key, { range })
-			: await emdash.storage.download(key);
+		const result = details
+			? { ...details, body: undefined, range: undefined }
+			: range
+				? await emdash.storage.download(key, { range })
+				: await emdash.storage.download(key);
 		unusedBody = result.body;
 		const served = range ? result.range : undefined;
 
@@ -108,19 +150,28 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 			return response;
 		}
 
-		const cacheControl = result.contentType.startsWith("image/")
-			? MUTABLE_MEDIA_CACHE_CONTROL
-			: IMMUTABLE_IMAGE_CACHE;
+		const isImage = result.contentType.startsWith("image/");
 
 		if (isNotModified(request, result.size, result.lastModified)) {
 			return new Response(null, {
 				status: 304,
 				headers: {
 					"Content-Type": result.contentType,
-					"Cache-Control": cacheControl,
+					"Cache-Control": isImage ? MUTABLE_MEDIA_CACHE_CONTROL : IMMUTABLE_IMAGE_CACHE,
 					...validatorHeaders(result.size, result.lastModified),
 				},
 			});
+		}
+
+		let content: ReadableStream<Uint8Array> | Uint8Array<ArrayBuffer> | undefined = result.body;
+		let cacheControl = IMMUTABLE_IMAGE_CACHE;
+		// A HEAD response sends no bytes, so it isn't worth reading them to verify the version.
+		if (isImage && (served || request.method === "HEAD" || !result.body)) {
+			cacheControl = MUTABLE_MEDIA_CACHE_CONTROL;
+		} else if (isImage) {
+			const original = await resolveOriginalBody(version, result.body, result.size);
+			content = original.body;
+			cacheControl = original.cacheControl;
 		}
 
 		const headers: Record<string, string> = {
@@ -155,7 +206,7 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 		}
 		headers["Content-Disposition"] = contentDisposition(disposition, filename);
 
-		const body = request.method === "HEAD" ? null : result.body;
+		const body = request.method === "HEAD" ? null : (content ?? null);
 
 		if (served) {
 			const end = served.offset + served.length - 1;

@@ -19,6 +19,7 @@ export {
 } from "./media.js";
 export { createSandboxRouteError, getSandboxRouteErrorDetails } from "./sandbox/types.js";
 export { createSettingsAccess } from "./settings.js";
+export { createRealtimeAccess } from "../realtime/plugin.js";
 export { StorageSerializationError } from "./storage-query.js";
 export type {
 	ContentItem,

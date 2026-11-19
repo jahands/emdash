@@ -48,7 +48,7 @@ const categories = post.data.terms?.category ?? [];
 		{
 			post.data.featured_image && (
 				<div {...post.edit.featured_image}>
-					<Image image={post.data.featured_image} />
+					<Image image={post.data.featured_image} priority />
 				</div>
 			)
 		}

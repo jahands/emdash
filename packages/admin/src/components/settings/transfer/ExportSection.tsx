@@ -1,4 +1,4 @@
-import { Badge, Banner, Button, LinkButton, Loader, Meter, Switch } from "@cloudflare/kumo";
+import { Badge, Banner, Button, LinkButton, Meter, Switch } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { DownloadSimple } from "@phosphor-icons/react";
@@ -10,7 +10,6 @@ import {
 	advanceTransferExport,
 	createTransferExport,
 	fetchTransferExportManifest,
-	fetchTransferExports,
 	transferExportArchiveUrl,
 	TRANSFER_EXPORTS_QUERY_KEY,
 	type TransferOperation,
@@ -19,6 +18,7 @@ import {
 import { formatFileSize } from "../../../lib/media-utils.js";
 import { canStreamToDisk } from "../../../lib/save-file.js";
 import { getMutationError } from "../../DialogError.js";
+import { Spinner } from "../../Spinner.js";
 import { SettingRow, SettingsSection } from "../SettingsLayout.js";
 import { CopyableDigest } from "./CopyableDigest.js";
 import { ExportDownloadStatus, useExportDownload } from "./ExportDownload.js";
@@ -29,10 +29,10 @@ import {
 	stageLabel,
 	transferErrorLabel,
 } from "./labels.js";
+import { transferExportsQueryOptions } from "./queries.js";
 import { replaceOperation } from "./state.js";
 import { useAdvanceLoop } from "./useAdvanceLoop.js";
 
-const RECENT_EXPORTS = 10;
 const START_RETRIES = 3;
 /** Above this size, a browser without streaming saves holds too much in memory. */
 const LARGE_IN_MEMORY_BYTES = 500 * 1024 * 1024;
@@ -53,10 +53,7 @@ export function ExportSection() {
 	const [resumeToken, setResumeToken] = React.useState(0);
 	const download = useExportDownload();
 
-	const exportsQuery = useQuery({
-		queryKey: TRANSFER_EXPORTS_QUERY_KEY,
-		queryFn: () => fetchTransferExports({ limit: RECENT_EXPORTS }),
-	});
+	const exportsQuery = useQuery(transferExportsQueryOptions());
 	const exports = exportsQuery.data?.items ?? [];
 	const running = exports.find(isRunning) ?? null;
 	const latest = exports[0] ?? null;
@@ -126,11 +123,17 @@ export function ExportSection() {
 							})
 						}
 						disabled={running !== null || startMutation.isPending || exportsQuery.isPending}
-						icon={startMutation.isPending ? <Loader size="sm" /> : undefined}
+						icon={startMutation.isPending ? <Spinner size="sm" /> : undefined}
 					>
 						{startMutation.isPending ? t`Starting…` : t`Export site`}
 					</Button>
 				</div>
+				{exportsQuery.isPending ? (
+					// Most sites have no export yet, so the last export's row appears only once known.
+					<span role="status" className="sr-only">
+						{t`Loading exports…`}
+					</span>
+				) : null}
 				{startMutation.error ? (
 					<Banner
 						className="mt-3"
@@ -142,14 +145,7 @@ export function ExportSection() {
 				) : null}
 			</SettingRow>
 
-			{exportsQuery.isPending ? (
-				<SettingRow>
-					<div className="flex items-center gap-2 text-sm text-kumo-subtle" role="status">
-						<Loader size="sm" />
-						{t`Loading exports…`}
-					</div>
-				</SettingRow>
-			) : exportsQuery.error ? (
+			{exportsQuery.error ? (
 				<SettingRow>
 					<Banner
 						variant="error"
@@ -338,7 +334,7 @@ function ExportProgress({
 	}
 	return (
 		<div className="flex items-start gap-3" role="status" aria-live="polite">
-			<Loader size="sm" />
+			<Spinner size="sm" />
 			<div className="min-w-0 flex-1 text-sm leading-5">
 				<p className="font-medium">{t`Exporting: ${stage}`}</p>
 				{progress && progress.total > 0 ? (

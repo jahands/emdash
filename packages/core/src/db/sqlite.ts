@@ -5,10 +5,10 @@
  * Loaded at runtime via virtual module.
  */
 
-import { type Dialect, SqliteDialect } from "kysely";
+import type { Dialect } from "kysely";
 
 import type { SqliteConfig } from "./adapters.js";
-import { openNodeSqliteDatabase } from "./node-sqlite-compat.js";
+import { NodeSqliteDialect, openNodeSqliteDatabase } from "./node-sqlite-compat.js";
 
 /**
  * Create a SQLite dialect from config
@@ -20,5 +20,5 @@ export function createDialect(config: SqliteConfig): Dialect {
 
 	const database = openNodeSqliteDatabase(filePath, { journalMode: "wal" });
 
-	return new SqliteDialect({ database });
+	return new NodeSqliteDialect({ database });
 }

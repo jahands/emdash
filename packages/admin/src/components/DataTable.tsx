@@ -1,4 +1,4 @@
-import { Button, DropdownMenu, Table } from "@cloudflare/kumo";
+import { Button, DropdownMenu, SkeletonLine, Table } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { DotsThree, X } from "@phosphor-icons/react";
@@ -335,37 +335,232 @@ export function DataTableMessage({
 	);
 }
 
+/** A full-width row saying the rows couldn't be loaded, with a button to try again. */
+export function DataTableLoadError({
+	colSpan,
+	onRetry,
+	children,
+}: {
+	colSpan: number;
+	onRetry: () => void;
+	children: React.ReactNode;
+}) {
+	const { t } = useLingui();
+	return (
+		<DataTableMessage colSpan={colSpan}>
+			<div role="alert" className="flex flex-col items-center gap-3">
+				{children}
+				<Button variant="secondary" size="sm" onClick={onRetry}>
+					{t`Try again`}
+				</Button>
+			</div>
+		</DataTableMessage>
+	);
+}
+
+/**
+ * A column of `DataTablePlaceholderRows`: "title" for the row's name, which also holds the
+ * line of details shown under it while tertiary columns are hidden, and "iconTitle" for a
+ * name that follows a 32px icon; "text" for a column always shown, and "secondary" or
+ * "tertiary" for one that hides like `secondaryColumn` or `tertiaryColumn`; "thumbnail" for
+ * a 40px preview; "handle" for a `handleColumn` drag handle; "actions" for a row's "…"
+ * button; "empty" for anything else.
+ */
+export type PlaceholderCell =
+	| "title"
+	| "iconTitle"
+	| "text"
+	| "secondary"
+	| "tertiary"
+	| "thumbnail"
+	| "handle"
+	| "actions"
+	| "empty";
+
+// Fixed per row, so placeholders shown again after a remount don't change shape.
+const TITLE_WIDTHS = [62, 48, 74, 55, 68];
+const DETAIL_WIDTHS = [40, 32, 45, 36, 42];
+const TEXT_WIDTHS = [70, 85, 60, 78, 66];
+
+function placeholderWidth(widths: readonly number[], row: number) {
+	return widths[row % widths.length] ?? 60;
+}
+
+function PlaceholderLine({ width }: { width: number }) {
+	return <SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />;
+}
+
+/**
+ * Rows as tall as a line of text or a thumbnail, shown while the first rows load, so the rows take their
+ * place without moving the table. Pass one cell per column, and as many `rows` as are
+ * expected when that is known.
+ */
+export function DataTablePlaceholderRows({
+	cells,
+	rows = 5,
+}: {
+	cells: readonly PlaceholderCell[];
+	rows?: number;
+}) {
+	const { t } = useLingui();
+	return Array.from({ length: rows }, (_, row) => (
+		<tr key={row} aria-hidden={row > 0 || undefined}>
+			{cells.map((cell, column) => (
+				<td
+					key={column}
+					{...(cell === "secondary"
+						? secondaryColumn
+						: cell === "tertiary"
+							? tertiaryColumn
+							: cell === "handle"
+								? handleColumn
+								: undefined)}
+				>
+					{row === 0 && column === 0 && (
+						<span role="status" className="sr-only">
+							{t`Loading...`}
+						</span>
+					)}
+					{cell === "title" ? (
+						<div aria-hidden="true">
+							<PlaceholderLine width={placeholderWidth(TITLE_WIDTHS, row)} />
+							<div className="mt-1 @2xl:hidden">
+								<PlaceholderLine width={placeholderWidth(DETAIL_WIDTHS, row)} />
+							</div>
+						</div>
+					) : cell === "iconTitle" ? (
+						<div aria-hidden="true" className="flex items-center gap-3">
+							<div className="skeleton-line size-8 shrink-0 rounded-lg" />
+							<div className="min-w-0 flex-1">
+								<PlaceholderLine width={placeholderWidth(TITLE_WIDTHS, row)} />
+								<div className="mt-1 @2xl:hidden">
+									<PlaceholderLine width={placeholderWidth(DETAIL_WIDTHS, row)} />
+								</div>
+							</div>
+						</div>
+					) : cell === "text" || cell === "secondary" || cell === "tertiary" ? (
+						<div aria-hidden="true">
+							<PlaceholderLine width={placeholderWidth(TEXT_WIDTHS, row)} />
+						</div>
+					) : cell === "thumbnail" ? (
+						<div aria-hidden="true" className="skeleton-line size-10 rounded" />
+					) : cell === "handle" ? (
+						<div aria-hidden="true" className="size-8" />
+					) : cell === "actions" ? (
+						<div aria-hidden="true" className="size-6.5" />
+					) : null}
+				</td>
+			))}
+		</tr>
+	));
+}
+
+const stackClassName = "grid [&>*]:[grid-area:1/1]";
+
 /**
  * The bar shown above a table while rows are selected: the number selected, the bulk
- * actions passed as children, and Clear. The actions wrap when the bar is narrow.
- * While `busy`, the count says the selected rows are being worked on and Clear is disabled.
+ * actions passed as children, and Clear, followed by `notice`. The actions wrap when the
+ * bar is narrow. While `busy`, the count says the selected rows are being worked on and
+ * Clear is disabled.
+ *
+ * Pass the table's `toolbar` to show the bar in its place while rows are selected. The
+ * toolbar and the bar are both laid out in the same place, which is as tall as the taller
+ * of the two, so selecting rows never moves the table. Keep any `notice` laid out while
+ * it is empty for the same reason. Without a `toolbar`, the bar is added above the table
+ * once a row is selected.
  */
 export function DataTableBulkBar({
 	selectedCount,
 	busy = false,
 	onClear,
+	toolbar,
+	notice,
 	children,
 }: {
 	selectedCount: number;
 	busy?: boolean;
 	onClear: () => void;
+	toolbar?: React.ReactNode;
+	notice?: React.ReactNode;
 	children: React.ReactNode;
 }) {
 	const { t } = useLingui();
-	return (
-		<div className="flex flex-wrap items-center gap-3 rounded-xl bg-kumo-elevated px-4 py-2 ring ring-kumo-line">
-			<span className="text-sm font-medium">
-				{busy
-					? t`Working on ${selectedCount} items…`
-					: plural(selectedCount, { one: "# selected", other: "# selected" })}
+	const selecting = selectedCount > 0;
+	const barRef = React.useRef<HTMLDivElement>(null);
+	const toolbarRef = React.useRef<HTMLDivElement>(null);
+	const focusInBar = React.useRef(false);
+
+	// The bar turns inert as the selection empties, which drops focus on Clear or on the
+	// action that just ran onto the page body.
+	React.useLayoutEffect(() => {
+		const bar = barRef.current;
+		if (selecting || !bar || !focusInBar.current) return;
+		focusInBar.current = false;
+		const active = bar.ownerDocument.activeElement;
+		if (active && active !== bar.ownerDocument.body && !bar.contains(active)) return;
+		const controls = toolbarRef.current?.querySelectorAll<HTMLElement>(CONTROL_SELECTOR) ?? [];
+		[...controls]
+			.find((control) => control.tabIndex >= 0 && !control.matches(":disabled"))
+			?.focus();
+	}, [selecting]);
+
+	if (toolbar === undefined && !selecting) return null;
+
+	const bar = (
+		<div
+			ref={barRef}
+			inert={!selecting || undefined}
+			onFocus={() => {
+				focusInBar.current = true;
+			}}
+			onBlur={(event) => {
+				if (event.relatedTarget) focusInBar.current = false;
+			}}
+			className={cn(
+				"flex flex-wrap content-center items-center gap-x-3 gap-y-1.5 rounded-xl bg-kumo-elevated px-3 py-0.75 ring ring-kumo-line",
+				!selecting && "invisible",
+			)}
+		>
+			<span className={cn(stackClassName, "text-sm font-medium")}>
+				<span className={cn(busy && "invisible")}>
+					{plural(selectedCount, { one: "# selected", other: "# selected" })}
+				</span>
+				<span className={cn(!busy && "invisible")}>{t`Working on ${selectedCount} items…`}</span>
 			</span>
 			<div className="flex flex-wrap items-center gap-2">
 				{children}
 				<Button size="sm" variant="ghost" icon={<X />} disabled={busy} onClick={onClear}>
 					{t`Clear`}
 				</Button>
+				{notice}
 			</div>
 		</div>
+	);
+
+	if (toolbar === undefined) return bar;
+
+	return (
+		<div className={stackClassName}>
+			<div ref={toolbarRef} inert={selecting || undefined} className={cn(selecting && "invisible")}>
+				{toolbar}
+			</div>
+			{bar}
+		</div>
+	);
+}
+
+/**
+ * A message for `DataTableBulkBar`'s `notice` that keeps its space while hidden, and
+ * announces itself when shown.
+ */
+export function DataTableBulkNotice({ shown, children }: { shown: boolean; children: string }) {
+	return (
+		<span className={cn(stackClassName, "text-sm text-kumo-danger")}>
+			<span aria-hidden="true" className="invisible">
+				{children}
+			</span>
+			<span role="status">{shown ? children : null}</span>
+		</span>
 	);
 }
 
@@ -388,6 +583,21 @@ export function RowTitleButton({ className, ...props }: React.ComponentProps<"bu
 			{...props}
 			className={cn(rowTitleClassName, "cursor-pointer text-start", className)}
 		/>
+	);
+}
+
+/**
+ * The header of a column of `RowActionsMenu` buttons. It holds the column at the button's width,
+ * so placeholder rows, a message spanning the table, and loaded rows all leave the other columns
+ * in the same place.
+ */
+export function DataTableActionsHeader() {
+	const { t } = useLingui();
+	return (
+		<th scope="col" className="w-0">
+			<span className="sr-only">{t`Actions`}</span>
+			<div aria-hidden="true" className="w-6.5" />
+		</th>
 	);
 }
 

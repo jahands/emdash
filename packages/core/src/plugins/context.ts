@@ -49,6 +49,7 @@ import {
 import { enrichImageMetadata } from "../media/enrich.js";
 import { matchesMimeAllowlist, normalizeMime } from "../media/mime.js";
 import { markContentMediaUsageCollectionStaleSafely } from "../media/usage/content-refresh.js";
+import { createRealtimeAccess } from "../realtime/plugin.js";
 import { SchemaRegistry } from "../schema/registry.js";
 import { invalidateSiteSettingsCache } from "../settings/index.js";
 import type { Storage } from "../storage/types.js";
@@ -1856,6 +1857,10 @@ export class PluginContextFactory {
 			};
 		}
 
+		const realtime = capabilities.has("realtime:publish")
+			? createRealtimeAccess(plugin.id, plugin.realtime?.channels)
+			: undefined;
+
 		return {
 			plugin: {
 				id: plugin.id,
@@ -1878,6 +1883,7 @@ export class PluginContextFactory {
 			comments,
 			cron,
 			email,
+			realtime,
 		};
 	}
 }

@@ -21,6 +21,9 @@ const mimeTypeFilter = z
 	})
 	.optional();
 
+/** Most media items one `GET /media?ids=` request returns. */
+export const MEDIA_IDS_LIMIT = 100;
+
 export const mediaListQuery = cursorPaginationQuery
 	.extend({
 		page: z.coerce.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional(),
@@ -37,11 +40,39 @@ export const mediaListQuery = cursorPaginationQuery
 		includeUsage: z.literal("1").optional().meta({
 			description: "Include a coverage-aware usage summary on each media item",
 		}),
+		ids: z
+			.string()
+			.transform((value) => [
+				...new Set(
+					value
+						.split(",")
+						.map((id) => id.trim())
+						.filter((id) => id.length > 0),
+				),
+			])
+			.pipe(z.array(z.string().max(64)).min(1).max(MEDIA_IDS_LIMIT))
+			.optional()
+			.meta({
+				description: `Comma-separated media IDs, up to ${MEDIA_IDS_LIMIT}. Returns those items in the order given, leaving out unknown IDs, with no pagination. Can't be combined with \`cursor\`, \`page\`, \`mimeType\`, \`folderId\` or \`q\`.`,
+			}),
 	})
 	.refine(({ cursor, page }) => cursor === undefined || page === undefined, {
 		message: "cursor and page cannot be used together",
 		path: ["page"],
 	})
+	.refine(
+		({ ids, cursor, page, mimeType, folderId, q }) =>
+			ids === undefined ||
+			(cursor === undefined &&
+				page === undefined &&
+				(mimeType === undefined || mimeType.length === 0) &&
+				folderId === undefined &&
+				q === undefined),
+		{
+			message: "ids cannot be combined with cursor, page, mimeType, folderId or q",
+			path: ["ids"],
+		},
+	)
 	.meta({ id: "MediaListQuery" });
 
 export const mediaGetQuery = z

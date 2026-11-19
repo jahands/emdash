@@ -48,6 +48,10 @@ vi.mock("../../src/lib/api/current-user.js", async (importOriginal) => ({
 
 const originalFetch = globalThis.fetch;
 
+interface LayoutShift extends PerformanceEntry {
+	value: number;
+}
+
 function entry(id: string, at: string): CalendarEntry {
 	return {
 		collection: "posts",
@@ -60,11 +64,11 @@ function entry(id: string, at: string): CalendarEntry {
 	};
 }
 
-/** Serves calendar pages; `respond` gets the 1-based number of the calendar request. Other requests fail. */
-function serveCalendar(respond: (request: number) => Response) {
+/** Serves calendar ranges; `respond` gets the 1-based number of the calendar request. Other requests fail. */
+function serveCalendar(respond: (request: number) => Response | Promise<Response>) {
 	let request = 0;
 	globalThis.fetch = vi.fn(async (input: string | URL | Request) =>
-		(input instanceof Request ? input.url : input.toString()).includes("/calendar?")
+		(input instanceof Request ? input.url : input.toString()).includes("/calendar/range?")
 			? respond(++request)
 			: Response.json({ error: { code: "NOT_FOUND", message: "Not found" } }, { status: 404 }),
 	);
@@ -300,7 +304,7 @@ describe("CalendarPage", () => {
 		let resolveApril: (response: Response) => void = () => {};
 		globalThis.fetch = vi.fn(async (input: string | URL | Request) => {
 			const url = new URL(input instanceof Request ? input.url : input.toString(), location.origin);
-			if (!url.pathname.endsWith("/calendar")) {
+			if (!url.pathname.endsWith("/calendar/range")) {
 				return Response.json(
 					{ error: { code: "NOT_FOUND", message: "Not found" } },
 					{ status: 404 },
@@ -334,26 +338,63 @@ describe("CalendarPage", () => {
 			.toMatchObject({ replace: true, search: { entry: undefined } });
 	});
 
+	/** Ten days of March, one entry each, from a range cut off at the entry cap. */
+	const cutOffRange = () =>
+		Response.json({
+			data: {
+				items: Array.from({ length: 10 }, (_, index) =>
+					entry(`day-${index + 1}`, `2020-03-${String(index + 1).padStart(2, "0")}T09:00:00.000Z`),
+				),
+				truncated: true,
+			},
+		});
+
 	it("says where a range cut off at the entry cap ends", async () => {
 		router.search = { month: "2020-03", view: "agenda" };
-		serveCalendar((request) =>
-			Response.json({
-				data: {
-					items: [
-						entry(`day-${request}`, `2020-03-${String(request).padStart(2, "0")}T09:00:00.000Z`),
-					],
-					nextCursor: `cursor-${request}`,
-				},
-			}),
-		);
+		serveCalendar(cutOffRange);
 
 		const screen = await renderPage();
 
+		await screen.getByRole("button", { name: "This range has more than 1,000 entries" }).click();
 		await expect
 			.element(screen.getByText("The calendar shows the first 1,000, which end on March 10."))
 			.toBeVisible();
 		await expect.element(screen.getByText(/^Later entries weren't loaded\./)).toBeVisible();
 	});
+
+	for (const { view, width } of [
+		{ view: "month", width: 1440 },
+		{ view: "agenda", width: 390 },
+	]) {
+		it(`moves nothing on screen when a cut-off range loads into the ${view} view`, async () => {
+			await page.viewport(width, 844);
+			router.search = { month: "2020-03", view };
+			let respond: (response: Response) => void = () => {};
+			serveCalendar(
+				() =>
+					new Promise<Response>((resolve) => {
+						respond = resolve;
+					}),
+			);
+			const screen = await renderPage();
+			await expect.element(screen.getByRole("button", { name: "Next month" })).toBeVisible();
+			await animationsFinished();
+
+			const shifts: number[] = [];
+			const record = (entries: PerformanceEntryList) => {
+				for (const shift of entries as LayoutShift[]) shifts.push(shift.value);
+			};
+			const observer = new PerformanceObserver((list) => record(list.getEntries()));
+			observer.observe({ type: "layout-shift" });
+			respond(cutOffRange());
+			await expect.element(screen.getByText("Entry day-10").first()).toBeVisible();
+			await animationsFinished();
+			record(observer.takeRecords());
+			observer.disconnect();
+
+			expect(shifts).toEqual([]);
+		});
+	}
 
 	it("judges schedules by when the entries loaded, not by the current time", async () => {
 		router.search = { month: "2020-03", view: "agenda" };

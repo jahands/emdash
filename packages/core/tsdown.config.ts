@@ -141,10 +141,14 @@ export default defineConfig({
 		"src/rooms/room.ts",
 		// Node.js co-editing room host (loaded via virtual:emdash/rooms)
 		"src/rooms/node/index.ts",
+		// Realtime hub, which `EmDashRoom` loads lazily (via virtual:emdash/room-engine)
+		"src/realtime/hub.ts",
 		// Lightweight synchronous log redaction for sandbox bridges.
 		"src/plugins/secret-redactor.ts",
 		// Binary-safe HTTP transport shared by sandbox runners.
 		"src/plugins/http-wire.ts",
+		// Compressing server entry for @astrojs/node standalone (imported by virtual:emdash/node-server)
+		"src/astro/node/compression.ts",
 		// Public source-exported subpaths -- compiled so consumers never
 		// type-check our raw .ts (avoids the dual-package identity hazard).
 		// UI runtime exports and the `*-admin.tsx` providers stay source:

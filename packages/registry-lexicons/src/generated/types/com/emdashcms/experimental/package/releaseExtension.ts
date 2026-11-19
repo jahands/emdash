@@ -227,6 +227,12 @@ const _declaredAccessSchema = /*#__PURE__*/ v.object({
 		return /*#__PURE__*/ v.optional(pageAccessSchema);
 	},
 	/**
+	 * Live updates to open admin screens on the plugin's own declared channels.
+	 */
+	get realtime() {
+		return /*#__PURE__*/ v.optional(realtimeAccessSchema);
+	},
+	/**
 	 * Access to visitor redirect rules.
 	 */
 	get redirects() {
@@ -469,6 +475,26 @@ const _provenanceSchema = /*#__PURE__*/ v.object({
 		/*#__PURE__*/ v.stringLength(0, 2048),
 	]),
 });
+const _realtimeAccessSchema = /*#__PURE__*/ v.object({
+	$type: /*#__PURE__*/ v.optional(
+		/*#__PURE__*/ v.literal(
+			"com.emdashcms.experimental.package.releaseExtension#realtimeAccess",
+		),
+	),
+	/**
+	 * Plugin may tell open admin screens that its own declared channels changed. Messages carry no data.
+	 */
+	get publish() {
+		return /*#__PURE__*/ v.optional(realtimePublishConstraintsSchema);
+	},
+});
+const _realtimePublishConstraintsSchema = /*#__PURE__*/ v.object({
+	$type: /*#__PURE__*/ v.optional(
+		/*#__PURE__*/ v.literal(
+			"com.emdashcms.experimental.package.releaseExtension#realtimePublishConstraints",
+		),
+	),
+});
 const _redirectsAccessSchema = /*#__PURE__*/ v.object({
 	$type: /*#__PURE__*/ v.optional(
 		/*#__PURE__*/ v.literal(
@@ -619,6 +645,9 @@ type pageAccess$schematype = typeof _pageAccessSchema;
 type pageFragmentsConstraints$schematype =
 	typeof _pageFragmentsConstraintsSchema;
 type provenance$schematype = typeof _provenanceSchema;
+type realtimeAccess$schematype = typeof _realtimeAccessSchema;
+type realtimePublishConstraints$schematype =
+	typeof _realtimePublishConstraintsSchema;
 type redirectsAccess$schematype = typeof _redirectsAccessSchema;
 type redirectsReadConstraints$schematype =
 	typeof _redirectsReadConstraintsSchema;
@@ -665,6 +694,8 @@ export interface networkRequestConstraintsSchema extends networkRequestConstrain
 export interface pageAccessSchema extends pageAccess$schematype {}
 export interface pageFragmentsConstraintsSchema extends pageFragmentsConstraints$schematype {}
 export interface provenanceSchema extends provenance$schematype {}
+export interface realtimeAccessSchema extends realtimeAccess$schematype {}
+export interface realtimePublishConstraintsSchema extends realtimePublishConstraints$schematype {}
 export interface redirectsAccessSchema extends redirectsAccess$schematype {}
 export interface redirectsReadConstraintsSchema extends redirectsReadConstraints$schematype {}
 export interface redirectsWriteConstraintsSchema extends redirectsWriteConstraints$schematype {}
@@ -729,6 +760,10 @@ export const pageAccessSchema = _pageAccessSchema as pageAccessSchema;
 export const pageFragmentsConstraintsSchema =
 	_pageFragmentsConstraintsSchema as pageFragmentsConstraintsSchema;
 export const provenanceSchema = _provenanceSchema as provenanceSchema;
+export const realtimeAccessSchema =
+	_realtimeAccessSchema as realtimeAccessSchema;
+export const realtimePublishConstraintsSchema =
+	_realtimePublishConstraintsSchema as realtimePublishConstraintsSchema;
 export const redirectsAccessSchema =
 	_redirectsAccessSchema as redirectsAccessSchema;
 export const redirectsReadConstraintsSchema =
@@ -829,6 +864,12 @@ export interface PageFragmentsConstraints extends v.InferInput<
 	typeof pageFragmentsConstraintsSchema
 > {}
 export interface Provenance extends v.InferInput<typeof provenanceSchema> {}
+export interface RealtimeAccess extends v.InferInput<
+	typeof realtimeAccessSchema
+> {}
+export interface RealtimePublishConstraints extends v.InferInput<
+	typeof realtimePublishConstraintsSchema
+> {}
 export interface RedirectsAccess extends v.InferInput<
 	typeof redirectsAccessSchema
 > {}

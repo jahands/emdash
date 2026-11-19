@@ -24,7 +24,9 @@ import {
 	getTaxonomyDef,
 	getTaxonomyDefs,
 	invalidateTaxonomyDefsCache,
+	primeTaxonomyDefs,
 	resetTaxonomyDefsCacheForTests,
+	taxonomyDefsGeneration,
 } from "../../../src/taxonomies/index.js";
 import { createStalledDatabase } from "../../utils/test-db.js";
 
@@ -114,6 +116,18 @@ describe("getTaxonomyDefs — isolate cache", () => {
 		} finally {
 			stalled.abort();
 		}
+	});
+
+	it("ignores definitions a cold start read before a write invalidated the cache", async () => {
+		const generation = taxonomyDefsGeneration();
+		const coldStartRows = await db.selectFrom("_emdash_taxonomy_defs").selectAll().execute();
+		await insertDef(db, "mood");
+		invalidateTaxonomyDefsCache();
+
+		primeTaxonomyDefs(coldStartRows, generation);
+
+		const defs = await inScope(db, () => getTaxonomyDefs());
+		expect(defs.map((def) => def.name)).toContain("mood");
 	});
 
 	it("re-queries after invalidateTaxonomyDefsCache()", async () => {

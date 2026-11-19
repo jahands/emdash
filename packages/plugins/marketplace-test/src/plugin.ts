@@ -1247,6 +1247,19 @@ const plugin: SandboxedPlugin = {
 				return { scheduled: true };
 			},
 		},
+		"realtime-publish": {
+			permission: "plugins:manage",
+			handler: async (_route, ctx) => {
+				const id = `event-${Date.now()}`;
+				await ctx.storage.events.put(id, { type: "realtime", timestamp: new Date().toISOString() });
+				await ctx.realtime.publish("events", { ids: [id], op: "create" });
+				const refused = await ctx.realtime.publish("undeclared").then(
+					() => null,
+					(error: unknown) => (error instanceof Error ? error.message : "refused"),
+				);
+				return { id, refused };
+			},
+		},
 		"send-email": {
 			handler: async (_route, ctx) => {
 				await ctx.email.send({
@@ -1474,6 +1487,7 @@ const plugin: SandboxedPlugin = {
 					users: ctx.users !== undefined,
 					comments: ctx.comments !== undefined,
 					email: ctx.email !== undefined,
+					realtime: ctx.realtime !== undefined,
 				},
 			}),
 		},

@@ -301,6 +301,7 @@ export function generatePluginsModule(descriptors: PluginDescriptor[]): string {
 					portableTextBlocks: descriptor.portableTextBlocks,
 					fieldWidgets: descriptor.fieldWidgets,
 					mcp: descriptor.mcp,
+					realtime: descriptor.realtime,
 				})})`,
 			);
 		} else {
@@ -596,13 +597,15 @@ export function generateRoomsModule(
 }
 
 /**
- * Generates the module `EmDashRoom` imports the room engine through. With co-editing off it
- * exports null, so the engine stays out of a Cloudflare site's upload.
+ * Generates the module `EmDashRoom` imports the room engine and the realtime hub through, each
+ * on its own so the hub never loads Yjs. With co-editing off both are null, so neither is in a
+ * Cloudflare site's upload.
  */
 export function generateRoomEngineModule(coEditing: boolean): string {
 	return coEditing
-		? `export const loadRoomEngine = () => import("emdash/internal/co-editing/room");\n`
-		: `export const loadRoomEngine = null;\n`;
+		? `export const loadRoomEngine = () => import("emdash/internal/co-editing/room");\n` +
+				`export const loadHubEngine = () => import("emdash/internal/realtime/hub");\n`
+		: `export const loadRoomEngine = null;\nexport const loadHubEngine = null;\n`;
 }
 
 /**
@@ -756,6 +759,7 @@ export const sandboxedPlugins = [];
     allowedHosts: ${JSON.stringify(descriptor.allowedHosts ?? [])},
     storage: ${JSON.stringify(descriptor.storage ?? {})},
     mcp: ${JSON.stringify(descriptor.mcp)},
+    realtime: ${JSON.stringify(descriptor.realtime)},
     routes: ${JSON.stringify(descriptor.routes ?? [])},
     hooks: ${JSON.stringify(descriptor.hooks ?? [])},
     adminPages: ${JSON.stringify(descriptor.adminPages ?? [])},

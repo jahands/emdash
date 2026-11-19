@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+import "../../dist/styles.css";
 import { FieldEditor } from "../../src/components/FieldEditor.js";
 import type { BlockType, CreateFieldInput } from "../../src/lib/api/schema.js";
 import { render } from "../utils/render.js";
@@ -78,5 +79,38 @@ describe("FieldEditor blocks configuration", () => {
 				validation: { allowedTypes: ["hero"], maxItems: 20 },
 			}),
 		);
+	});
+
+	it("holds block type rows as tall as the loaded ones while the block types load", async () => {
+		let answer: (response: Response) => void = () => {};
+		vi.stubGlobal(
+			"fetch",
+			vi.fn().mockReturnValue(
+				new Promise<Response>((resolve) => {
+					answer = resolve;
+				}),
+			),
+		);
+		const screen = await render(<FieldEditor open onOpenChange={vi.fn()} onSave={vi.fn()} />);
+		screen
+			.getByRole("button", { name: /^Blocks/ })
+			.element()
+			.click();
+
+		const status = screen.getByRole("status").filter({ hasText: "Loading block types…" });
+		await expect.element(status).toBeInTheDocument();
+		const placeholder = status.element().nextElementSibling!;
+		const placeholderHeight = placeholder.getBoundingClientRect().height;
+
+		answer(
+			new Response(JSON.stringify({ success: true, data: { items: blockTypes } }), {
+				status: 200,
+				headers: { "Content-Type": "application/json" },
+			}),
+		);
+		const hero = screen.getByRole("checkbox", { name: "Hero" });
+		await expect.element(hero).toBeVisible();
+		const row = hero.element().closest(".rounded-lg")!;
+		expect(Math.abs(row.getBoundingClientRect().height - placeholderHeight)).toBeLessThanOrEqual(1);
 	});
 });

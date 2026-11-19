@@ -1,6 +1,7 @@
 import { sql, type Kysely } from "kysely";
 import { ulid } from "ulidx";
 
+import { publishChange } from "../../realtime/publish.js";
 import type { Database } from "../types.js";
 import { decodeCursor, EmDashValidationError, encodeCursor, type FindManyResult } from "./types.js";
 
@@ -90,6 +91,7 @@ export class MediaFolderRepository {
 			.values({ id: ulid(), name, name_key: nameKey })
 			.returning(["id", "name"])
 			.executeTakeFirstOrThrow();
+		publishChange("media", { ids: [row.id], op: "create" });
 		return row;
 	}
 
@@ -101,6 +103,7 @@ export class MediaFolderRepository {
 			.where("id", "=", id)
 			.returning(["id", "name"])
 			.executeTakeFirst();
+		if (row) publishChange("media", { ids: [row.id], op: "update" });
 		return row ?? null;
 	}
 
@@ -110,6 +113,7 @@ export class MediaFolderRepository {
 			.where("id", "=", id)
 			.returning("id")
 			.executeTakeFirst();
+		if (row) publishChange("media", { ids: [row.id], op: "delete" });
 		return row !== undefined;
 	}
 }

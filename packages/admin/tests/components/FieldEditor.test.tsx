@@ -574,7 +574,7 @@ describe("FieldEditor", () => {
 			option: string,
 		) {
 			const trigger = screen.getByRole("combobox", { name: label });
-			await expect.element(trigger).toBeInTheDocument();
+			await expect.element(trigger).toBeEnabled();
 			trigger.element().click();
 			await vi.waitFor(() => {
 				screen.getByRole("option", { name: option, exact: true }).element().click();
@@ -616,7 +616,7 @@ describe("FieldEditor", () => {
 			]);
 
 			const trigger = screen.getByRole("combobox", { name: "Relationship" });
-			await expect.element(trigger).toBeInTheDocument();
+			await expect.element(trigger).toBeEnabled();
 			trigger.element().click();
 
 			await expect
@@ -873,7 +873,7 @@ describe("FieldEditor", () => {
 			option: string,
 		) {
 			const trigger = screen.getByRole("combobox", { name: label, exact: true });
-			await expect.element(trigger).toBeInTheDocument();
+			await expect.element(trigger).toBeEnabled();
 			trigger.element().click();
 			await vi.waitFor(() => {
 				screen.getByRole("option", { name: option, exact: true }).element().click();
@@ -884,6 +884,32 @@ describe("FieldEditor", () => {
 				}
 			});
 		}
+
+		it("offers no relationship choice until the relationships load", async () => {
+			let answer: (relations: RelationWithUsage[]) => void = () => {};
+			vi.mocked(fetchRelations).mockReturnValue(
+				new Promise((resolve) => {
+					answer = resolve;
+				}),
+			);
+			vi.mocked(fetchCollections).mockResolvedValue([
+				{ slug: "chapters", label: "Chapters", labelSingular: "Chapter" },
+				{ slug: "lessons", label: "Lessons" },
+			] as Awaited<ReturnType<typeof fetchCollections>>);
+			const screen = await renderInRouter(
+				<FieldEditor {...defaultProps} collectionSlug="chapters" />,
+			);
+			screen
+				.getByRole("button", { name: /^Reference/ })
+				.element()
+				.click();
+
+			const trigger = screen.getByRole("combobox", { name: "Relationship", exact: true });
+			await expect.element(trigger).toBeDisabled();
+
+			answer([relation()]);
+			await expect.element(trigger).toBeEnabled();
+		});
 
 		it("asks for the relationship before the field itself", async () => {
 			const screen = await openReferenceField([relation()]);

@@ -115,8 +115,10 @@ describeEachDialect("translation_group index replacement for long collection slu
 
 function columnList(definition: string): string {
 	const open = definition.indexOf("(", definition.indexOf(" ON "));
-	const predicate = definition.indexOf(") WHERE", open);
-	const close = predicate === -1 ? definition.lastIndexOf(")") : predicate;
+	const keyEnd = [") INCLUDE", ") WHERE"]
+		.map((marker) => definition.indexOf(marker, open))
+		.filter((index) => index !== -1);
+	const close = keyEnd.length > 0 ? Math.min(...keyEnd) : definition.lastIndexOf(")");
 	if (open === -1 || close < open) return "";
 	return definition
 		.slice(open + 1, close)

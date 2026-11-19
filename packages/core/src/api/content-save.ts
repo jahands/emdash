@@ -25,7 +25,13 @@ import type { contentUpdateBody } from "./schemas/index.js";
 /** The handlers a save needs: the runtime, or the `emdash` handlers in Astro locals. */
 export interface ContentSaveSite {
 	db: Kysely<Database>;
-	handleContentGet: (collection: string, id: string, locale?: string) => Promise<HandlerResponse>;
+	handleContentGet: (
+		collection: string,
+		id: string,
+		locale?: string,
+		referenceOptions?: undefined,
+		options?: { rowOnly?: boolean },
+	) => Promise<HandlerResponse>;
 	handleContentUpdate: EmDashHandlers["handleContentUpdate"];
 }
 
@@ -126,13 +132,18 @@ export async function saveContent(
 	const canChangeAuthor = body.authorId !== undefined && hasPermission(user, "content:edit_any");
 	const writeBody = canChangeAuthor ? body : { ...body, authorId: undefined };
 
-	const result = await site.handleContentUpdate(collection, resolvedId, {
-		...writeBody,
-		locale,
-		_rev: rev,
-		actor: { id: user.id, role: user.role },
-		editedBy: input.editedBy,
-	});
+	const result = await site.handleContentUpdate(
+		collection,
+		resolvedId,
+		{
+			...writeBody,
+			locale,
+			_rev: rev,
+			actor: { id: user.id, role: user.role },
+			editedBy: input.editedBy,
+		},
+		{ existing: grant.existing },
+	);
 	if (result.success) await recordWrite?.();
 	return result;
 }
@@ -161,6 +172,8 @@ interface EditGrant {
 	access: "full" | "draft";
 	/** The `_rev` of the entry as checked. */
 	checkedRev: string | undefined;
+	/** The stored row the check read. */
+	existing: ContentItem | undefined;
 }
 
 /** The checks a save makes before anything else: the entry exists and the user may edit it. */
@@ -169,7 +182,9 @@ async function checkEditAccess(
 	input: Pick<ContentSaveInput, "collection" | "id" | "locale" | "user">,
 ): Promise<EditGrant | ContentSaveError> {
 	const { collection, id, locale, user } = input;
-	const existing = await site.handleContentGet(collection, id, locale);
+	const existing = await site.handleContentGet(collection, id, locale, undefined, {
+		rowOnly: true,
+	});
 	if (!existing.success) {
 		return {
 			code: existing.error?.code ?? "UNKNOWN_ERROR",
@@ -198,6 +213,8 @@ async function checkEditAccess(
 		entryId: typeof existingItem?.id === "string" ? existingItem.id : id,
 		access,
 		checkedRev: typeof existingData?._rev === "string" ? existingData._rev : undefined,
+		// eslint-disable-next-line typescript/no-unsafe-type-assertion -- the row-only read returns the stored ContentItem
+		existing: existingItem as unknown as ContentItem | undefined,
 	};
 }
 

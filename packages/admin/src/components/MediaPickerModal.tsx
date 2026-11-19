@@ -1,12 +1,12 @@
 import {
-	Button,
 	Dialog,
 	Grid,
 	Input,
 	Label,
-	Loader,
+	LayerCard,
 	Pagination,
 	Select,
+	SkeletonLine,
 	Tabs,
 } from "@cloudflare/kumo";
 import { ScrollArea } from "@cloudflare/kumo/primitives/scroll-area";
@@ -55,9 +55,11 @@ import { useCurrentUser } from "../lib/api/current-user.js";
 import { useDebouncedValue } from "../lib/hooks.js";
 import { canonicalMediaProviderId, providerItemToMediaItem } from "../lib/media-utils.js";
 import { matchesMimeAllowlist, mimeFromUrl } from "../lib/mime-utils.js";
+import { Button } from "./Button.js";
 import {
 	MediaBrowserFolder,
 	MediaBrowserItem,
+	MediaBrowserItemPlaceholder,
 	MediaSelectionTrayItem,
 	MediaUploadPlaceholder,
 	mimeForMediaTypeFilter,
@@ -68,6 +70,8 @@ import { TableToolbar, TableToolbarSearch } from "./TableToolbar.js";
 
 const URL_SOURCE = "__url";
 const PICKER_PAGE_SIZE = 12;
+// Fixed, so placeholders shown again after a remount don't change shape.
+const FOLDER_PLACEHOLDER_WIDTHS = [62, 48];
 const WORKSPACE_RESIZE_DURATION_MS = 340;
 const WORKSPACE_RESIZE_EASING = "cubic-bezier(0.22, 1, 0.36, 1)";
 const ROLE_CONTRIBUTOR = 20;
@@ -482,6 +486,7 @@ export function MediaPickerModal({
 		initialPageParam: undefined as string | undefined,
 		getNextPageParam: (lastFolderPage) => lastFolderPage.nextCursor,
 		enabled: open && showFolderResults,
+		placeholderData: keepPreviousData,
 	});
 	const folders = React.useMemo(
 		() => foldersQuery.data?.pages.flatMap((folderPage) => folderPage.items) ?? [],
@@ -513,6 +518,9 @@ export function MediaPickerModal({
 				query: searchQuery.trim() || undefined,
 			}),
 		enabled: open && !localOnly && activeSource !== "local" && activeSource !== URL_SOURCE,
+		// A new search keeps the source's last results on screen; another source starts empty.
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === activeSource ? previous : undefined,
 	});
 
 	const updateSelection = React.useCallback(
@@ -1359,7 +1367,11 @@ export function MediaPickerModal({
 
 										{showFolderResults &&
 											(foldersQuery.isPending || folders.length > 0 || foldersQuery.error) && (
-												<section aria-labelledby="media-picker-folders" className="grid gap-2">
+												<section
+													aria-labelledby="media-picker-folders"
+													aria-busy={foldersQuery.isFetching || undefined}
+													className="grid gap-2"
+												>
 													<div className="flex items-center justify-between gap-2">
 														<h2 id="media-picker-folders" className="text-sm font-semibold">
 															{t`Folders`}
@@ -1380,12 +1392,26 @@ export function MediaPickerModal({
 														)}
 													</div>
 													{foldersQuery.isPending && folders.length === 0 ? (
-														<div
-															role="status"
-															className="flex items-center gap-2 text-sm text-kumo-subtle"
-														>
-															<Loader size="sm" />
-															{t`Loading folders`}
+														<div className="grid grid-cols-[repeat(auto-fill,minmax(min(12rem,100%),1fr))] gap-2">
+															<span role="status" className="sr-only">
+																{t`Loading folders`}
+															</span>
+															{FOLDER_PLACEHOLDER_WIDTHS.map((width) => (
+																<LayerCard
+																	key={width}
+																	aria-hidden="true"
+																	className="flex min-w-0 items-center gap-3 px-3 py-3"
+																>
+																	<div className="skeleton-line size-10 shrink-0 rounded-md" />
+																	<div className="min-w-0 flex-1">
+																		<SkeletonLine
+																			blockHeight={20}
+																			minWidth={width}
+																			maxWidth={width}
+																		/>
+																	</div>
+																</LayerCard>
+															))}
 														</div>
 													) : (
 														<div
@@ -1428,13 +1454,32 @@ export function MediaPickerModal({
 											aria-busy={currentFetching || undefined}
 										>
 											{currentLoading && !hasVisibleItems ? (
-												<div
-													role="status"
-													className="flex min-h-48 items-center justify-center gap-2 text-sm text-kumo-subtle"
-												>
-													<Loader />
-													{t`Loading media`}
-												</div>
+												<>
+													<span role="status" className="sr-only">
+														{t`Loading media`}
+													</span>
+													{viewMode === "grid" ? (
+														<Grid variant="4up" gap="sm" aria-hidden="true">
+															{Array.from({ length: PICKER_PAGE_SIZE }, (_, index) => (
+																<MediaBrowserItemPlaceholder
+																	key={index}
+																	layout="grid"
+																	index={index}
+																/>
+															))}
+														</Grid>
+													) : (
+														<div className="grid gap-2" aria-hidden="true">
+															{Array.from({ length: PICKER_PAGE_SIZE }, (_, index) => (
+																<MediaBrowserItemPlaceholder
+																	key={index}
+																	layout="list"
+																	index={index}
+																/>
+															))}
+														</div>
+													)}
+												</>
 											) : (activeSource === "local" ? localQuery.error : providerQuery.error) &&
 											  !hasVisibleItems ? (
 												<div className="flex min-h-48 flex-col items-center justify-center gap-3 text-center">

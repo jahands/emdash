@@ -174,7 +174,9 @@ describe("PUT /content/:collection/:id forwards locale to handleContentGet", () 
 			}),
 		);
 		expect(res.status).toBe(200);
-		expect(emdash.handleContentGet).toHaveBeenCalledWith("post", "hello", "en");
+		expect(emdash.handleContentGet).toHaveBeenCalledWith("post", "hello", "en", undefined, {
+			rowOnly: true,
+		});
 	});
 });
 
@@ -190,7 +192,9 @@ describe("DELETE /content/:collection/:id forwards locale to handleContentGet", 
 			}),
 		);
 		expect(res.status).toBe(200);
-		expect(emdash.handleContentGet).toHaveBeenCalledWith("post", "hello", "en");
+		expect(emdash.handleContentGet).toHaveBeenCalledWith("post", "hello", "en", undefined, {
+			rowOnly: true,
+		});
 	});
 });
 
@@ -206,7 +210,9 @@ describe("POST /content/:collection/:id/publish forwards locale to handleContent
 			}),
 		);
 		expect(res.status).toBe(200);
-		expect(emdash.handleContentGet).toHaveBeenCalledWith("post", "hello", "en");
+		expect(emdash.handleContentGet).toHaveBeenCalledWith("post", "hello", "en", undefined, {
+			rowOnly: true,
+		});
 		expect(emdash.handleContentPublish).toHaveBeenCalledWith(
 			"post",
 			"resolved-id",

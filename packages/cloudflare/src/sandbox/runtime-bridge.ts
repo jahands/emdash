@@ -8,6 +8,7 @@ import type {
 	PluginComment,
 	PluginCommentStatus,
 	PluginContentItem,
+	RealtimeAccess,
 	SandboxCommentModerateCallback,
 	SandboxContentCreateCallback,
 	SandboxOptions,
@@ -67,6 +68,8 @@ export class PluginRuntimeBridge extends RpcTarget {
 	#commentModerate: SandboxCommentModerateCallback | null;
 	#i18nConfig: I18nConfig | null;
 	#beforeContentWrite: SandboxOptions["beforeContentWrite"];
+	#realtimeChannels: Record<string, { permission: string }> | undefined;
+	#realtime: RealtimeAccess | undefined;
 
 	constructor(
 		pluginId: string,
@@ -79,6 +82,7 @@ export class PluginRuntimeBridge extends RpcTarget {
 			commentModerate?: SandboxCommentModerateCallback | null;
 			i18nConfig?: I18nConfig | null;
 			beforeContentWrite?: SandboxOptions["beforeContentWrite"];
+			realtimeChannels?: Record<string, { permission: string }>;
 		},
 	) {
 		super();
@@ -91,6 +95,19 @@ export class PluginRuntimeBridge extends RpcTarget {
 		this.#commentModerate = callbacks.commentModerate ?? null;
 		this.#i18nConfig = callbacks.i18nConfig ?? null;
 		this.#beforeContentWrite = callbacks.beforeContentWrite;
+		this.#realtimeChannels = callbacks.realtimeChannels;
+	}
+
+	/** One budget per invocation: this bridge lives for one hook or route call. */
+	async realtimePublish(channel: unknown, change?: unknown): Promise<void> {
+		this.#requireCapability("realtime:publish");
+		if (typeof channel !== "string") throw new TypeError("A realtime channel must be a string");
+		const { createRealtimeAccess } = await import("emdash/internal/plugins/host");
+		this.#realtime ??= createRealtimeAccess(this.#pluginId, this.#realtimeChannels, (publish) =>
+			this.#runInContext(publish),
+		);
+		// oxlint-disable-next-line typescript/no-unsafe-type-assertion -- createRealtimeAccess validates the change
+		await this.#realtime.publish(channel, change as Parameters<RealtimeAccess["publish"]>[1]);
 	}
 
 	#requireCapability(capability: string): void {

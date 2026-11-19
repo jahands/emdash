@@ -1,4 +1,4 @@
-import { Button, Loader } from "@cloudflare/kumo";
+import { Button } from "@cloudflare/kumo";
 import { Trans, useLingui } from "@lingui/react/macro";
 import { UploadSimple } from "@phosphor-icons/react";
 import { useQueryClient } from "@tanstack/react-query";
@@ -8,6 +8,7 @@ import { uploadMedia, type MediaItem } from "../../lib/api/media.js";
 import { matchesMimeAllowlist } from "../../lib/mime-utils.js";
 import { cn } from "../../lib/utils.js";
 import { getMutationError } from "../DialogError.js";
+import { Spinner } from "../Spinner.js";
 
 interface ImageDropTargetProps {
 	label: string;
@@ -136,9 +137,7 @@ export function ImageDropTarget({
 					}}
 				>
 					{uploading ? (
-						<span aria-hidden="true" className="flex shrink-0">
-							<Loader size="sm" />
-						</span>
+						<Spinner size="sm" />
 					) : (
 						<UploadSimple className="h-8 w-8 shrink-0" aria-hidden="true" />
 					)}

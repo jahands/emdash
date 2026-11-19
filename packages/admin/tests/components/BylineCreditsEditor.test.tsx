@@ -11,6 +11,7 @@ import {
 	type BylineCreditInput,
 	type BylineSummary,
 } from "../../src/lib/api";
+import { listBylineFields, type BylineFieldDefinition } from "../../src/lib/api/byline-fields.js";
 import { render } from "../utils/render.tsx";
 
 vi.mock("../../src/lib/api", async () => {
@@ -223,6 +224,35 @@ describe("BylineCreditsEditor", () => {
 		await expect.element(screen.getByText("A byline with this slug already exists")).toBeVisible();
 	});
 
+	it("holds a place for custom fields until they load", async () => {
+		const fields = Promise.withResolvers<{ items: BylineFieldDefinition[] }>();
+		vi.mocked(listBylineFields).mockReturnValueOnce(fields.promise);
+		const screen = await renderControlled({ onQuickCreate: quickCreateByline });
+		const dialog = await openCreate(screen, "Mina Patel");
+
+		await expect.element(dialog.getByText("Loading custom fields...")).toBeInTheDocument();
+		expect(dialog.getByRole("heading", { name: "Additional details" }).query()).toBeNull();
+
+		fields.resolve({
+			items: [
+				{
+					id: "field-pronouns",
+					slug: "pronouns",
+					label: "Pronouns",
+					type: "string",
+					required: true,
+					translatable: true,
+					validation: null,
+					sortOrder: 0,
+					createdAt: "2026-08-26T12:00:00Z",
+					updatedAt: "2026-08-26T12:00:00Z",
+				},
+			],
+		});
+		await expect.element(dialog.getByLabelText("Pronouns")).toBeVisible();
+		expect(dialog.getByText("Loading custom fields...").query()).toBeNull();
+	});
+
 	it("returns to the same search after cancelling creation", async () => {
 		const screen = await renderControlled({ onQuickCreate: quickCreateByline });
 		const dialog = await openCreate(screen, "Mina Patel");
@@ -265,7 +295,62 @@ describe("BylineCreditsEditor", () => {
 		expect(onChange).not.toHaveBeenCalled();
 	});
 
-	it("hides results while the latest search is still debouncing", async () => {
+	it("keeps the last results listed while the next search runs", async () => {
+		const mina = makeByline();
+		let resolveNext!: (value: { items: BylineSummary[]; nextCursor: null }) => void;
+		vi.mocked(fetchBylines).mockImplementation(({ search }) =>
+			search === "Mina"
+				? Promise.resolve({ items: [mina], nextCursor: null })
+				: new Promise((resolve) => {
+						resolveNext = resolve;
+					}),
+		);
+		const screen = await renderControlled();
+
+		await screen.getByRole("button", { name: "Choose bylines" }).click();
+		const search = screen.getByLabelText("Search bylines");
+		await search.fill("Mina");
+		const addLocator = screen.getByRole("button", { name: "Add Mina Patel" });
+		await expect.element(addLocator).toBeVisible();
+		const add = addLocator.element();
+
+		await search.fill("Mina P");
+		const results = screen.getByRole("region", { name: "Available bylines" });
+		await vi.waitFor(() =>
+			expect(fetchBylines).toHaveBeenCalledWith(expect.objectContaining({ search: "Mina P" })),
+		);
+		await expect.element(results).toHaveAttribute("aria-busy", "true");
+		expect(add.isConnected).toBe(true);
+
+		resolveNext({ items: [mina], nextCursor: null });
+		await expect.element(results).toHaveAttribute("aria-busy", "false");
+		await expect.element(addLocator).toBeVisible();
+	});
+
+	it("doesn't say nothing matched before the first search answers", async () => {
+		let resolveSearch!: (value: { items: BylineSummary[]; nextCursor: null }) => void;
+		vi.mocked(fetchBylines).mockImplementation(
+			() =>
+				new Promise((resolve) => {
+					resolveSearch = resolve;
+				}),
+		);
+		const screen = await renderControlled();
+
+		await screen.getByRole("button", { name: "Choose bylines" }).click();
+		await screen.getByLabelText("Search bylines").fill("Nobody");
+		await vi.waitFor(() =>
+			expect(fetchBylines).toHaveBeenCalledWith(expect.objectContaining({ search: "Nobody" })),
+		);
+		const results = screen.getByRole("region", { name: "Available bylines" });
+		await expect.element(results).toHaveAttribute("aria-busy", "true");
+		expect(results.element().textContent).toBe("");
+
+		resolveSearch({ items: [], nextCursor: null });
+		await expect.element(results.getByText("No matching bylines.")).toBeVisible();
+	});
+
+	it("hides the previous search's creation while the latest search is still debouncing", async () => {
 		const mina = makeByline();
 		vi.mocked(fetchBylines).mockImplementation(async ({ search }) => ({
 			items: search === "Mina Patel" ? [mina] : [],

@@ -33,6 +33,7 @@ type ContextApiRoutes = {
 	comments: Record<MethodKeys<NonNullable<PluginContext["comments"]>>, string | null>;
 	cron: Record<MethodKeys<NonNullable<PluginContext["cron"]>>, string | null>;
 	email: Record<MethodKeys<NonNullable<PluginContext["email"]>>, string | null>;
+	realtime: Record<MethodKeys<NonNullable<PluginContext["realtime"]>>, string | null>;
 	kv: Record<MethodKeys<PluginContext["kv"]>, string | null>;
 	settings: Record<MethodKeys<PluginContext["settings"]>, string | null>;
 	storage: Record<MethodKeys<PluginContext["storage"][string]>, string | null>;
@@ -94,6 +95,7 @@ const CONTEXT_API_ROUTES = {
 	},
 	cron: { schedule: "cron-exercise", cancel: "cron-exercise", list: "cron-exercise" },
 	email: { send: "send-email" },
+	realtime: { publish: "realtime-publish" },
 	kv: {
 		get: "kv-exercise",
 		getVersioned: "kv-exercise",
@@ -529,11 +531,39 @@ describe("registry fixture capability inventory", () => {
 				users: true,
 				comments: true,
 				email: true,
+				realtime: true,
 			},
 		});
 		await expect(
 			invoke("content-crud", { operation: "delete", id: createdContent.id }),
 		).resolves.toEqual({ deleted: true });
+	});
+
+	it("publishes live updates on its declared channel through the isolate, and nowhere else", async () => {
+		runtimeHost = await createPluginRuntimeTestHost();
+		const admin = await runtimeHost.fixtures.user({
+			email: "realtime-fixture@example.test",
+			name: "Realtime Fixture",
+			role: "admin",
+		});
+		const before = await runtimeHost.inspect.realtime();
+
+		const response = await runtimeHost.actions.routes.request("realtime-publish", {
+			user: admin,
+			headers: { "X-EmDash-Request": "1" },
+			body: {},
+		});
+		expect(response.status).toBe(200);
+		const { data } = (await response.json()) as { data: { id: string; refused: string | null } };
+
+		expect(data.refused).toContain('no realtime channel "undeclared"');
+		expect((await runtimeHost.inspect.realtime()).slice(before.length)).toEqual([
+			{ topic: "plugin/marketplace-test/events", ids: [data.id], op: "create" },
+		]);
+		expect(runtimeHost.manifest.realtime).toEqual({
+			channels: { events: { permission: "plugins:read" } },
+		});
+		expect(runtimeHost.manifest.admin.widgets?.[0]).toMatchObject({ refreshOn: ["events"] });
 	});
 
 	it("enforces declared parsers, byte preservation, raw output, and method Allow behavior", async () => {

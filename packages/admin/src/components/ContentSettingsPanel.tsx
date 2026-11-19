@@ -1,13 +1,11 @@
 import {
 	Badge,
-	Button,
 	Collapsible,
 	Input,
 	Label,
 	LayerCard,
 	LayerDialog,
 	LinkButton,
-	Loader,
 	Select,
 	Text,
 } from "@cloudflare/kumo";
@@ -19,6 +17,7 @@ import {
 	CalendarX,
 	CaretDown,
 	Eye,
+	GitDiff,
 	GlobeSimple,
 	GlobeSimpleX,
 	Trash,
@@ -61,6 +60,7 @@ import {
 } from "../lib/publishing-datetime.js";
 import { cn, isolate } from "../lib/utils.js";
 import { getLocaleLabel } from "../locales/config.js";
+import { Button, loadingButtonProps } from "./Button.js";
 import { BylineCreditsEditor } from "./BylineCreditsEditor.js";
 import type { BylineFormValues } from "./BylineFormDialog.js";
 import { SyncStatus, type SyncProblem } from "./co-editing/SyncStatus.js";
@@ -88,11 +88,67 @@ import type {
 import { SaveButton } from "./SaveButton";
 import { SeoPanel } from "./SeoPanel";
 import { declaredLabelTranslator } from "./Sidebar.js";
+import { Spinner } from "./Spinner.js";
 import { TaxonomySidebar, useHasApplicableTaxonomies } from "./TaxonomySidebar";
 import { TranslationsPanel } from "./TranslationsPanel.js";
 
 // Editor role level (40) from @emdash-cms/auth
 const ROLE_EDITOR = 40;
+
+/**
+ * Holds room for up to two other texts `children` can switch to, drawn
+ * invisibly in its pseudo-elements, so switching leaves the layout alone.
+ */
+function ReservedText({
+	reserve,
+	children,
+	className,
+	contentClassName,
+}: {
+	reserve: [string, string?];
+	children: React.ReactNode;
+	className?: string;
+	contentClassName?: string;
+}) {
+	return (
+		<span
+			data-reserve-a={reserve[0]}
+			data-reserve-b={reserve[1] ?? ""}
+			className={cn(
+				"grid before:invisible before:col-start-1 before:row-start-1 before:content-[attr(data-reserve-a)] after:invisible after:col-start-1 after:row-start-1 after:content-[attr(data-reserve-b)]",
+				className,
+			)}
+		>
+			<span className={cn("col-start-1 row-start-1", contentClassName)}>{children}</span>
+		</span>
+	);
+}
+
+/**
+ * A wide editor bar label, as wide as the longest label its control can
+ * show, so the actions before it keep their place when saving changes it,
+ * as from Unpublish to Publish changes.
+ */
+function BarLabelSlot({
+	label,
+	labels,
+	children,
+}: {
+	label: string;
+	labels: string[];
+	children: React.ReactNode;
+}) {
+	const [first = "", second] = labels.filter((other) => other !== label);
+	return (
+		<ReservedText
+			reserve={[first, second]}
+			className="justify-items-center @max-2xl/editor-bar:contents @max-2xl/editor-bar:before:hidden @max-2xl/editor-bar:after:hidden"
+			contentClassName="justify-self-stretch text-center @max-2xl/editor-bar:contents @2xl/editor-bar:*:block"
+		>
+			{children}
+		</ReservedText>
+	);
+}
 
 function PublishingVersionRow({
 	iconState,
@@ -138,6 +194,7 @@ function PublishingVersionRelationship({
 	locale,
 	onDiscardDraft,
 	discardDisabled,
+	onViewDraftChanges,
 }: {
 	publishingState: ContentPublishingState;
 	isNew?: boolean;
@@ -146,8 +203,31 @@ function PublishingVersionRelationship({
 	locale: string;
 	onDiscardDraft?: () => Promise<unknown> | void;
 	discardDisabled?: boolean;
+	/** Shows the draft compared with the live version. */
+	onViewDraftChanges?: (opener: HTMLElement) => void;
 }) {
 	const { t } = useLingui();
+	const viewChangesButton = onViewDraftChanges ? (
+		<Button
+			type="button"
+			variant="ghost"
+			size="sm"
+			icon={<GitDiff />}
+			onClick={(event) => onViewDraftChanges(event.currentTarget)}
+		>
+			{t`View changes`}
+		</Button>
+	) : null;
+	const discardButton = onDiscardDraft ? (
+		<DiscardDraftDialog onDiscard={onDiscardDraft} triggerSize="sm" disabled={discardDisabled} />
+	) : null;
+	const draftActions =
+		viewChangesButton || discardButton ? (
+			<div className="flex flex-wrap items-center">
+				{viewChangesButton}
+				{discardButton}
+			</div>
+		) : undefined;
 	const formattedSchedule = scheduledAt
 		? formatPublishingInstantWithZone(scheduledAt, locale)
 		: null;
@@ -193,40 +273,50 @@ function PublishingVersionRelationship({
 			);
 			break;
 		case "published":
-			rows = (
-				<PublishingVersionRow
-					iconState="published"
-					title={t`Live version`}
-					description={t`Visitors see this published version`}
-				/>
-			);
-			break;
-		case "published-with-changes":
+		case "published-with-changes": {
+			// Both states lay out the same rows, so the first save of a published
+			// entry does not push the settings below down.
+			const hasChanges = publishingState === "published-with-changes";
+			const liveDescriptions = [
+				t`Visitors see this published version`,
+				t`Visitors still see the published version`,
+			];
+			const draftDescriptions = [
+				t`Your edits are saved as a draft until you publish them`,
+				t`Ready to publish now or schedule for later`,
+			];
 			rows = (
 				<>
 					<PublishingVersionRow
 						iconState="published"
 						title={t`Live version`}
-						description={t`Visitors still see the published version`}
+						description={
+							<ReservedText reserve={[liveDescriptions[hasChanges ? 0 : 1]!]}>
+								{liveDescriptions[hasChanges ? 1 : 0]}
+							</ReservedText>
+						}
 						connectToNext
 					/>
 					<PublishingVersionRow
-						iconState="pendingChanges"
-						title={t`Draft changes`}
-						description={t`Ready to publish now or schedule for later`}
+						iconState={hasChanges ? "pendingChanges" : "draft"}
+						title={hasChanges ? t`Draft changes` : t`No draft changes`}
+						description={
+							<ReservedText reserve={[draftDescriptions[hasChanges ? 0 : 1]!]}>
+								{draftDescriptions[hasChanges ? 1 : 0]}
+							</ReservedText>
+						}
 						action={
-							onDiscardDraft ? (
-								<DiscardDraftDialog
-									onDiscard={onDiscardDraft}
-									triggerSize="sm"
-									disabled={discardDisabled}
-								/>
+							draftActions ? (
+								<div className={hasChanges ? undefined : "invisible"} inert={!hasChanges}>
+									{draftActions}
+								</div>
 							) : undefined
 						}
 					/>
 				</>
 			);
 			break;
+		}
 		case "update-scheduled":
 			rows = (
 				<>
@@ -240,15 +330,7 @@ function PublishingVersionRelationship({
 						iconState="scheduled"
 						title={t`Draft changes`}
 						description={scheduledSummary ?? t`A publication time has not been selected`}
-						action={
-							onDiscardDraft ? (
-								<DiscardDraftDialog
-									onDiscard={onDiscardDraft}
-									triggerSize="sm"
-									disabled={discardDisabled}
-								/>
-							) : undefined
-						}
+						action={draftActions}
 					/>
 				</>
 			);
@@ -366,6 +448,8 @@ export interface EditorActionsProps {
 	onSaveControlRemoved?: () => void;
 	/** Autosave in flight — reported by the save button's busy state. */
 	isAutosaving?: boolean;
+	/** Edits save without the writer, so the save button shows their progress instead of asking. */
+	savesAutomatically?: boolean;
 	/** Preserve operation blocking independently of the visual feedback state. */
 	saveDisabled?: boolean;
 	/**
@@ -412,6 +496,7 @@ export function PreviewButton({
 }: PreviewButtonProps) {
 	const { t } = useLingui();
 	const { blocked } = useRoomOperations();
+	const label = hasPendingChanges ? t`Preview draft` : t`Preview`;
 	return (
 		<Button
 			type="button"
@@ -420,11 +505,17 @@ export function PreviewButton({
 			className={compact ? compactBarButtonClassName : undefined}
 			onClick={onPreview}
 			disabled={isLoadingPreview || blocked}
-			icon={isLoadingPreview ? <Loader size="sm" /> : <Eye />}
+			icon={isLoadingPreview ? <Spinner size="sm" /> : <Eye />}
+			// The reserved label's generated text would join the button's name.
+			aria-label={compact ? label : undefined}
 		>
-			<span className={compact ? compactBarLabelClassName : undefined}>
-				{hasPendingChanges ? t`Preview draft` : t`Preview`}
-			</span>
+			{compact ? (
+				<BarLabelSlot label={label} labels={[t`Preview`, t`Preview draft`]}>
+					<span className={compactBarLabelClassName}>{label}</span>
+				</BarLabelSlot>
+			) : (
+				label
+			)}
 		</Button>
 	);
 }
@@ -503,6 +594,7 @@ export function PublishActions({
 		publishingState ??
 		(isLive ? (hasPendingChanges ? "published-with-changes" : "published") : "draft");
 	const hasDraftChanges = state === "published-with-changes" || state === "update-scheduled";
+	const slotLabels = [t`Unpublish ${itemLabel}`, t`Publish changes`, t`Publish now`];
 
 	if (isNew) return null;
 	if (state === "published") {
@@ -515,11 +607,25 @@ export function PublishActions({
 				loading={isPending}
 				disabled={disabled}
 				icon={<GlobeSimpleX />}
-				className={compact ? cn(compactBarButtonClassName, "max-sm:-order-1") : undefined}
+				aria-label={compact ? t`Unpublish ${itemLabel}` : undefined}
+				className={
+					compact
+						? cn(
+								compactBarButtonClassName,
+								"gap-1.5 max-sm:col-span-2 max-sm:-order-1 max-sm:min-w-0",
+							)
+						: undefined
+				}
 			>
-				<span className={compact ? compactBarLabelClassName : undefined}>
-					{t`Unpublish ${itemLabel}`}
-				</span>
+				{compact ? (
+					<BarLabelSlot label={t`Unpublish ${itemLabel}`} labels={slotLabels}>
+						<span className={cn(compactBarLabelClassName, "max-sm:not-sr-only max-sm:truncate")}>
+							{t`Unpublish ${itemLabel}`}
+						</span>
+					</BarLabelSlot>
+				) : (
+					t`Unpublish ${itemLabel}`
+				)}
 			</Button>
 		) : null;
 	}
@@ -559,7 +665,9 @@ export function PublishActions({
 			>
 				{compact ? (
 					<>
-						<span className="@max-2xl/editor-bar:hidden">{publishLabel}</span>
+						<BarLabelSlot label={publishLabel} labels={slotLabels}>
+							<span className="@max-2xl/editor-bar:hidden">{publishLabel}</span>
+						</BarLabelSlot>
 						<span className="hidden min-w-0 truncate @max-2xl/editor-bar:inline">{t`Publish`}</span>
 						<CaretDown aria-hidden="true" className="absolute end-2 size-4 sm:hidden" />
 					</>
@@ -573,16 +681,13 @@ export function PublishActions({
 				<LayerDialog.Body>{revisions ? <PublishEditedBy {...revisions} /> : null}</LayerDialog.Body>
 				<LayerDialog.Actions dismissLabel={t`Cancel`}>
 					<LayerDialog.Action
-						loading={isPending}
-						disabled={disabled}
+						{...loadingButtonProps(isPending, { disabled, children: publishLabel })}
 						aria-label={publishLabel}
 						onClick={() => {
 							setPublishOpen(false);
 							onPublish();
 						}}
-					>
-						{publishLabel}
-					</LayerDialog.Action>
+					/>
 				</LayerDialog.Actions>
 			</LayerDialog.Content>
 		</LayerDialog.Root>
@@ -615,7 +720,11 @@ export function ScheduleActions({
 		publishingState === "scheduled" ||
 		publishingState === "update-scheduled" ||
 		publishingState === "published-scheduled";
-	const showSchedule = Boolean(onOpenSchedule && (canSchedule || hasSchedule));
+	// A published entry can schedule only its draft changes. Until it has some,
+	// Schedule shows disabled, so it doesn't push the controls below it down on
+	// the first save.
+	const waitsForChanges = publishingState === "published" && !canSchedule;
+	const showSchedule = Boolean(onOpenSchedule && (canSchedule || hasSchedule || waitsForChanges));
 	const showRemove = Boolean(onUnschedule && hasSchedule);
 	if (!showSchedule && !showRemove) return null;
 
@@ -633,7 +742,7 @@ export function ScheduleActions({
 						hasSchedule ? <CalendarDots aria-hidden="true" /> : <CalendarPlus aria-hidden="true" />
 					}
 					loading={isScheduling}
-					disabled={disabled || isUnscheduling}
+					disabled={disabled || isUnscheduling || waitsForChanges}
 					onClick={onOpenSchedule}
 				>
 					{hasSchedule ? t`Change schedule` : t`Schedule`}
@@ -674,6 +783,7 @@ export function EditorActions({
 	showMobileSave = true,
 	onSaveControlRemoved,
 	isAutosaving,
+	savesAutomatically = false,
 	saveDisabled,
 	sync,
 	onCopyEdits,
@@ -694,19 +804,29 @@ export function EditorActions({
 	const { t } = useLingui();
 	const busy = isSaving || Boolean(isAutosaving);
 	const savesFirstDraft = isNew && supportsDrafts;
-	// In a room the button stays, as the room's status. Elsewhere it shows only with something to save.
-	const showSave = sync !== undefined || isDirty || busy;
+	// When edits save on their own the button stays, as their status. Otherwise it shows only with
+	// something to save.
+	const showSave = sync !== undefined || savesAutomatically || isDirty || busy;
+	// Kept as a status, the button is disabled once there's nothing to save, which drops its focus
+	// just as hiding it would.
+	const saveSettled = !showSave || (savesAutomatically && sync === undefined && !isDirty && !busy);
 	const saveHadFocus = React.useRef(false);
+	const saveRef = React.useRef<HTMLButtonElement>(null);
 	React.useLayoutEffect(() => {
-		if (!showSave && saveHadFocus.current) {
+		if (saveSettled && saveHadFocus.current) {
 			saveHadFocus.current = false;
 			const active = document.activeElement;
-			if (!active || active === document.body) onSaveControlRemoved?.();
+			if (!active || active === document.body || saveRef.current?.contains(active))
+				onSaveControlRemoved?.();
 		}
-	}, [showSave, onSaveControlRemoved]);
-	const saveVariant = (!isDirty && !busy) || sync ? "ghost" : isNew ? "primary" : "secondary";
+	}, [saveSettled, onSaveControlRemoved]);
+	const saveVariant =
+		(!isDirty && !busy) || sync || savesAutomatically ? "ghost" : isNew ? "primary" : "secondary";
 	const saveButton = (
 		<SaveButton
+			ref={saveRef}
+			inert={!showSave}
+			aria-hidden={!showSave || undefined}
 			announce={false}
 			onFocus={() => {
 				saveHadFocus.current = true;
@@ -722,10 +842,12 @@ export function EditorActions({
 				!savesFirstDraft && compactBarButtonClassName,
 				isNew && "max-sm:col-span-2",
 				!showMobileSave && sync === undefined && "max-sm:hidden",
+				!showSave && "invisible",
 			)}
 			labelClassName={savesFirstDraft ? undefined : "@max-2xl/editor-bar:hidden"}
 			isDirty={isDirty}
 			isSaving={busy}
+			automatic={savesAutomatically}
 			sync={sync === undefined ? undefined : (sync?.kind ?? null)}
 			disabled={sync ? undefined : saveDisabled}
 			saveLabel={savesFirstDraft ? t`Save draft` : undefined}
@@ -734,12 +856,13 @@ export function EditorActions({
 
 	return (
 		<div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5 max-sm:contents">
+			{/* Hidden rather than removed while there is nothing to save, so the actions after it keep their place. */}
 			{sync !== undefined ? (
 				<SyncStatus problem={sync} readOnly={readOnly} onCopyEdits={onCopyEdits}>
 					{saveButton}
 				</SyncStatus>
 			) : (
-				showSave && saveButton
+				saveButton
 			)}
 			<fieldset disabled={readOnly} className="contents">
 				{liveViewUrl && (
@@ -816,6 +939,8 @@ export interface ContentSettingsPanelProps {
 	currentUser?: CurrentUserInfo;
 	adminLayout?: ListLayout;
 	users?: UserListItem[];
+	/** While the user list loads, the Ownership section holds its place. */
+	usersLoading?: boolean;
 	onAuthorChange?: (authorId: string | null) => void;
 	activeBylines: BylineCreditInput[];
 	inferredByline?: BylineSummary | null;
@@ -826,6 +951,9 @@ export interface ContentSettingsPanelProps {
 	onQuickEditByline?: (bylineId: string, input: BylineFormValues) => Promise<BylineSummary>;
 	i18n?: { defaultLocale: string; locales: string[] };
 	translations?: TranslationSummary[];
+	translationsLoading?: boolean;
+	translationsError?: boolean;
+	onRetryTranslations?: () => unknown;
 	onTranslate?: (locale: string) => void;
 	hasSeo: boolean;
 	onSeoChange?: (seo: ContentSeoInput) => void | Promise<boolean>;
@@ -886,6 +1014,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	currentUser,
 	adminLayout = EMPTY_LIST_LAYOUT,
 	users,
+	usersLoading,
 	onAuthorChange,
 	activeBylines,
 	inferredByline,
@@ -896,6 +1025,9 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	onQuickEditByline,
 	i18n,
 	translations,
+	translationsLoading = false,
+	translationsError = false,
+	onRetryTranslations,
 	onTranslate,
 	hasSeo,
 	onSeoChange,
@@ -944,7 +1076,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 	const [datesOpen, setDatesOpen] = React.useState(false);
 	const trash = useConfirmedRequest(onDelete);
 	const { blocked: operationsBlocked } = useRoomOperations();
-	const showDiscard = !isNew && supportsDrafts && hasPendingChanges && !!onDiscardDraft;
+	const canDiscard = !isNew && supportsDrafts && !!onDiscardDraft;
 	const activeEntryLocale = item?.locale ?? entryLocale ?? undefined;
 	const resolvedPublishingState =
 		publishingState ??
@@ -1024,8 +1156,13 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 											supportsDrafts={supportsDrafts}
 											scheduledAt={item?.scheduledAt}
 											locale={lingui.locale}
-											onDiscardDraft={showDiscard ? onDiscardDraft : undefined}
+											onDiscardDraft={canDiscard ? onDiscardDraft : undefined}
 											discardDisabled={viewingRevision}
+											onViewDraftChanges={
+												revisionView
+													? (opener) => revisionView.viewDraftChanges({ opener })
+													: undefined
+											}
 										/>
 									) : null}
 
@@ -1170,22 +1307,25 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 					</div>
 				</ContentSettingsSection>
 
-				{currentUser && currentUser.role >= ROLE_EDITOR && users && users.length > 0 && (
-					<ContentSettingsSection id="ownership">
-						<div className="p-4">
-							<Text as="h3" DANGEROUS_className="mb-4 font-semibold">
-								{t`Ownership`}
-							</Text>
-							<div data-emdash-outside="author">
-								<AuthorSelector
-									authorId={item?.authorId || null}
-									users={users}
-									onChange={onAuthorChange}
-								/>
+				{currentUser &&
+					currentUser.role >= ROLE_EDITOR &&
+					((users && users.length > 0) || usersLoading) && (
+						<ContentSettingsSection id="ownership">
+							<div className="p-4">
+								<Text as="h3" DANGEROUS_className="mb-4 font-semibold">
+									{t`Ownership`}
+								</Text>
+								<div data-emdash-outside="author">
+									<AuthorSelector
+										authorId={item?.authorId || null}
+										users={users ?? []}
+										loading={!users}
+										onChange={onAuthorChange}
+									/>
+								</div>
 							</div>
-						</div>
-					</ContentSettingsSection>
-				)}
+						</ContentSettingsSection>
+					)}
 
 				{currentUser && currentUser.role >= ROLE_EDITOR && (
 					<ContentSettingsSection id="bylines">
@@ -1228,6 +1368,9 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 								defaultLocale={i18n.defaultLocale}
 								currentLocale={item.locale ?? undefined}
 								translations={translations ?? []}
+								loading={translationsLoading}
+								error={translationsError}
+								onRetry={onRetryTranslations}
 								onOpen={(tr) =>
 									navigate({
 										to: "/content/$collection/$id",
@@ -1383,7 +1526,7 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 							variant="ghost"
 							className="w-full bg-kumo-danger/10 text-kumo-danger hover:bg-kumo-danger/10 hover:text-kumo-danger"
 							disabled={isDeleting || operationsBlocked}
-							icon={isDeleting ? <Loader size="sm" /> : <Trash />}
+							icon={isDeleting ? <Spinner size="sm" /> : <Trash />}
 							onClick={trash.show}
 						>
 							{t`Move to Trash`}
@@ -1404,10 +1547,11 @@ export const ContentSettingsPanel = React.memo(function ContentSettingsPanel({
 interface AuthorSelectorProps {
 	authorId: string | null;
 	users: UserListItem[];
+	loading?: boolean;
 	onChange?: (authorId: string | null) => void;
 }
 
-function AuthorSelector({ authorId, users, onChange }: AuthorSelectorProps) {
+function AuthorSelector({ authorId, users, loading, onChange }: AuthorSelectorProps) {
 	const { t } = useLingui();
 	const currentAuthor = users.find((u) => u.id === authorId);
 
@@ -1421,6 +1565,7 @@ function AuthorSelector({ authorId, users, onChange }: AuthorSelectorProps) {
 			<Select
 				aria-label={t`Author`}
 				className="w-full"
+				disabled={loading}
 				value={authorId || "unassigned"}
 				onValueChange={(value) =>
 					onChange?.(value === "unassigned" || value === null ? null : value)
@@ -1443,9 +1588,9 @@ function AuthorSelector({ authorId, users, onChange }: AuthorSelectorProps) {
 					</Select.Option>
 				))}
 			</Select>
-			{currentAuthor && (
-				<p className="text-xs text-kumo-subtle">
-					<bdi dir="ltr">{currentAuthor.email}</bdi>
+			{(currentAuthor || (loading && authorId)) && (
+				<p className="min-h-4 text-xs text-kumo-subtle">
+					{currentAuthor ? <bdi dir="ltr">{currentAuthor.email}</bdi> : null}
 				</p>
 			)}
 		</div>

@@ -2,11 +2,16 @@ import { decodeMessage } from "@emdash-cms/admin/internal/co-editing";
 import { describe, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 
+import { readRoomToken } from "../../src/rooms/token.js";
 import { CLOSE_CODES } from "../../src/rooms/types.js";
 import { get, openSocket, rawUpgrade, roomPath, serve } from "./helpers.js";
 import { useRoomHost } from "./room-host.js";
 
 const NATIVE_CALLBACK = "shouldUpgradeCallback" in serve();
+
+async function nextFrame(socket: { next(): Promise<Uint8Array> }): Promise<unknown> {
+	return JSON.parse(new TextDecoder().decode(await socket.next()));
+}
 
 describe("room upgrades from the site's server", () => {
 	const host = useRoomHost();
@@ -43,6 +48,62 @@ describe("room upgrades from the site's server", () => {
 		socket.ws.close();
 	});
 
+	it("hands a realtime upgrade with a hub ticket to the hub, which answers pings and sends changes", async () => {
+		const { port } = await host.attached();
+		const socket = await openSocket(host.hubUrl(port, await host.ticket(), "/blog"));
+		expect(socket.status).toBe(101);
+
+		socket.ws.send("ping");
+		expect(new TextDecoder().decode(await socket.next())).toBe("pong");
+		socket.ws.send(JSON.stringify({ t: "topics", topics: ["content/posts"] }));
+		expect(await nextFrame(socket)).toEqual({ t: "presence", places: [], all: true });
+		await host.publish([{ topic: "content/posts/01A", op: "update" }]);
+
+		expect(await nextFrame(socket)).toEqual({
+			t: "changes",
+			changes: [{ topic: "content/posts/01A", op: "update" }],
+		});
+		socket.ws.close();
+	});
+
+	it("takes a tab off its place's roster when its realtime socket closes", async () => {
+		const { port } = await host.attached();
+		const ana = await openSocket(host.hubUrl(port, await host.ticket("ana")));
+		const ben = await openSocket(host.hubUrl(port, await host.ticket("ben")));
+		ben.ws.send(JSON.stringify({ t: "topics", topics: ["menus"] }));
+		await nextFrame(ben);
+		ana.ws.send(JSON.stringify({ t: "here", topic: "menus/main", activity: "editing" }));
+		expect(await nextFrame(ben)).toEqual({
+			t: "presence",
+			places: [
+				{
+					topic: "menus/main",
+					people: [{ userId: "ana", name: "Ana", clientId: "tab-ana", activity: "editing" }],
+				},
+			],
+		});
+
+		ana.ws.close();
+
+		expect(await nextFrame(ben)).toEqual({
+			t: "presence",
+			places: [{ topic: "menus/main", people: [] }],
+		});
+		ben.ws.close();
+	});
+
+	it("closes a realtime socket with busy for a room's token or a used ticket", async () => {
+		const { port } = await host.attached();
+		const ticket = await host.ticket();
+		(await openSocket(host.hubUrl(port, ticket))).ws.close();
+
+		const reused = await openSocket(host.hubUrl(port, ticket));
+		const roomToken = await openSocket(host.hubUrl(port, await host.token()));
+
+		expect((await reused.closed).code).toBe(CLOSE_CODES.busy);
+		expect((await roomToken.closed).code).toBe(CLOSE_CODES.busy);
+	});
+
 	it("completes the handshake for a bad token, then closes with busy", async () => {
 		const { port } = await host.attached();
 		await host.token();
@@ -50,6 +111,15 @@ describe("room upgrades from the site's server", () => {
 		const socket = await openSocket(host.roomUrl(port, "forged"));
 
 		expect(socket.status).toBe(101);
+		expect((await socket.closed).code).toBe(CLOSE_CODES.busy);
+	});
+
+	it("closes with busy for a nonce the room issued but no one signed", async () => {
+		const { port } = await host.attached();
+		const nonce = readRoomToken(await host.token())?.nonce ?? "";
+
+		const socket = await openSocket(host.roomUrl(port, nonce));
+
 		expect((await socket.closed).code).toBe(CLOSE_CODES.busy);
 	});
 

@@ -1,4 +1,4 @@
-import { Banner, Button, Loader, Meter } from "@cloudflare/kumo";
+import { Banner, Button, Meter } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
@@ -8,6 +8,7 @@ import { openSaveTarget } from "../../../lib/save-file.js";
 import { downloadSitePackage, type DownloadProgress } from "../../../lib/transfer-download.js";
 import { SitePackageError, SITE_PACKAGE_EXTENSION } from "../../../lib/transfer-package.js";
 import { getMutationError } from "../../DialogError.js";
+import { Spinner } from "../../Spinner.js";
 import { packageErrorLabel } from "./labels.js";
 
 type DownloadState =
@@ -108,7 +109,7 @@ export function ExportDownloadStatus({
 		<div className="grid gap-3" role="status" aria-live="polite">
 			<div className="flex items-center justify-between gap-3">
 				<div className="flex items-center gap-2 text-sm font-medium">
-					<Loader size="sm" />
+					<Spinner size="sm" />
 					{t`Downloading the package`}
 				</div>
 				<Button size="sm" variant="secondary" onClick={() => state.controller.abort()}>

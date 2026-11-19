@@ -9,9 +9,10 @@ import * as React from "react";
 import type { AdminManifest } from "../lib/api";
 import { useCurrentUser } from "../lib/api/current-user.js";
 import type { CollectionStats, DashboardStats, RecentItem } from "../lib/api/dashboard";
-import { dismissScheduledPolicyRejection, fetchDashboardStats } from "../lib/api/dashboard";
+import { dismissScheduledPolicyRejection } from "../lib/api/dashboard";
 import { fetchTransferCapabilities, TRANSFER_CAPABILITIES_QUERY_KEY } from "../lib/api/transfer.js";
 import { usePluginWidget } from "../lib/plugin-context";
+import { dashboardStatsQueryOptions } from "../lib/route-queries.js";
 import { cn, formatRelativeTime } from "../lib/utils.js";
 import { ArrowNext } from "./ArrowIcons";
 import {
@@ -19,7 +20,7 @@ import {
 	CONTENT_STATUS_ICONS,
 	type ContentStatusState,
 } from "./ContentStatusBadge.js";
-import { CoreUpdateBanner } from "./CoreUpdateBanner.js";
+import { CoreUpdateBanner, useCoreUpdateStatus } from "./CoreUpdateBanner.js";
 import { getMutationError } from "./DialogError.js";
 import { MarketplaceMigrationBanner } from "./MarketplaceMigrationBanner.js";
 import { RouterLinkButton } from "./RouterLinkButton";
@@ -56,59 +57,75 @@ export interface DashboardProps {
 export function Dashboard({ manifest }: DashboardProps) {
 	const { t } = useLingui();
 	const { data: user } = useCurrentUser();
-	const {
-		data: stats,
-		isLoading,
-		isError,
-	} = useQuery({
-		queryKey: ["dashboard-stats"],
-		queryFn: fetchDashboardStats,
+	const { data: stats, isError } = useQuery({
+		...dashboardStatsQueryOptions(),
 		refetchOnWindowFocus: true,
 	});
+	// Requested with the stats, though its notice waits for them to show.
+	useCoreUpdateStatus();
 	const hasDashboardData = stats !== undefined;
-	const showDashboardData = !isError || hasDashboardData;
+	const dashboardDataSettled = hasDashboardData || isError;
+	const role = user?.role ?? 0;
 
 	return (
 		<div className="space-y-6">
-			{manifest.marketplace && (user?.role ?? 0) >= ROLE_ADMIN && <MarketplaceMigrationBanner />}
+			{manifest.marketplace && role >= ROLE_ADMIN && <MarketplaceMigrationBanner />}
 			<div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
 				<h1 className="text-2xl font-semibold leading-tight">{t`Dashboard`}</h1>
 				<QuickActions manifest={manifest} />
 			</div>
 
-			<CoreUpdateBanner />
-
-			{isError && <DashboardDataError />}
-
-			{showDashboardData && (
+			{isError && !hasDashboardData ? (
+				<DashboardDataError />
+			) : (
 				<>
-					{stats && (user?.role ?? 0) >= ROLE_ADMIN && <SiteImportHint stats={stats} />}
-					{stats && (
-						<SchedulerWarning stats={stats} canDismissPolicy={(user?.role ?? 0) >= ROLE_EDITOR} />
+					{!hasDashboardData && (
+						<span role="status" className="sr-only">
+							{t`Loading...`}
+						</span>
 					)}
 					<SummaryMetrics
 						stats={stats}
-						loading={isLoading}
+						showUsers={role >= ROLE_ADMIN}
 						linkCalendar={
-							(user?.role ?? 0) >= ROLE_CONTRIBUTOR &&
-							!manifest.admin?.hiddenNavItems?.includes("calendar")
+							role >= ROLE_CONTRIBUTOR && !manifest.admin?.hiddenNavItems?.includes("calendar")
 						}
 					/>
 
 					{/* Collections + Recent activity */}
 					<div className="grid gap-6 lg:grid-cols-2">
-						<CollectionList
-							collections={stats?.collections ?? []}
-							manifest={manifest}
-							loading={isLoading}
-						/>
-						<RecentActivity items={stats?.recentItems ?? []} loading={isLoading} />
+						<CollectionList collections={stats?.collections} manifest={manifest} />
+						<RecentActivity items={stats?.recentItems} />
 					</div>
 				</>
 			)}
 
-			{/* Plugin widgets */}
 			<PluginWidgets manifest={manifest} />
+
+			{dashboardDataSettled && <DashboardNotices stats={stats} role={role} />}
+
+			{/* Last, so a failed background refresh doesn't push the stale data it leaves on screen. */}
+			{isError && hasDashboardData && <DashboardDataError />}
+		</div>
+	);
+}
+
+/**
+ * Notices about the site. They come last and appear together once everything
+ * they depend on has loaded, so they never push the dashboard's content or each
+ * other.
+ */
+function DashboardNotices({ stats, role }: { stats: DashboardStats | undefined; role: number }) {
+	const coreUpdate = useCoreUpdateStatus();
+	const siteImportHint = useSiteImportHint(stats, role >= ROLE_ADMIN);
+	const coreUpdateLoading = coreUpdate.isPending && coreUpdate.fetchStatus === "fetching";
+	if (coreUpdateLoading || siteImportHint.pending) return null;
+
+	return (
+		<div className="space-y-6 empty:hidden">
+			{stats && <SchedulerWarning stats={stats} canDismissPolicy={role >= ROLE_EDITOR} />}
+			{siteImportHint.show && <SiteImportHint onDismiss={siteImportHint.dismiss} />}
+			<CoreUpdateBanner status={coreUpdate.data} />
 		</div>
 	);
 }
@@ -249,20 +266,21 @@ function readSiteImportHintDismissed(): boolean {
 	}
 }
 
-function SiteImportHint({ stats }: { stats: DashboardStats }) {
-	const { t } = useLingui();
+/** Whether to suggest importing a site package, and whether that is still being worked out. */
+function useSiteImportHint(stats: DashboardStats | undefined, isAdmin: boolean) {
 	const [dismissed, setDismissed] = React.useState(readSiteImportHintDismissed);
 	// Any content or media rules out an import, so only ask the server when the
 	// counts already loaded for the dashboard leave it possible.
 	const mayBeEmpty =
-		stats.mediaCount === 0 && stats.collections.every((collection) => collection.total === 0);
-	const { data: capabilities } = useQuery({
+		stats !== undefined &&
+		stats.mediaCount === 0 &&
+		stats.collections.every((collection) => collection.total === 0);
+	const enabled = isAdmin && !dismissed && mayBeEmpty;
+	const { data: capabilities, isPending } = useQuery({
 		queryKey: TRANSFER_CAPABILITIES_QUERY_KEY,
 		queryFn: fetchTransferCapabilities,
-		enabled: !dismissed && mayBeEmpty,
+		enabled,
 	});
-
-	if (dismissed || !mayBeEmpty || !capabilities?.portableDomain.empty) return null;
 
 	const dismiss = () => {
 		setDismissed(true);
@@ -272,6 +290,16 @@ function SiteImportHint({ stats }: { stats: DashboardStats }) {
 			// Without storage the hint stays hidden until the next page load.
 		}
 	};
+
+	return {
+		show: enabled && capabilities?.portableDomain.empty === true,
+		pending: enabled && isPending,
+		dismiss,
+	};
+}
+
+function SiteImportHint({ onDismiss }: { onDismiss: () => void }) {
+	const { t } = useLingui();
 
 	return (
 		<Banner
@@ -294,7 +322,7 @@ function SiteImportHint({ stats }: { stats: DashboardStats }) {
 						variant="ghost"
 						size="sm"
 						shape="square"
-						onClick={dismiss}
+						onClick={onDismiss}
 						aria-label={t`Dismiss import suggestion`}
 					>
 						<X className="h-4 w-4" aria-hidden="true" />
@@ -362,87 +390,75 @@ function QuickActions({ manifest }: { manifest: AdminManifest }) {
 
 // --- Summary metrics ---
 
+/** Below `lg`, metrics take two columns, and an odd last one spans both. */
+function metricGridClassName(count: number) {
+	return cn(
+		"grid gap-4",
+		count > 2 && "max-lg:grid-cols-2 max-lg:[&>:last-child:nth-child(odd)]:col-span-2",
+		count === 2 ? "lg:grid-cols-2" : count === 3 ? "lg:grid-cols-3" : "lg:grid-cols-4",
+	);
+}
+
 function SummaryMetrics({
 	stats,
-	loading,
+	showUsers,
 	linkCalendar,
 }: {
 	stats?: DashboardStats;
-	loading: boolean;
+	/** Whether to hold a place for the user count while the stats load. */
+	showUsers: boolean;
 	/** Link the Scheduled count to the calendar, for roles that can open it. */
 	linkCalendar: boolean;
 }) {
-	if (loading) {
-		return (
-			<div className="grid gap-4 sm:grid-cols-3">
-				{[1, 2, 3].map((i) => (
-					<LayerCard key={i}>
-						<LayerCard.Secondary>
-							<DashboardCardInset>
-								<SkeletonLine minWidth={45} maxWidth={70} />
-							</DashboardCardInset>
-						</LayerCard.Secondary>
-						<LayerCard.Primary className="text-3xl font-semibold leading-none">
-							<DashboardCardInset>
-								<SkeletonLine minWidth={20} maxWidth={35} />
-							</DashboardCardInset>
-						</LayerCard.Primary>
-					</LayerCard>
-				))}
-			</div>
-		);
-	}
+	const { t } = useLingui();
+	const totalDrafts = stats?.collections.reduce((sum, c) => sum + c.draft, 0);
+	const totalScheduled = stats?.collections.reduce((sum, c) => sum + c.scheduled, 0);
 
-	if (!stats) return null;
-
-	const totalDrafts = stats.collections.reduce((sum, c) => sum + c.draft, 0);
-	const totalScheduled = stats.collections.reduce((sum, c) => sum + c.scheduled, 0);
-	const hasScheduledContent = totalScheduled > 0;
-
-	const metrics: Array<{ label: string; value: number; calendar?: boolean }> = [
+	const metrics: Array<{ key: string; label: string; value?: number; calendar?: boolean }> = [
 		{
-			label: plural(totalDrafts, { one: "Draft", other: "Drafts" }),
+			key: "drafts",
+			label:
+				totalDrafts === undefined
+					? t`Drafts`
+					: plural(totalDrafts, { one: "Draft", other: "Drafts" }),
 			value: totalDrafts,
 		},
-		...(hasScheduledContent
-			? [
-					{
-						label: plural(totalScheduled, { one: "Scheduled", other: "Scheduled" }),
-						value: totalScheduled,
-						calendar: linkCalendar,
-					},
-				]
-			: []),
-		...(stats.mediaCount === undefined
-			? []
-			: [
-					{
-						label: plural(stats.mediaCount, { one: "Media file", other: "Media files" }),
-						value: stats.mediaCount,
-					},
-				]),
-		...(stats.userCount === undefined
-			? []
-			: [
-					{
-						label: plural(stats.userCount, { one: "User", other: "Users" }),
-						value: stats.userCount,
-					},
-				]),
+		{
+			key: "scheduled",
+			label:
+				totalScheduled === undefined
+					? t`Scheduled`
+					: plural(totalScheduled, { one: "Scheduled", other: "Scheduled" }),
+			value: totalScheduled,
+			calendar: linkCalendar,
+		},
 	];
+	// Every role that can open the dashboard can read media, so its count is expected while loading.
+	if (!stats || stats.mediaCount !== undefined) {
+		metrics.push({
+			key: "media",
+			label:
+				stats?.mediaCount === undefined
+					? t`Media files`
+					: plural(stats.mediaCount, { one: "Media file", other: "Media files" }),
+			value: stats?.mediaCount,
+		});
+	}
+	if (stats ? stats.userCount !== undefined : showUsers) {
+		metrics.push({
+			key: "users",
+			label:
+				stats?.userCount === undefined
+					? t`Users`
+					: plural(stats.userCount, { one: "User", other: "Users" }),
+			value: stats?.userCount,
+		});
+	}
 
 	return (
-		<div
-			className={
-				metrics.length === 4
-					? "grid gap-4 sm:grid-cols-2 lg:grid-cols-4"
-					: metrics.length === 3
-						? "grid gap-4 sm:grid-cols-3"
-						: "grid gap-4 sm:grid-cols-2"
-			}
-		>
+		<div className={metricGridClassName(metrics.length)}>
 			{metrics.map((metric) => (
-				<LayerCard key={metric.label} data-testid="dashboard-metric">
+				<LayerCard key={metric.key} data-testid="dashboard-metric">
 					<DashboardCardHeading>
 						{metric.calendar ? (
 							<Link
@@ -460,23 +476,19 @@ function SummaryMetrics({
 						)}
 					</DashboardCardHeading>
 					<LayerCard.Primary className="text-3xl font-semibold leading-none tabular-nums">
-						<DashboardCardInset data-testid="dashboard-metric-value">
-							{metric.value}
-						</DashboardCardInset>
+						{metric.value === undefined ? (
+							<DashboardCardInset aria-hidden="true">
+								<SkeletonLine blockHeight="1lh" minWidth={28} maxWidth={28} />
+							</DashboardCardInset>
+						) : (
+							<DashboardCardInset data-testid="dashboard-metric-value">
+								{metric.value}
+							</DashboardCardInset>
+						)}
 					</LayerCard.Primary>
 				</LayerCard>
 			))}
 		</div>
-	);
-}
-
-function SkeletonRows({ count }: { count: number }) {
-	return (
-		<DashboardCardInset className="space-y-3">
-			{Array.from({ length: count }, (_, i) => (
-				<SkeletonLine key={i} blockHeight={40} minWidth={65} maxWidth={95} />
-			))}
-		</DashboardCardInset>
 	);
 }
 
@@ -485,61 +497,70 @@ function SkeletonRows({ count }: { count: number }) {
 function CollectionList({
 	collections,
 	manifest,
-	loading,
 }: {
-	collections: CollectionStats[];
+	/** Undefined while the stats load. */
+	collections: CollectionStats[] | undefined;
 	manifest: AdminManifest;
-	loading: boolean;
 }) {
 	const { t } = useLingui();
-	const visibleCollections = collections.filter((col) => !manifest.collections[col.slug]?.hidden);
+	const statsBySlug = new Map(collections?.map((col) => [col.slug, col]));
+	// Manifest order, known before the stats load, so rows don't reorder when the counts arrive.
+	const rows: Array<{ slug: string; label: string; stats?: CollectionStats }> = [
+		...visibleCollectionEntries(manifest.collections).map(([slug, config]) => ({
+			slug,
+			label: config.label,
+			stats: statsBySlug.get(slug),
+		})),
+		...(collections ?? [])
+			.filter((col) => !Object.hasOwn(manifest.collections, col.slug))
+			.map((col) => ({ slug: col.slug, label: col.label, stats: col })),
+	];
 
 	return (
 		<LayerCard className="h-full">
 			<DashboardCardHeading>{t`Content`}</DashboardCardHeading>
 			<LayerCard.Primary className="flex-1">
-				{loading ? (
-					<SkeletonRows count={3} />
-				) : visibleCollections.length === 0 ? (
+				{rows.length === 0 ? (
 					<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
 						{t`No collections configured`}
 					</p>
 				) : (
 					<div className="space-y-1">
-						{visibleCollections.map((col) => {
-							const config = manifest.collections[col.slug];
-							return (
-								<Link
-									key={col.slug}
-									to="/content/$collection"
-									params={{ collection: col.slug }}
-									search={{ locale: undefined }}
-									className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
-								>
-									<span className="text-base font-medium leading-5">
-										{config?.label ?? col.label}
-									</span>
-									<span className="flex shrink-0 items-center gap-2">
-										<CountBadge
-											icon={CONTENT_STATUS_ICONS.published}
-											count={col.published}
-											variant="success"
-											label={t`Published`}
-										/>
-										<CountBadge
-											icon={CONTENT_STATUS_ICONS.draft}
-											count={col.draft}
-											variant="warning"
-											label={t`Drafts`}
-										/>
-										<ArrowNext
-											className="h-3.5 w-3.5 text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100"
-											aria-hidden="true"
-										/>
-									</span>
-								</Link>
-							);
-						})}
+						{rows.map((row) => (
+							<Link
+								key={row.slug}
+								to="/content/$collection"
+								params={{ collection: row.slug }}
+								search={{ locale: undefined }}
+								className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
+							>
+								<span className="text-base font-medium leading-5">{row.label}</span>
+								<span className="flex shrink-0 items-center gap-2">
+									{collections === undefined ? (
+										<span aria-hidden="true" className="skeleton-line h-5 w-9 rounded-full" />
+									) : row.stats ? (
+										<>
+											<CountBadge
+												icon={CONTENT_STATUS_ICONS.published}
+												count={row.stats.published}
+												variant="success"
+												label={t`Published`}
+											/>
+											<CountBadge
+												icon={CONTENT_STATUS_ICONS.draft}
+												count={row.stats.draft}
+												variant="warning"
+												label={t`Drafts`}
+											/>
+										</>
+									) : null}
+									<ArrowNext
+										className="h-3.5 w-3.5 text-kumo-subtle opacity-0 transition-opacity group-hover:opacity-100"
+										aria-hidden="true"
+									/>
+								</span>
+							</Link>
+						))}
 					</div>
 				)}
 			</LayerCard.Primary>
@@ -570,47 +591,62 @@ function CountBadge({
 
 // --- Recent activity ---
 
-function RecentActivity({ items, loading }: { items: RecentItem[]; loading: boolean }) {
+const ACTIVITY_PLACEHOLDER_WIDTHS = [62, 48, 70, 55, 66, 44, 58, 72, 50, 64];
+
+function RecentActivity({ items }: { items: RecentItem[] | undefined }) {
 	const { t, i18n } = useLingui();
 
 	return (
 		<LayerCard className="h-full">
 			<DashboardCardHeading>{t`Recent Activity`}</DashboardCardHeading>
 			<LayerCard.Primary className="flex-1">
-				{loading ? (
-					<SkeletonRows count={5} />
-				) : items.length === 0 ? (
-					<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
-						{t`No recent activity`}
-					</p>
-				) : (
-					<div className="space-y-1">
-						{items.map((item) => (
-							<Link
-								key={`${item.collection}-${item.id}`}
-								to="/content/$collection/$id"
-								params={{ collection: item.collection, id: item.id }}
-								className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
-							>
-								<div className="flex min-w-0 items-center gap-2">
-									<StatusDot status={item.status} />
-									<span className="truncate text-base font-medium leading-5">
-										{item.title || item.slug || t`Untitled`}
-									</span>
-									<span className="hidden shrink-0 text-xs font-normal leading-5 text-kumo-subtle sm:inline">
-										{item.collectionLabel}
-									</span>
+				{/* Tall enough for the most rows the server returns (10), so the cards below hold their place. */}
+				<div className="min-h-[24.75rem]">
+					{items === undefined ? (
+						<div aria-hidden="true" className="space-y-1">
+							{ACTIVITY_PLACEHOLDER_WIDTHS.map((width, i) => (
+								<div key={i} className="flex items-center gap-2 px-3 py-2 text-base leading-5">
+									<span className="skeleton-line size-3.5 shrink-0 rounded-full" />
+									<div className="min-w-0 flex-1">
+										<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+									</div>
+									<span className="skeleton-line h-2 w-10 shrink-0" />
 								</div>
-								<span
-									data-testid="activity-time"
-									className="shrink-0 text-xs font-normal leading-5 text-kumo-subtle tabular-nums"
+							))}
+						</div>
+					) : items.length === 0 ? (
+						<p className="px-3 text-sm leading-6 text-pretty text-kumo-subtle">
+							{t`No recent activity`}
+						</p>
+					) : (
+						<div className="space-y-1">
+							{items.map((item) => (
+								<Link
+									key={`${item.collection}-${item.id}`}
+									to="/content/$collection/$id"
+									params={{ collection: item.collection, id: item.id }}
+									className="group flex items-center justify-between gap-2 rounded-md px-3 py-2 hover:bg-kumo-tint"
 								>
-									<bdi>{formatRelativeTime(item.updatedAt, i18n.locale)}</bdi>
-								</span>
-							</Link>
-						))}
-					</div>
-				)}
+									<div className="flex min-w-0 items-center gap-2">
+										<StatusDot status={item.status} />
+										<span className="truncate text-base font-medium leading-5">
+											{item.title || item.slug || t`Untitled`}
+										</span>
+										<span className="hidden shrink-0 text-xs font-normal leading-5 text-kumo-subtle sm:inline">
+											{item.collectionLabel}
+										</span>
+									</div>
+									<span
+										data-testid="activity-time"
+										className="shrink-0 text-xs font-normal leading-5 text-kumo-subtle tabular-nums"
+									>
+										<bdi>{formatRelativeTime(item.updatedAt, i18n.locale)}</bdi>
+									</span>
+								</Link>
+							))}
+						</div>
+					)}
+				</div>
 			</LayerCard.Primary>
 		</LayerCard>
 	);
@@ -641,6 +677,7 @@ function PluginWidgets({ manifest }: { manifest: AdminManifest }) {
 		pluginId: string;
 		title?: string;
 		size?: "full" | "half" | "third";
+		refreshOn?: string[];
 	}> = [];
 
 	for (const [pluginId, plugin] of Object.entries(manifest.plugins || {})) {
@@ -653,6 +690,7 @@ function PluginWidgets({ manifest }: { manifest: AdminManifest }) {
 					pluginId,
 					title: widget.title,
 					size: widget.size,
+					refreshOn: widget.refreshOn,
 				});
 			}
 		}
@@ -674,7 +712,7 @@ function PluginWidgets({ manifest }: { manifest: AdminManifest }) {
 function PluginWidgetCard({
 	widget,
 }: {
-	widget: { id: string; pluginId: string; title?: string; size?: string };
+	widget: { id: string; pluginId: string; title?: string; size?: string; refreshOn?: string[] };
 }) {
 	const { i18n } = useLingui();
 	const WidgetComponent = usePluginWidget(widget.pluginId, widget.id);
@@ -692,7 +730,11 @@ function PluginWidgetCard({
 					{WidgetComponent ? (
 						<WidgetComponent />
 					) : (
-						<SandboxedPluginWidget pluginId={widget.pluginId} widgetId={widget.id} />
+						<SandboxedPluginWidget
+							pluginId={widget.pluginId}
+							widgetId={widget.id}
+							refreshOn={widget.refreshOn}
+						/>
 					)}
 				</DashboardCardInset>
 			</LayerCard.Primary>

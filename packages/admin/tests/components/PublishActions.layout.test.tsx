@@ -62,3 +62,31 @@ describe("PublishActions layout", () => {
 		},
 	);
 });
+
+describe("PublishActions in the editor bar", () => {
+	it("keeps the same width when Unpublish becomes Publish changes", async () => {
+		const props = {
+			collectionLabel: "Post",
+			isNew: false,
+			isLive: true,
+			onPublish: () => {},
+			onUnpublish: () => {},
+			size: "sm" as const,
+			compact: true,
+		};
+		const screen = await render(
+			<div className="@container/editor-bar flex flex-col items-start" style={{ width: 1100 }}>
+				<PublishActions {...props} hasPendingChanges={false} />
+				<PublishActions {...props} hasPendingChanges={true} />
+			</div>,
+		);
+		const unpublish = screen.getByRole("button", { name: "Unpublish Post" }).element();
+		const publish = screen.getByRole("button", { name: "Publish changes" }).element();
+
+		expect(unpublish.getBoundingClientRect().width).toBeGreaterThan(40);
+		expect(publish.getBoundingClientRect().width).toBeCloseTo(
+			unpublish.getBoundingClientRect().width,
+			1,
+		);
+	});
+});

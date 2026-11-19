@@ -7,7 +7,9 @@
 
 export { MAX_UPDATE_BYTES, ROOM_STATE_LIFETIME_MS } from "./limits.js";
 export { joinParts, splitBytes, splitText } from "./parts.js";
-export { CLOSE_CODES, isRoomToken, parseRoomId, RoomSaveError, roomIdFromPath } from "./types.js";
+export { CLOSE_CODES, parseRoomId, RoomSaveError, roomIdFromPath } from "./types.js";
+export { readRoomToken, roomTokenSecret, signRoomToken, verifyRoomToken } from "./token.js";
+export { HUB_NAME, isRealtimePath } from "./types.js";
 export { COMMIT, VERSION } from "../version.js";
 
 export type {

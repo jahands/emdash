@@ -12,8 +12,8 @@ import {
 	InputArea,
 	LayerCard,
 	LayerDialog,
-	Loader,
 	Select,
+	SkeletonLine,
 	Toast,
 } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
@@ -30,12 +30,11 @@ import {
 	User,
 	FileArrowDown,
 } from "@phosphor-icons/react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
 import * as React from "react";
 
 import {
-	fetchSections,
 	createSection,
 	deleteSection,
 	type CreateSectionInput,
@@ -49,12 +48,16 @@ import {
 	useSingleFlight,
 	useTakenValue,
 } from "../lib/dialog-form.js";
+import { sectionsQueryOptions } from "../lib/route-queries.js";
 import { slugify, slugifyIdentifier } from "../lib/utils";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 import { HelpLabel } from "./FieldHelpLabel.js";
 import { TableToolbarSearch } from "./TableToolbar.js";
+
+// Fixed, so placeholders shown again after a remount don't change shape.
+const SECTION_PLACEHOLDER_WIDTHS = [62, 48, 70];
 
 const sourceIcons: Record<SectionSource, React.ElementType> = {
 	theme: Globe,
@@ -129,14 +132,11 @@ export function Sections() {
 		data: sectionsData,
 		isLoading: sectionsLoading,
 		isError: sectionsError,
+		isPlaceholderData: sectionsPlaceholder,
 		refetch: refetchSections,
 	} = useQuery({
-		queryKey: ["sections", { source: selectedSource, search: searchQuery }],
-		queryFn: () =>
-			fetchSections({
-				source: selectedSource || undefined,
-				search: searchQuery || undefined,
-			}),
+		...sectionsQueryOptions({ source: selectedSource, search: searchQuery }),
+		placeholderData: keepPreviousData,
 	});
 	const sections = sectionsData?.items ?? [];
 
@@ -336,14 +336,41 @@ export function Sections() {
 			</header>
 
 			{sectionsLoading ? (
-				<div
-					role="status"
-					className="flex items-center justify-center gap-2 py-16 text-sm text-kumo-subtle"
-				>
-					<span aria-hidden="true">
-						<Loader />
+				<div>
+					<span role="status" className="sr-only">
+						{t`Loading sections...`}
 					</span>
-					{t`Loading sections...`}
+					<div
+						className="grid grid-cols-[repeat(auto-fill,minmax(min(18rem,100%),1fr))] gap-4"
+						aria-hidden="true"
+					>
+						{SECTION_PLACEHOLDER_WIDTHS.map((width) => (
+							<LayerCard key={width} className="flex min-w-0 flex-col gap-3 p-4">
+								<div className="flex min-w-0 items-start gap-3">
+									<div className="skeleton-line size-12 shrink-0 rounded-md" />
+									<div className="flex min-w-0 flex-1 items-start justify-between gap-2">
+										<div className="min-w-0 flex-1">
+											<div className="text-base leading-5">
+												<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+											</div>
+											<div className="text-xs">
+												<SkeletonLine blockHeight="1lh" minWidth={40} maxWidth={40} />
+											</div>
+										</div>
+										<div className="skeleton-line h-5 w-16 shrink-0 rounded-md" />
+									</div>
+								</div>
+								<div className="text-sm leading-5">
+									<SkeletonLine blockHeight="1lh" minWidth={90} maxWidth={90} />
+									<SkeletonLine blockHeight="1lh" minWidth={55} maxWidth={55} />
+								</div>
+								<div className="mt-auto flex items-center justify-between gap-2 border-t border-kumo-line pt-3">
+									<div className="skeleton-line h-6.5 w-16 rounded-md" />
+									<div className="skeleton-line size-6.5 rounded-md" />
+								</div>
+							</LayerCard>
+						))}
+					</div>
 				</div>
 			) : sectionsError && !sectionsData ? (
 				<div role="alert" className="flex flex-col items-center gap-3 py-16 text-center">
@@ -389,7 +416,10 @@ export function Sections() {
 					)}
 				</div>
 			) : (
-				<div className="grid grid-cols-[repeat(auto-fill,minmax(min(18rem,100%),1fr))] gap-4">
+				<div
+					className="grid grid-cols-[repeat(auto-fill,minmax(min(18rem,100%),1fr))] gap-4"
+					aria-busy={sectionsPlaceholder || undefined}
+				>
 					{sections.map((section) => (
 						<SectionCard
 							key={section.id}

@@ -5,7 +5,7 @@
  * is configured, this page shows an informational message instead.
  */
 
-import { Banner, Button, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Banner, Button, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Plus } from "@phosphor-icons/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -93,16 +93,11 @@ export function SecuritySettings({ addPasskey = false }: SecuritySettingsProps) 
 	const title = t`Security Settings`;
 	const description = t`Manage your passkeys and authentication`;
 
-	if (manifestLoading || isLoading) {
+	if (manifestLoading) {
+		// The auth mode decides whether this page has sections at all.
 		return (
-			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading...`}</span>
-				</div>
+			<SettingsFrame title={title} description={description} loading>
+				{null}
 			</SettingsFrame>
 		);
 	}
@@ -134,19 +129,21 @@ export function SecuritySettings({ addPasskey = false }: SecuritySettingsProps) 
 	}
 
 	return (
-		<SettingsFrame title={title} description={description}>
+		<SettingsFrame title={title} description={description} loading={isLoading}>
 			<div className="grid gap-8">
 				<SettingsSection
 					title={t`Passkeys`}
 					description={t`Passkeys are a secure, passwordless way to sign in to your account. You can register multiple passkeys for different devices.`}
 					contentClassName={
-						passkeys && passkeys.length > 0
+						isLoading || (passkeys && passkeys.length > 0)
 							? undefined
 							: "border-2 border-dashed border-kumo-subtle/60"
 					}
 				>
 					<SettingRow className="p-0">
-						{passkeys && passkeys.length > 0 ? (
+						{isLoading ? (
+							<PasskeyPlaceholder />
+						) : passkeys && passkeys.length > 0 ? (
 							<PasskeyList
 								passkeys={passkeys}
 								onRename={handleRename}
@@ -194,7 +191,7 @@ export function SecuritySettings({ addPasskey = false }: SecuritySettingsProps) 
 								/>
 							</div>
 						) : (
-							<Button onClick={() => setIsAdding(true)} icon={<Plus />}>
+							<Button onClick={() => setIsAdding(true)} icon={<Plus />} disabled={isLoading}>
 								{t`Add Passkey`}
 							</Button>
 						)}
@@ -202,6 +199,30 @@ export function SecuritySettings({ addPasskey = false }: SecuritySettingsProps) 
 				</SettingsSection>
 			</div>
 		</SettingsFrame>
+	);
+}
+
+/** A passkey row in outline: most accounts have one passkey. */
+function PasskeyPlaceholder() {
+	return (
+		<div
+			aria-hidden="true"
+			className="flex flex-col gap-4 px-4 py-4 sm:flex-row sm:items-center sm:justify-between"
+		>
+			<div className="flex min-w-0 flex-1 items-start gap-3">
+				<div className="skeleton-line mt-0.5 size-8 shrink-0 rounded-md" />
+				<div className="min-w-0 flex-1">
+					<SkeletonLine blockHeight="1lh" minWidth={30} maxWidth={30} />
+					<div className="text-sm">
+						<SkeletonLine blockHeight="1lh" minWidth={24} maxWidth={24} />
+					</div>
+					<div className="mt-1 text-xs">
+						<SkeletonLine blockHeight="1lh" minWidth={18} maxWidth={18} />
+					</div>
+				</div>
+			</div>
+			<div className="h-6.5" />
+		</div>
 	);
 }
 

@@ -1,13 +1,4 @@
-import {
-	Badge,
-	Button,
-	Input,
-	LinkButton,
-	Loader,
-	Select,
-	Switch,
-	buttonVariants,
-} from "@cloudflare/kumo";
+import { Badge, Button, Input, LinkButton, Select, Switch, buttonVariants } from "@cloudflare/kumo";
 import type { MessageDescriptor } from "@lingui/core";
 import { msg, plural } from "@lingui/core/macro";
 import { Trans, useLingui } from "@lingui/react/macro";
@@ -64,6 +55,7 @@ import {
 import { cn } from "../lib/utils";
 import { CaretNext } from "./ArrowIcons.js";
 import { MediaImportSummary } from "./MediaImportSummary.js";
+import { Spinner } from "./Spinner.js";
 
 export function WordPressExporterMessage() {
 	return (
@@ -819,8 +811,10 @@ export function WordPressImport() {
 			{/* Probing step */}
 			{step === "probing" && (
 				<div className="rounded-lg border bg-kumo-base p-12 text-center">
-					<Loader />
-					<p className="mt-4 text-kumo-subtle">{t`Checking ${urlInput}...`}</p>
+					<Spinner />
+					<p role="status" className="mt-4 text-kumo-subtle">
+						{t`Checking ${urlInput}...`}
+					</p>
 				</div>
 			)}
 
@@ -853,8 +847,10 @@ export function WordPressImport() {
 			{/* Analyzing WordPress Plugin step */}
 			{step === "analyzing-plugin" && (
 				<div className="rounded-lg border bg-kumo-base p-12 text-center">
-					<Loader />
-					<p className="mt-4 text-kumo-subtle">{t`Analyzing WordPress site...`}</p>
+					<Spinner />
+					<p role="status" className="mt-4 text-kumo-subtle">
+						{t`Analyzing WordPress site...`}
+					</p>
 					<p className="text-sm text-kumo-subtle">{t`Fetching content from the EmDash Exporter API.`}</p>
 				</div>
 			)}
@@ -930,18 +926,20 @@ export function WordPressImport() {
 			{/* Preparing step */}
 			{step === "preparing" && (
 				<div className="rounded-lg border bg-kumo-base p-12 text-center">
-					<Loader />
-					<p className="mt-4 text-kumo-subtle">{t`Creating collections and fields...`}</p>
+					<Spinner />
+					<p role="status" className="mt-4 text-kumo-subtle">
+						{t`Creating collections and fields...`}
+					</p>
 				</div>
 			)}
 
 			{/* Importing step */}
 			{step === "importing" && (
 				<div className="rounded-lg border bg-kumo-base p-12 text-center">
-					<Loader />
+					<Spinner />
 					{wpImportProgress ? (
 						<>
-							<p className="mt-4 text-kumo-subtle">
+							<p role="status" className="mt-4 text-kumo-subtle">
 								{wpImportProgress.phase === "taxonomy" && t`Preparing categories and tags...`}
 								{wpImportProgress.phase === "content" &&
 									(totalSelectedPosts > 0
@@ -966,7 +964,9 @@ export function WordPressImport() {
 						</>
 					) : (
 						<>
-							<p className="mt-4 text-kumo-subtle">{t`Importing content...`}</p>
+							<p role="status" className="mt-4 text-kumo-subtle">
+								{t`Importing content...`}
+							</p>
 							<p className="text-sm text-kumo-subtle">{t`This may take a while for large exports.`}</p>
 						</>
 					)}
@@ -991,8 +991,10 @@ export function WordPressImport() {
 			{/* Rewriting URLs step */}
 			{step === "rewriting" && (
 				<div className="rounded-lg border bg-kumo-base p-12 text-center">
-					<Loader />
-					<p className="mt-4 text-kumo-subtle">{t`Updating content URLs...`}</p>
+					<Spinner />
+					<p role="status" className="mt-4 text-kumo-subtle">
+						{t`Updating content URLs...`}
+					</p>
 				</div>
 			)}
 
@@ -1628,8 +1630,10 @@ function UploadStep({
 			>
 				{isLoading ? (
 					<div className="space-y-4">
-						<Loader />
-						<p className="text-kumo-subtle">{t`Analyzing export file...`}</p>
+						<Spinner />
+						<p role="status" className="text-kumo-subtle">
+							{t`Analyzing export file...`}
+						</p>
 					</div>
 				) : error ? (
 					<div className="space-y-4">
@@ -2183,14 +2187,14 @@ function MediaProgressStep({
 	return (
 		<div className="rounded-lg border bg-kumo-base p-8">
 			<div className="flex flex-col items-center text-center">
-				<Loader size="lg" />
+				<Spinner size="lg" />
 				<p className="text-sm font-medium mt-2">{percentage}%</p>
 
 				<h3 className="mt-6 text-lg font-medium">{t`Importing Media`}</h3>
 
 				<div className="w-full max-w-md mt-4">
 					<div className="flex justify-between text-sm text-kumo-subtle mb-1">
-						<span>{t`${current} of ${total}`}</span>
+						<span role="status">{t`${current} of ${total}`}</span>
 						<span>{percentage}%</span>
 					</div>
 					<div className="h-2 bg-kumo-tint rounded-full overflow-hidden">

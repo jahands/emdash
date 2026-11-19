@@ -89,9 +89,11 @@ test.describe("Accessibility Audit", () => {
 
 			const layout = await admin.page.locator("main").evaluate((main) => {
 				const textStart = (element: Element) => {
-					const textNode = [...element.childNodes].find(
-						(node) => node.nodeType === Node.TEXT_NODE && node.textContent?.trim(),
+					// A metric that opens another screen wraps its label in a link.
+					const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT, (node) =>
+						node.textContent?.trim() ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP,
 					);
+					const textNode = walker.nextNode();
 					if (!textNode) throw new Error("Dashboard card text is missing");
 					const range = document.createRange();
 					range.selectNodeContents(textNode);
@@ -287,7 +289,7 @@ test.describe("Accessibility Audit", () => {
 			await expect(page.getByRole("heading", { name: "Media Library" })).toBeVisible();
 			await page.getByRole("tab", { name: "List view" }).click();
 			const table = page.getByRole("table");
-			await expect(table.getByText("Loading folders")).toBeVisible();
+			await expect(table).toHaveAttribute("aria-busy", "true");
 			const analyze = () =>
 				new AxeBuilder({ page })
 					.withTags(["wcag2a", "wcag2aa", "wcag21aa"])
@@ -296,7 +298,7 @@ test.describe("Accessibility Audit", () => {
 			expect((await analyze()).violations).toEqual([]);
 
 			releaseFolders();
-			await expect(table.getByText("Loading folders")).not.toBeVisible();
+			await expect(table).not.toHaveAttribute("aria-busy");
 			await page.unroute(folderPattern);
 			const folderName = `List accessibility ${Date.now()}`;
 			await page.getByRole("button", { name: "Add new folder" }).click();

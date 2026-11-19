@@ -42,11 +42,11 @@ if (Astro.cache?.enabled) {
 			<p>No posts in this category yet.</p>
 		) : (
 			<ul>
-				{posts.map((post) => (
+				{posts.map((post, index) => (
 					<li>
 						<a href={`/posts/${post.id}`}>
 							{post.data.featured_image && (
-								<div {...post.edit.featured_image}><Image image={post.data.featured_image} /></div>
+								<div {...post.edit.featured_image}><Image image={post.data.featured_image} priority={index < 2} /></div>
 							)}
 							<h2 {...post.edit.title}>{post.data.title}</h2>
 						</a>

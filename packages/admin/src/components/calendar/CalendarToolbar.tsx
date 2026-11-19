@@ -1,4 +1,4 @@
-import { Button, Loader, Tabs } from "@cloudflare/kumo";
+import { Button, Tabs } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { Globe, GridFour, ListBullets } from "@phosphor-icons/react";
 import type * as React from "react";
@@ -22,6 +22,8 @@ interface CalendarToolbarProps {
 	onPreviewNext?: () => void;
 	/** The filters, across from the view switcher. */
 	tools?: React.ReactNode;
+	/** Shown before the month buttons, in a slot that is always laid out so they never move. */
+	notice?: React.ReactNode;
 }
 
 /**
@@ -41,6 +43,7 @@ export function CalendarToolbar({
 	onPreviewPrevious,
 	onPreviewNext,
 	tools,
+	notice,
 }: CalendarToolbarProps) {
 	const { t } = useLingui();
 	const siteZone = display.zoneShortName(zoneTime);
@@ -110,7 +113,15 @@ export function CalendarToolbar({
 					</p>
 				</div>
 				<div className="flex h-7 shrink-0 items-center gap-1">
-					{loading && <Loader size="sm" aria-label={t`Loading`} className="me-1" />}
+					<div className="flex size-7 items-center justify-center">
+						{loading ? (
+							<span role="status" className="sr-only">
+								{t`Loading...`}
+							</span>
+						) : (
+							notice
+						)}
+					</div>
 					<Button
 						variant="ghost"
 						shape="square"

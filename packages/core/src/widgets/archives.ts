@@ -6,54 +6,36 @@ export interface ArchiveGroup {
 	url: string;
 }
 
-function toPublishedDate(value: unknown): Date | null {
-	if (value instanceof Date) {
-		return Number.isNaN(value.getTime()) ? null : value;
-	}
-	if (typeof value === "string" || typeof value === "number") {
-		const date = new Date(value);
-		return Number.isNaN(date.getTime()) ? null : date;
-	}
-	return null;
-}
-
 /**
- * Group collection entries by published date for the Archives widget.
+ * Group published entry counts by month or year in the server's local time
+ * zone for the Archives widget. Groups keep the order of their first bucket,
+ * so buckets ordered newest first give the newest group first.
  *
- * Accepts `Date` objects, ISO strings, and numeric timestamps; `getEmDashCollection()`
- * returns `publishedAt` as a `Date`.
+ * Every entry counted in a bucket falls in the same local month as
+ * `new Date(bucket)`; see `getPublishedDateBuckets`.
  */
-export function groupEntriesByPublishedAt(
-	entries: Array<{ data: { publishedAt?: unknown } }>,
+export function groupPublishedDateBuckets(
+	buckets: ReadonlyArray<{ bucket: string; count: number }>,
 	options: { type?: ArchiveGroupType; limit?: number } = {},
 ): ArchiveGroup[] {
 	const type = options.type ?? "monthly";
 	const limit = options.limit ?? 12;
 	const archives = new Map<string, { date: Date; count: number; url: string }>();
 
-	for (const entry of entries) {
-		const date = toPublishedDate(entry.data.publishedAt);
-		if (!date) continue;
+	for (const { bucket, count } of buckets) {
+		const date = new Date(bucket);
+		if (Number.isNaN(date.getTime())) continue;
 
-		let key: string;
-		let url: string;
-
-		if (type === "yearly") {
-			const year = date.getFullYear();
-			key = `${year}`;
-			url = `/archives/${year}`;
-		} else {
-			const year = date.getFullYear();
-			const month = date.getMonth() + 1;
-			key = `${year}-${month.toString().padStart(2, "0")}`;
-			url = `/archives/${year}/${month.toString().padStart(2, "0")}`;
-		}
+		const year = date.getFullYear();
+		const month = (date.getMonth() + 1).toString().padStart(2, "0");
+		const key = type === "yearly" ? `${year}` : `${year}-${month}`;
+		const url = type === "yearly" ? `/archives/${year}` : `/archives/${year}/${month}`;
 
 		const existing = archives.get(key);
 		if (existing) {
-			existing.count++;
+			existing.count += count;
 		} else {
-			archives.set(key, { date, count: 1, url });
+			archives.set(key, { date, count, url });
 		}
 	}
 

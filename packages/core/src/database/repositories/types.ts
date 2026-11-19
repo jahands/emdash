@@ -1,3 +1,5 @@
+import type { RawBuilder } from "kysely";
+
 import type { ContentFieldFilters } from "../../content-list-query.js";
 import type { CustomFieldValue } from "../../schema/types.js";
 import { encodeBase64, decodeBase64 } from "../../utils/base64.js";
@@ -229,6 +231,13 @@ export interface FindManyOptions {
 	cursor?: string; // Base64-encoded JSON: {orderValue: string, id: string}
 	/** Rows to skip before the page, for numbered pages. Cannot be combined with `cursor`. */
 	offset?: number;
+	/**
+	 * An expression read alongside each row, correlated on the content table
+	 * by its name. Its values come back in `folds`, in item order. The page is
+	 * read without it, and `folds` left unset, when it would take the
+	 * statement past D1's limits on bound parameters or result columns.
+	 */
+	fold?: RawBuilder<unknown>;
 }
 
 export interface FindManyResult<T> {
@@ -240,6 +249,8 @@ export interface FindManyResult<T> {
 	 * it should set it so the UI can render a stable pagination denominator.
 	 */
 	total?: number;
+	/** The value of `FindManyOptions.fold` for each item, when one was given. */
+	folds?: unknown[];
 }
 
 /**
@@ -390,6 +401,11 @@ export interface ContentItem {
 	 * revision history.
 	 */
 	liveData?: Record<string, unknown>;
+	/**
+	 * The slug the draft revision stages, which publishing makes the entry's `slug`. Only
+	 * populated when the caller asks for it, as `GET /content/{collection}/{id}?draftSlug=1` does.
+	 */
+	draftSlug?: string;
 	/**
 	 * First page of each reference field's resolved selection, keyed by field
 	 * slug. Only populated when the caller opts in via `handleContentGet`'s

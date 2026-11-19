@@ -23,6 +23,8 @@ export interface RevisionViewContextValue {
 	showOlderVersions: () => void;
 	/** Shows a revision in the canvas. `opener` gets focus back when the view closes. */
 	view: (revisionId: string, options?: { opener?: HTMLElement | null }) => void;
+	/** Shows the draft in the canvas, compared with the live version. */
+	viewDraftChanges: (options?: { opener?: HTMLElement | null }) => void;
 	exit: () => void;
 	/** Scrolls the canvas to a change's target and focuses it. */
 	goToChange: (targetId: string) => void;

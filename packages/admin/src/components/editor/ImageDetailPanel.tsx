@@ -5,16 +5,7 @@
  * Shows preview and allows editing alt text, caption, and link settings.
  */
 
-import {
-	Button,
-	Checkbox,
-	Input,
-	InputArea,
-	Label,
-	LinkButton,
-	Select,
-	Text,
-} from "@cloudflare/kumo";
+import { Checkbox, Input, InputArea, Label, LinkButton, Select, Text } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import {
 	X,
@@ -32,6 +23,7 @@ import type { MediaItem } from "../../lib/api";
 import { useStableCallback } from "../../lib/hooks";
 import { canonicalMediaProviderId, dropsDisplayHeight, metaString } from "../../lib/media-utils.js";
 import { cn } from "../../lib/utils.js";
+import { Button } from "../Button.js";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { FieldHelpLabel } from "../FieldHelpLabel.js";
 import { useMediaAssetEditor } from "../media/useMediaAssetEditor.js";

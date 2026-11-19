@@ -5,7 +5,7 @@
  * table with row actions, bulk selection, and detail slide-over.
  */
 
-import { Badge, Button, Checkbox, DropdownMenu, Select } from "@cloudflare/kumo";
+import { Badge, Button, Checkbox, DropdownMenu, Select, SkeletonLine } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import {
@@ -48,7 +48,8 @@ import { CommentDetail } from "./CommentDetail.js";
 
 export interface CommentInboxProps {
 	comments: AdminComment[];
-	counts: CommentCounts;
+	/** Until they are known, the tabs show no counts. */
+	counts?: CommentCounts;
 	isLoading: boolean;
 	nextCursor?: string;
 	collections: Record<string, { label: string }>;
@@ -77,6 +78,7 @@ export interface CommentInboxProps {
 // ---------------------------------------------------------------------------
 
 const PAGE_SIZE = 20;
+const PLACEHOLDER_ROW_COUNT = 5;
 const STATUS_TAB_CLASS_NAME = "flex-1 justify-center text-xs sm:flex-none sm:text-sm";
 const STATUS_TAB_ICON_CLASS_NAME = "size-3.5 shrink-0 sm:size-4";
 const STATUS_TAB_LABEL_CLASS_NAME = "flex items-center gap-1 sm:gap-1.5";
@@ -138,6 +140,13 @@ export function CommentInbox({
 	const totalPages = Math.max(1, Math.ceil(comments.length / PAGE_SIZE));
 	const paginatedComments = comments.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
 	const showLoading = isLoading && comments.length === 0;
+	const hasFilters = Boolean(searchQuery || collectionFilter);
+	// The tab's count says how many rows are coming, so the placeholders take
+	// their space, and a tab known to be empty shows so without loading.
+	const placeholderRows =
+		counts && !hasFilters ? Math.min(counts[activeStatus], PAGE_SIZE) : PLACEHOLDER_ROW_COUNT;
+	// The tab's count also says whether the rows coming fill more than a page.
+	const pagingPending = showLoading && !hasFilters && (counts?.[activeStatus] ?? 0) > PAGE_SIZE;
 
 	// Bulk select
 	const allOnPageSelected =
@@ -232,7 +241,7 @@ export function CommentInbox({
 									aria-hidden="true"
 								/>
 								{t`Pending`}
-								{counts.pending > 0 && <Badge variant="secondary">{counts.pending}</Badge>}
+								{!!counts?.pending && <Badge variant="secondary">{counts.pending}</Badge>}
 							</span>
 						),
 					},
@@ -263,7 +272,7 @@ export function CommentInbox({
 									aria-hidden="true"
 								/>
 								{t`Spam`}
-								{counts.spam > 0 && <Badge variant="secondary">{counts.spam}</Badge>}
+								{!!counts?.spam && <Badge variant="secondary">{counts.spam}</Badge>}
 							</span>
 						),
 					},
@@ -279,7 +288,7 @@ export function CommentInbox({
 									aria-hidden="true"
 								/>
 								{t`Trash`}
-								{counts.trash > 0 && <Badge variant="secondary">{counts.trash}</Badge>}
+								{!!counts?.trash && <Badge variant="secondary">{counts.trash}</Badge>}
 							</span>
 						),
 					},
@@ -340,82 +349,99 @@ export function CommentInbox({
 				</DataTableBulkBar>
 			)}
 
-			{/* Table */}
-			{!showLoading && paginatedComments.length === 0 ? (
-				<EmptyState status={activeStatus} hasFilters={Boolean(searchQuery || collectionFilter)} />
-			) : (
-				<DataTable>
-					<thead>
-						<tr>
-							<th scope="col" className="w-10">
-								<Checkbox
-									checked={allOnPageSelected}
-									onCheckedChange={toggleAll}
-									aria-label={t`Select all on this page`}
-								/>
-							</th>
-							<th scope="col">{t`Comment`}</th>
-							<th scope="col" {...tertiaryColumn}>
-								{t`Content`}
-							</th>
-							<th scope="col" {...tertiaryColumn}>
-								{t`Date`}
-							</th>
-							<th scope="col" className="w-0">
-								<span className="sr-only">{t`Actions`}</span>
-							</th>
-						</tr>
-					</thead>
-					<tbody>
-						{showLoading ? (
-							<DataTableMessage colSpan={5}>{t`Loading comments...`}</DataTableMessage>
-						) : (
-							paginatedComments.map((comment) => (
-								<CommentRow
-									key={comment.id}
-									comment={comment}
-									isSelected={selected.has(comment.id)}
-									onToggle={() => toggleOne(comment.id)}
-									onRowClick={() => setDetailComment(comment)}
-									onStatusChange={(id, status) => {
-										void onCommentStatusChange(id, status).then(clearSelection);
-									}}
-									onDelete={(id) => {
-										setDeleteId(id);
-										onDeleteErrorReset();
-									}}
-									isAdmin={isAdmin}
-									isStatusPending={isStatusPending}
-								/>
-							))
-						)}
-					</tbody>
-				</DataTable>
-			)}
+			<DataTable>
+				<thead>
+					<tr>
+						<th scope="col" className="w-10">
+							<Checkbox
+								checked={allOnPageSelected}
+								onCheckedChange={toggleAll}
+								aria-label={t`Select all on this page`}
+							/>
+						</th>
+						<th scope="col">{t`Comment`}</th>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-48" {...tertiaryColumn}>
+							{t`Content`}
+						</th>
+						<th scope="col" className="w-36" {...tertiaryColumn}>
+							{t`Date`}
+						</th>
+						<th scope="col" className="w-0">
+							<span className="sr-only">{t`Actions`}</span>
+							{/* As wide as a row's buttons, so an empty tab leaves the other columns in place. */}
+							<div aria-hidden="true" className={activeStatus !== "approved" ? "w-14" : "w-6.5"} />
+						</th>
+					</tr>
+				</thead>
+				<tbody>
+					{showLoading && placeholderRows > 0 ? (
+						<CommentPlaceholderRows
+							rows={placeholderRows}
+							approvable={activeStatus !== "approved"}
+						/>
+					) : paginatedComments.length === 0 ? (
+						<DataTableMessage colSpan={5}>
+							<EmptyState status={activeStatus} hasFilters={hasFilters} />
+						</DataTableMessage>
+					) : (
+						paginatedComments.map((comment) => (
+							<CommentRow
+								key={comment.id}
+								comment={comment}
+								isSelected={selected.has(comment.id)}
+								onToggle={() => toggleOne(comment.id)}
+								onRowClick={() => setDetailComment(comment)}
+								onStatusChange={(id, status) => {
+									void onCommentStatusChange(id, status).then(clearSelection);
+								}}
+								onDelete={(id) => {
+									setDeleteId(id);
+									onDeleteErrorReset();
+								}}
+								isAdmin={isAdmin}
+								isStatusPending={isStatusPending}
+							/>
+						))
+					)}
+				</tbody>
+			</DataTable>
 
 			{/* Pagination */}
-			{(totalPages > 1 || nextCursor) && (
+			{(totalPages > 1 || nextCursor || pagingPending) && (
 				<div className="flex items-center justify-between">
-					<span className="text-sm text-kumo-subtle">
-						{plural(comments.length, { one: "# comment", other: "# comments" })}
-					</span>
+					{pagingPending ? (
+						<div className="w-24" aria-hidden="true">
+							<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+						</div>
+					) : (
+						<span className="text-sm text-kumo-subtle">
+							{plural(comments.length, { one: "# comment", other: "# comments" })}
+						</span>
+					)}
 					<div className="flex items-center gap-2">
 						<Button
 							variant="outline"
 							shape="square"
-							disabled={page === 0}
+							disabled={page === 0 || pagingPending}
 							onClick={() => setPage(page - 1)}
 							aria-label={t`Previous page`}
 						>
 							<CaretPrev className="h-4 w-4" />
 						</Button>
-						<span className="text-sm">
-							{page + 1} / {totalPages}
-						</span>
+						{pagingPending ? (
+							<div className="w-10" aria-hidden="true">
+								<SkeletonLine blockHeight={20} minWidth={100} maxWidth={100} />
+							</div>
+						) : (
+							<span className="text-sm">
+								{page + 1} / {totalPages}
+							</span>
+						)}
 						<Button
 							variant="outline"
 							shape="square"
-							disabled={page >= totalPages - 1 && !nextCursor}
+							disabled={(page >= totalPages - 1 && !nextCursor) || pagingPending}
 							onClick={() => {
 								if (page >= totalPages - 1 && nextCursor) {
 									onLoadMore();
@@ -516,6 +542,59 @@ interface CommentRowProps {
 	isStatusPending: boolean;
 }
 
+// Fixed per row, so placeholders shown again after a remount keep their shape.
+const PLACEHOLDER_AUTHOR_WIDTHS = [30, 42, 26, 36, 48];
+const PLACEHOLDER_EXCERPT_WIDTHS = [72, 58, 80, 64, 50];
+const PLACEHOLDER_TEXT_WIDTHS = [70, 85, 60, 78, 66];
+
+function PlaceholderLine({ widths, row }: { widths: readonly number[]; row: number }) {
+	const width = widths[row % widths.length] ?? 60;
+	return <SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />;
+}
+
+/**
+ * Rows shaped like `CommentRow`'s with a one-line excerpt, shown while a tab's comments load.
+ * Pass `approvable` when the tab's rows have an Approve button beside their "…" button.
+ */
+function CommentPlaceholderRows({ rows, approvable }: { rows: number; approvable: boolean }) {
+	const { t } = useLingui();
+	return Array.from({ length: rows }, (_, row) => (
+		<tr key={row} aria-hidden={row > 0 || undefined}>
+			<td>
+				{row === 0 && (
+					<span role="status" className="sr-only">
+						{t`Loading...`}
+					</span>
+				)}
+			</td>
+			<td>
+				<div aria-hidden="true">
+					<PlaceholderLine widths={PLACEHOLDER_AUTHOR_WIDTHS} row={row} />
+					<div className="mt-0.5">
+						<PlaceholderLine widths={PLACEHOLDER_EXCERPT_WIDTHS} row={row} />
+					</div>
+					<div className="mt-1 @2xl:hidden">
+						<PlaceholderLine widths={PLACEHOLDER_AUTHOR_WIDTHS} row={row + 2} />
+					</div>
+				</div>
+			</td>
+			<td {...tertiaryColumn}>
+				<div aria-hidden="true">
+					<PlaceholderLine widths={PLACEHOLDER_TEXT_WIDTHS} row={row} />
+				</div>
+			</td>
+			<td {...tertiaryColumn}>
+				<div aria-hidden="true">
+					<PlaceholderLine widths={PLACEHOLDER_TEXT_WIDTHS} row={row + 1} />
+				</div>
+			</td>
+			<td>
+				<div aria-hidden="true" className={approvable ? "h-6.5 w-14" : "size-6.5"} />
+			</td>
+		</tr>
+	));
+}
+
 function CommentRow({
 	comment,
 	isSelected,
@@ -542,11 +621,12 @@ function CommentRow({
 				/>
 			</td>
 			<td>
-				<div className="flex flex-wrap items-baseline gap-x-2">
-					<RowTitleButton dir="auto" className="wrap-anywhere" onClick={onRowClick}>
+				{/* The email shortens rather than wrapping, so a row is as tall as its loading placeholder. */}
+				<div className="flex items-baseline gap-x-2">
+					<RowTitleButton dir="auto" className="min-w-0 wrap-anywhere" onClick={onRowClick}>
 						{author}
 					</RowTitleButton>
-					<span className="text-sm text-kumo-subtle wrap-anywhere @max-md:hidden">
+					<span className="w-0 flex-1 truncate text-sm text-kumo-subtle @max-md:hidden">
 						<bdi dir="ltr">{comment.authorEmail}</bdi>
 					</span>
 				</div>
@@ -631,8 +711,8 @@ function EmptyState({ status, hasFilters }: { status: CommentStatus; hasFilters:
 	};
 
 	return (
-		<div className="py-10 text-center text-kumo-subtle">
-			<ADMIN_NAV_ICONS.comments size={40} className="mx-auto mb-3 opacity-30" />
+		<div className="py-5.5">
+			<ADMIN_NAV_ICONS.comments size={40} className="mx-auto mb-3 opacity-30" aria-hidden="true" />
 			<p className="text-base font-medium">
 				{hasFilters ? t`No comments match your filters.` : messages[status]}
 			</p>

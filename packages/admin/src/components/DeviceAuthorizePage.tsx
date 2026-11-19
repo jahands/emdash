@@ -11,7 +11,7 @@
  * 4. CLI receives tokens and saves them
  */
 
-import { Button, Input, Loader } from "@cloudflare/kumo";
+import { Button, Input, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { useQuery } from "@tanstack/react-query";
 import * as React from "react";
@@ -182,18 +182,25 @@ export function DeviceAuthorizePage() {
 		setCode(formatDeviceCode(e.target.value));
 	}
 
-	if (isLoading) {
-		return (
-			<PageWrapper>
-				<p className="text-kumo-subtle text-sm">{t`Checking authentication...`}</p>
-			</PageWrapper>
-		);
-	}
+	const header = (
+		<div className="text-center mb-8">
+			<div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-kumo-brand/10 mb-4">
+				<TerminalIcon className="w-6 h-6 text-kumo-link" />
+			</div>
+			<h1 className="text-xl font-semibold tracking-tight">{t`Authorize Device`}</h1>
+			<p className="text-kumo-subtle text-sm mt-1.5">{t`Enter the code from your terminal`}</p>
+		</div>
+	);
 
-	if (!user) {
+	if (!isLoading && !user) {
 		return (
 			<PageWrapper>
-				<p className="text-kumo-subtle text-sm">{t`Redirecting to login...`}</p>
+				<div className="w-full max-w-sm">
+					{header}
+					<span role="status" className="sr-only">
+						{t`Redirecting to login...`}
+					</span>
+				</div>
 			</PageWrapper>
 		);
 	}
@@ -201,14 +208,7 @@ export function DeviceAuthorizePage() {
 	return (
 		<PageWrapper>
 			<div className="w-full max-w-sm">
-				{/* Header */}
-				<div className="text-center mb-8">
-					<div className="inline-flex items-center justify-center w-12 h-12 rounded-xl bg-kumo-brand/10 mb-4">
-						<TerminalIcon className="w-6 h-6 text-kumo-link" />
-					</div>
-					<h1 className="text-xl font-semibold tracking-tight">{t`Authorize Device`}</h1>
-					<p className="text-kumo-subtle text-sm mt-1.5">{t`Enter the code from your terminal`}</p>
-				</div>
+				{header}
 
 				{/* Success state */}
 				{pageState === "success" && (
@@ -220,7 +220,7 @@ export function DeviceAuthorizePage() {
 						<p className="text-sm text-kumo-subtle mt-1">
 							{t`You can close this page and return to your terminal.`}
 						</p>
-						<p className="text-xs text-kumo-subtle mt-3">{t`Signed in as ${user.email}`}</p>
+						<p className="text-xs text-kumo-subtle mt-3">{t`Signed in as ${user?.email}`}</p>
 					</div>
 				)}
 
@@ -248,11 +248,29 @@ export function DeviceAuthorizePage() {
 						<div className="rounded-lg border border-kumo-line bg-kumo-base p-6">
 							{/* User badge */}
 							<div className="flex items-center gap-2 mb-5 pb-4 border-b border-kumo-line">
-								<UserAvatar user={user} size={32} />
-								<div className="min-w-0">
-									<p className="text-sm font-medium truncate">{user.name || user.email}</p>
-									<p className="text-xs text-kumo-subtle">{ROLE_NAMES[user.role] || t`User`}</p>
-								</div>
+								{user ? (
+									<>
+										<UserAvatar user={user} size={32} />
+										<div className="min-w-0">
+											<p className="text-sm font-medium truncate">{user.name || user.email}</p>
+											<p className="text-xs text-kumo-subtle">{ROLE_NAMES[user.role] || t`User`}</p>
+										</div>
+									</>
+								) : (
+									<>
+										<span role="status" className="sr-only">
+											{t`Checking authentication...`}
+										</span>
+										<div
+											aria-hidden="true"
+											className="skeleton-line size-8 shrink-0 rounded-full"
+										/>
+										<div aria-hidden="true" className="min-w-0 flex-1 text-sm">
+											<SkeletonLine blockHeight="1lh" minWidth={55} maxWidth={55} />
+											<SkeletonLine blockHeight={16} minWidth={25} maxWidth={25} />
+										</div>
+									</>
+								)}
 							</div>
 
 							{/* Code input */}
@@ -280,7 +298,7 @@ export function DeviceAuthorizePage() {
 
 							{codeComplete && (
 								<RequestedScopes
-									isLoading={scopesQuery.isLoading}
+									isLoading={!user || scopesQuery.isLoading}
 									error={scopesQuery.error}
 									scopes={scopesQuery.data}
 								/>
@@ -291,7 +309,7 @@ export function DeviceAuthorizePage() {
 								<Button
 									type="submit"
 									className="flex-1"
-									disabled={!codeComplete || !canApprove || pageState === "submitting"}
+									disabled={!user || !codeComplete || !canApprove || pageState === "submitting"}
 								>
 									{pageState === "submitting" ? t`Authorizing...` : t`Authorize`}
 								</Button>
@@ -299,7 +317,7 @@ export function DeviceAuthorizePage() {
 									type="button"
 									variant="outline"
 									onClick={handleDeny}
-									disabled={!codeComplete || pageState === "submitting"}
+									disabled={!user || !codeComplete || pageState === "submitting"}
 								>
 									{t`Deny`}
 								</Button>
@@ -335,9 +353,25 @@ function RequestedScopes({
 
 	if (isLoading) {
 		return (
-			<div className="flex items-center gap-2 text-sm text-kumo-subtle mt-4">
-				<Loader size="sm" />
-				{t`Checking code...`}
+			<div className="mt-4">
+				<span role="status" className="sr-only">
+					{t`Checking code...`}
+				</span>
+				<div aria-hidden="true">
+					<div className="mb-2 text-sm">
+						<SkeletonLine blockHeight="1lh" minWidth={80} maxWidth={80} />
+					</div>
+					<div className="divide-y divide-kumo-line rounded-md border border-kumo-line">
+						{[45, 60].map((width) => (
+							<div key={width} className="px-3 py-2 text-sm">
+								<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+								<div className="mt-0.5">
+									<SkeletonLine blockHeight={16} minWidth={80} maxWidth={80} />
+								</div>
+							</div>
+						))}
+					</div>
+				</div>
 			</div>
 		);
 	}

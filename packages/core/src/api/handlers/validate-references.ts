@@ -37,21 +37,22 @@ export function referenceFieldConstraints(
 	collection: string,
 ): Promise<Map<string, ReferenceFieldConstraints>> {
 	return requestCached(`reference-field-constraints:${collection}`, async () => {
-		const fields = await db
-			.selectFrom("_emdash_fields")
-			.innerJoin("_emdash_collections", "_emdash_collections.id", "_emdash_fields.collection_id")
-			.select(["_emdash_fields.slug", "_emdash_fields.required", "_emdash_fields.validation"])
-			.where("_emdash_collections.slug", "=", collection)
-			.where("_emdash_fields.type", "=", "reference")
-			.execute();
-
 		// Cardinality lives on the relation, not the field: with both ends of a
 		// relation bindable, two fields carrying their own limits could disagree
 		// about one edge set. The field contributes only which end it views.
-		const relations = await db
-			.selectFrom("_emdash_relations")
-			.select(["id", "slug", "max_children_per_parent", "max_parents_per_child"])
-			.execute();
+		const [fields, relations] = await Promise.all([
+			db
+				.selectFrom("_emdash_fields")
+				.innerJoin("_emdash_collections", "_emdash_collections.id", "_emdash_fields.collection_id")
+				.select(["_emdash_fields.slug", "_emdash_fields.required", "_emdash_fields.validation"])
+				.where("_emdash_collections.slug", "=", collection)
+				.where("_emdash_fields.type", "=", "reference")
+				.execute(),
+			db
+				.selectFrom("_emdash_relations")
+				.select(["id", "slug", "max_children_per_parent", "max_parents_per_child"])
+				.execute(),
+		]);
 		const limits = new Map(relations.map((r) => [r.slug, r]));
 
 		const constraints = new Map<string, ReferenceFieldConstraints>();

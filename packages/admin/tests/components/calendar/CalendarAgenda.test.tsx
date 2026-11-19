@@ -3,6 +3,7 @@ import { msg } from "@lingui/core/macro";
 import type * as React from "react";
 import { describe, expect, it, vi } from "vitest";
 
+import "../../../dist/styles.css";
 import type { CalendarEntry } from "../../../src/lib/api/calendar";
 import { createCalendarDisplay, groupByDay, toCalendarItems } from "../../../src/lib/calendar";
 import { render } from "../../utils/render.tsx";
@@ -286,4 +287,38 @@ describe("CalendarAgenda", () => {
 			i18n.activate(previousLocale);
 		}
 	});
+
+	it.each([900, 360])(
+		"draws its loading rows where the loaded rows go (%ipx wide)",
+		async (width) => {
+			const agenda = (loading: boolean) => (
+				<div style={{ width }}>
+					<CalendarAgenda
+						month="2026-10"
+						days={days}
+						today="2026-11-15"
+						now={now}
+						display={display}
+						loading={loading}
+					/>
+				</div>
+			);
+			const box = (element: Element | null) => {
+				expect(element).not.toBeNull();
+				const { top, height } = element!.getBoundingClientRect();
+				return { top, height };
+			};
+			const screen = await render(agenda(true));
+			expect(screen.getByRole("list").query()).toBeNull();
+			const placeholder = box(document.querySelector("[data-calendar-placeholder]"));
+
+			await screen.rerender(agenda(false));
+			await expect.element(screen.getByRole("link", { name: /Welcome back/ })).toBeVisible();
+
+			expect(document.querySelector("[data-calendar-placeholder]")).toBeNull();
+			const row = box(screen.getByRole("link", { name: /Welcome back/ }).element());
+			expect(Math.abs(row.top - placeholder.top)).toBeLessThanOrEqual(1);
+			expect(Math.abs(row.height - placeholder.height)).toBeLessThanOrEqual(1);
+		},
+	);
 });

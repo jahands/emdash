@@ -75,7 +75,7 @@ vi.mock("../src/lib/api/media", async () => {
 		await vi.importActual<typeof import("../src/lib/api/media")>("../src/lib/api/media");
 	return {
 		...actual,
-		fetchMediaItem: vi.fn(),
+		fetchMediaItemBatched: vi.fn(),
 	};
 });
 
@@ -96,7 +96,7 @@ vi.mock("../src/lib/api/client", async () => {
 });
 
 const { fetchBylines, fetchByline, updateByline } = await import("../src/lib/api/bylines");
-const { fetchMediaItem } = await import("../src/lib/api/media");
+const { fetchMediaItemBatched } = await import("../src/lib/api/media");
 const { BylinesPage } = await import("../src/routes/bylines");
 
 function makeByline(overrides: Partial<BylineSummary> = {}): BylineSummary {
@@ -161,14 +161,14 @@ describe("BylinesPage — avatar field (#1250)", () => {
 		// The avatar field renders its label and an empty-state select button.
 		await expect.element(screen.getByText("Avatar")).toBeInTheDocument();
 		// No avatar set → no resolve query fires.
-		expect(vi.mocked(fetchMediaItem)).not.toHaveBeenCalled();
+		expect(vi.mocked(fetchMediaItemBatched)).not.toHaveBeenCalled();
 	});
 
 	it("resolves the stored avatar media for preview when editing", async () => {
 		const byline = makeByline({ avatarMediaId: "media_avatar_01" });
 		vi.mocked(fetchBylines).mockResolvedValue({ items: [byline], nextCursor: undefined });
 		vi.mocked(fetchByline).mockResolvedValue(byline);
-		vi.mocked(fetchMediaItem).mockResolvedValue(makeMediaItem());
+		vi.mocked(fetchMediaItemBatched).mockResolvedValue(makeMediaItem());
 
 		const screen = await render(
 			<TestWrapper>
@@ -181,7 +181,7 @@ describe("BylinesPage — avatar field (#1250)", () => {
 		await expect.element(screen.getByText("Avatar")).toBeInTheDocument();
 		// The field resolves the stored id into a media item for display.
 		await vi.waitFor(() =>
-			expect(vi.mocked(fetchMediaItem)).toHaveBeenCalledWith("media_avatar_01"),
+			expect(vi.mocked(fetchMediaItemBatched)).toHaveBeenCalledWith("media_avatar_01"),
 		);
 	});
 
@@ -189,7 +189,7 @@ describe("BylinesPage — avatar field (#1250)", () => {
 		const byline = makeByline({ avatarMediaId: "media_avatar_01" });
 		vi.mocked(fetchBylines).mockResolvedValue({ items: [byline], nextCursor: undefined });
 		vi.mocked(fetchByline).mockResolvedValue(byline);
-		vi.mocked(fetchMediaItem).mockResolvedValue(makeMediaItem());
+		vi.mocked(fetchMediaItemBatched).mockResolvedValue(makeMediaItem());
 		vi.mocked(updateByline).mockResolvedValue(byline);
 
 		const screen = await render(

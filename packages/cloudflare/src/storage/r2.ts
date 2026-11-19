@@ -22,6 +22,7 @@ import type {
 	ListOptions,
 	SignedUploadUrl,
 	SignedUploadOptions,
+	StoredFileInfo,
 } from "emdash";
 import { EmDashStorageError } from "emdash";
 
@@ -130,6 +131,20 @@ export class R2Storage implements Storage {
 		} catch (error) {
 			// R2 delete is idempotent
 			throw new EmDashStorageError(`Failed to delete file: ${key}`, "DELETE_FAILED", error);
+		}
+	}
+
+	async describeStoredFile(key: string): Promise<StoredFileInfo | null> {
+		try {
+			const object = await this.bucket.head(key);
+			if (!object) return null;
+			return {
+				contentType: object.httpMetadata?.contentType || "application/octet-stream",
+				size: object.size,
+				lastModified: object.uploaded,
+			};
+		} catch (error) {
+			throw new EmDashStorageError(`Failed to read file details: ${key}`, "HEAD_FAILED", error);
 		}
 	}
 

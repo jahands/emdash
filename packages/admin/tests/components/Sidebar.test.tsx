@@ -30,6 +30,7 @@ import {
 	Trophy,
 	ClockCounterClockwise,
 	IdentificationCard,
+	PiggyBank,
 	SquaresFour,
 } from "@phosphor-icons/react";
 import * as React from "react";
@@ -419,6 +420,32 @@ describe("buildNavGroups", () => {
 			},
 		});
 		expect(itemIds(group(groups, "plugins"))).toEqual(["/plugins/forms"]);
+	});
+
+	it("renders an icon name outside the built-in map on a plugin page", async () => {
+		const groups = build({
+			manifest: {
+				plugins: {
+					savings: {
+						adminMode: "blocks",
+						adminPages: [{ path: "/", label: "Savings", icon: "piggy-bank" }],
+					},
+				},
+			},
+		});
+		const entry = group(groups, "plugins")?.entries[0];
+		if (entry?.kind !== "item") throw new Error("expected a plugin nav item");
+		const PluginIcon = entry.item.icon;
+		const screen = await render(
+			<React.Suspense fallback={<span>loading</span>}>
+				<PluginIcon data-testid="resolved" />
+				<PiggyBank data-testid="expected" />
+			</React.Suspense>,
+		);
+		const resolved = screen.getByTestId("resolved");
+		await expect.element(resolved).toBeInTheDocument();
+		expect(resolved.element().innerHTML).toBe(screen.getByTestId("expected").element().innerHTML);
+		expect(resolved.element().innerHTML).not.toBe(renderToStaticMarkup(<Plug />));
 	});
 
 	it("forms content folders with members in collection, taxonomy, plugin page order", () => {

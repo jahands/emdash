@@ -1148,6 +1148,8 @@ var releaseExtension_exports = /* @__PURE__ */ __exportAll({
 	pageAccessSchema: () => pageAccessSchema,
 	pageFragmentsConstraintsSchema: () => pageFragmentsConstraintsSchema,
 	provenanceSchema: () => provenanceSchema,
+	realtimeAccessSchema: () => realtimeAccessSchema,
+	realtimePublishConstraintsSchema: () => realtimePublishConstraintsSchema,
 	redirectsAccessSchema: () => redirectsAccessSchema,
 	redirectsReadConstraintsSchema: () => redirectsReadConstraintsSchema,
 	redirectsWriteConstraintsSchema: () => redirectsWriteConstraintsSchema,
@@ -1241,6 +1243,9 @@ const _declaredAccessSchema = /* @__PURE__ */ object$1({
 	get page() {
 		return /* @__PURE__ */ optional$1(pageAccessSchema);
 	},
+	get realtime() {
+		return /* @__PURE__ */ optional$1(realtimeAccessSchema);
+	},
 	get redirects() {
 		return /* @__PURE__ */ optional$1(redirectsAccessSchema);
 	},
@@ -1322,6 +1327,13 @@ const _provenanceSchema = /* @__PURE__ */ object$1({
 	sourceRepository: /* @__PURE__ */ constrain(/* @__PURE__ */ genericUriString(), [/* @__PURE__ */ stringLength(0, 1024)]),
 	url: /* @__PURE__ */ constrain(/* @__PURE__ */ genericUriString(), [/* @__PURE__ */ stringLength(0, 2048)])
 });
+const _realtimeAccessSchema = /* @__PURE__ */ object$1({
+	$type: /* @__PURE__ */ optional$1(/* @__PURE__ */ literal$1("com.emdashcms.experimental.package.releaseExtension#realtimeAccess")),
+	get publish() {
+		return /* @__PURE__ */ optional$1(realtimePublishConstraintsSchema);
+	}
+});
+const _realtimePublishConstraintsSchema = /* @__PURE__ */ object$1({ $type: /* @__PURE__ */ optional$1(/* @__PURE__ */ literal$1("com.emdashcms.experimental.package.releaseExtension#realtimePublishConstraints")) });
 const _redirectsAccessSchema = /* @__PURE__ */ object$1({
 	$type: /* @__PURE__ */ optional$1(/* @__PURE__ */ literal$1("com.emdashcms.experimental.package.releaseExtension#redirectsAccess")),
 	get read() {
@@ -1389,6 +1401,8 @@ const networkRequestConstraintsSchema = _networkRequestConstraintsSchema;
 const pageAccessSchema = _pageAccessSchema;
 const pageFragmentsConstraintsSchema = _pageFragmentsConstraintsSchema;
 const provenanceSchema = _provenanceSchema;
+const realtimeAccessSchema = _realtimeAccessSchema;
+const realtimePublishConstraintsSchema = _realtimePublishConstraintsSchema;
 const redirectsAccessSchema = _redirectsAccessSchema;
 const redirectsReadConstraintsSchema = _redirectsReadConstraintsSchema;
 const redirectsWriteConstraintsSchema = _redirectsWriteConstraintsSchema;
@@ -10338,7 +10352,8 @@ const CURRENT_PLUGIN_CAPABILITIES = [
 	"email:send",
 	"hooks.email-transport:register",
 	"hooks.email-events:register",
-	"hooks.page-fragments:register"
+	"hooks.page-fragments:register",
+	"realtime:publish"
 ];
 /**
 * Legacy capability names accepted during the deprecation window.
@@ -10498,11 +10513,14 @@ const settingFieldSchema = discriminatedUnion("type", [
 		placeholder: string().optional()
 	})
 ]);
+const realtimeChannelNameSchema = string().regex(/^[a-z][a-z0-9_-]{0,63}$/);
+const refreshOnSchema = array(realtimeChannelNameSchema).max(16).optional();
 const adminPageSchema = object({
 	path: string(),
 	label: string(),
 	icon: string().optional(),
-	group: string().trim().min(1).max(100).optional()
+	group: string().trim().min(1).max(100).optional(),
+	refreshOn: refreshOnSchema
 });
 const dashboardWidgetSchema = object({
 	id: string(),
@@ -10511,7 +10529,8 @@ const dashboardWidgetSchema = object({
 		"half",
 		"third"
 	]).optional(),
-	title: string().optional()
+	title: string().optional(),
+	refreshOn: refreshOnSchema
 });
 const editorExtensionIdPattern = /^[a-z][a-z0-9_-]*$/;
 const collectionSlugPattern = /^[a-z][a-z0-9_]*$/;
@@ -10645,7 +10664,8 @@ const declaredAccessSchema = object({
 		transport: accessConstraints.optional()
 	}).optional(),
 	page: object({ fragments: accessConstraints.optional() }).optional(),
-	users: object({ read: accessConstraints.optional() }).optional()
+	users: object({ read: accessConstraints.optional() }).optional(),
+	realtime: object({ publish: accessConstraints.optional() }).optional()
 });
 /**
 * Zod schema matching the PluginManifest interface from types.ts.
@@ -10667,7 +10687,8 @@ const pluginManifestBaseSchema = object({
 	hooks: array(union([_enum(HOOK_NAMES), manifestHookEntrySchema])),
 	routes: array(union([routeNameSchema, manifestRouteEntrySchema])),
 	mcp: pluginMcpConfigSchema.optional(),
-	admin: pluginAdminConfigSchema
+	admin: pluginAdminConfigSchema,
+	realtime: object({ channels: record(realtimeChannelNameSchema, object({ permission: string().min(1) })).refine((channels) => Object.keys(channels).length <= 32) }).optional()
 });
 function validateEditorExtensionRoutes(manifest, ctx) {
 	for (const [kind, extensions] of [["editorPanels", manifest.admin.editorPanels], ["editorActions", manifest.admin.editorActions]]) for (const [index, extension] of (extensions ?? []).entries()) {
@@ -10748,11 +10769,29 @@ function validateBlockKitAdminRoute(manifest, ctx) {
 		path: ["routes", routeIndex]
 	});
 }
+function validateRefreshOnChannels(manifest, ctx) {
+	const channels = manifest.realtime?.channels ?? {};
+	for (const [kind, surfaces] of [["pages", manifest.admin.pages], ["widgets", manifest.admin.widgets]]) for (const [index, surface] of (surfaces ?? []).entries()) for (const [channelIndex, channel] of (surface.refreshOn ?? []).entries()) {
+		if (Object.hasOwn(channels, channel)) continue;
+		ctx.addIssue({
+			code: "custom",
+			message: `refreshOn names "${channel}", which realtime.channels doesn't declare`,
+			path: [
+				"admin",
+				kind,
+				index,
+				"refreshOn",
+				channelIndex
+			]
+		});
+	}
+}
 const pluginManifestSchema = pluginManifestBaseSchema.superRefine((manifest, ctx) => {
 	validateUniqueRoutes(manifest, ctx);
 	validateEditorExtensionRoutes(manifest, ctx);
 	validateMcpToolRoutes(manifest, ctx);
 	validateBlockKitAdminRoute(manifest, ctx);
+	validateRefreshOnChannels(manifest, ctx);
 });
 /**
 * Reconcile a parsed manifest's trust contract with its enforcement currency.
@@ -10862,6 +10901,7 @@ function capabilitiesToDeclaredAccess(capabilities, allowedHosts) {
 	if (caps.has("hooks.email-transport:register")) (out.email ??= {}).transport = {};
 	if (caps.has("hooks.page-fragments:register")) out.page = { fragments: {} };
 	if (caps.has("users:read")) out.users = { read: {} };
+	if (caps.has("realtime:publish")) out.realtime = { publish: {} };
 	return out;
 }
 /**
@@ -10930,6 +10970,7 @@ function declaredAccessToCapabilities(declaredAccess) {
 	if (declaredAccess.email?.transport) caps.add("hooks.email-transport:register");
 	if (declaredAccess.page?.fragments) caps.add("hooks.page-fragments:register");
 	if (declaredAccess.users?.read) caps.add("users:read");
+	if (declaredAccess.realtime?.publish) caps.add("realtime:publish");
 	return {
 		capabilities: [...caps],
 		allowedHosts

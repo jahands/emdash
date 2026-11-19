@@ -27,6 +27,7 @@ import {
 	storedLocaleOrder,
 } from "../i18n/query.js";
 import { resolveLocale, resolveLocaleChain } from "../i18n/resolve.js";
+import { noteLayoutRead } from "../layout-reads.js";
 import { getDb, resetTaxonomyNamesCache } from "../loader.js";
 import {
 	cachedQuery,
@@ -43,6 +44,7 @@ import { isMissingTableError } from "../utils/db-errors.js";
 import {
 	createRevalidatingCache,
 	invalidateRevalidatingCache,
+	primeRevalidatingCache,
 	revalidatingCached,
 	type RevalidatingCache,
 } from "../utils/revalidating-cache.js";
@@ -169,6 +171,22 @@ export function invalidateTaxonomyDefsCache(): void {
 	invalidateTaxonomyObjectCache();
 }
 
+/** Take before reading definitions to prime the cache with. @internal */
+export function taxonomyDefsGeneration(): number {
+	return defsCache.generation;
+}
+
+/**
+ * Cache every locale's definitions, read by a cold start with its other reads, unless the cache
+ * was invalidated after `generation` was taken. @internal
+ */
+export function primeTaxonomyDefs(
+	rows: readonly Parameters<typeof rowToTaxonomyDef>[0][],
+	generation: number,
+): void {
+	primeRevalidatingCache(defsCache, rows.map(rowToTaxonomyDef), generation);
+}
+
 /** @internal Clear the isolate snapshot between test databases. */
 export function resetTaxonomyDefsCacheForTests(): void {
 	invalidateRevalidatingCache(defsCache);
@@ -288,6 +306,11 @@ export async function getTaxonomyTerms(
 	taxonomyName: string,
 	options: TaxonomyTermsOptions = {},
 ): Promise<TaxonomyTerm[]> {
+	const { locale: requestedLocale, includeCounts } = options;
+	noteLayoutRead(
+		`taxonomy-terms:${JSON.stringify([taxonomyName, requestedLocale, includeCounts])}`,
+		() => getTaxonomyTerms(taxonomyName, { locale: requestedLocale, includeCounts }),
+	);
 	const locale = resolveLocale(options.locale);
 	const def = await getTaxonomyDef(taxonomyName, options);
 	if (!def) return [];
@@ -315,7 +338,7 @@ export async function getTaxonomyTermsWithCacheHint(
 	return { data, cacheHint: { tags: [taxonomyTag(taxonomyName)] } };
 }
 
-/** Terms without counts, under the cache keys the layout prefetch warms. */
+/** Terms without counts, shared by callers that add counts. */
 function getTermList(def: TaxonomyDef, locale: string | undefined): Promise<TaxonomyTerm[]> {
 	const localeKey = locale ?? "*";
 	return requestCached(`taxonomy-terms:${def.name}:${localeKey}`, () =>

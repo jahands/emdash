@@ -8,6 +8,7 @@ import { ulid } from "ulidx";
 import { InvalidCursorError } from "../../database/repositories/types.js";
 import type { FindManyResult } from "../../database/repositories/types.js";
 import type { Database } from "../../database/types.js";
+import { publishChange } from "../../realtime/publish.js";
 import {
 	getSectionById,
 	getSectionWithDb,
@@ -115,6 +116,7 @@ export async function handleSectionCreate(
 				updated_at: now,
 			})
 			.execute();
+		publishChange("sections", { ids: [id], op: "create" });
 
 		const section = await getSectionById(id, db);
 		if (!section) {
@@ -232,6 +234,7 @@ export async function handleSectionUpdate(
 		if (input.previewMediaId !== undefined) updates.preview_media_id = input.previewMediaId;
 
 		await db.updateTable("_emdash_sections").set(updates).where("id", "=", existing.id).execute();
+		publishChange("sections", { ids: [existing.id], op: "update" });
 
 		const section = await getSectionById(existing.id, db);
 		if (!section) {
@@ -285,6 +288,7 @@ export async function handleSectionDelete(
 		}
 
 		await db.deleteFrom("_emdash_sections").where("id", "=", existing.id).execute();
+		publishChange("sections", { ids: [existing.id], op: "delete" });
 
 		return { success: true, data: { deleted: true } };
 	} catch {

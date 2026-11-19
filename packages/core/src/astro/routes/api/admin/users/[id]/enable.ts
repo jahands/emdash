@@ -10,6 +10,8 @@ import type { APIRoute } from "astro";
 
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 
+import { publishChange } from "../../../../../../realtime/publish.js";
+
 export const prerender = false;
 
 export const POST: APIRoute = async ({ params, locals }) => {
@@ -40,6 +42,7 @@ export const POST: APIRoute = async ({ params, locals }) => {
 
 		// Enable user
 		await adapter.updateUser(id, { disabled: false });
+		publishChange("users", { ids: [id], op: "update" });
 
 		return apiSuccess({ success: true });
 	} catch (error) {

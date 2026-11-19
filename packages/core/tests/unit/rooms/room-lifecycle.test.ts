@@ -1,4 +1,3 @@
-import { encodeSyncStep1 } from "@emdash-cms/admin/internal/co-editing";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import * as Y from "yjs";
 
@@ -7,7 +6,7 @@ import {
 	MAX_ROOM_CONNECTIONS,
 	MAX_USER_CONNECTIONS,
 } from "../../../src/rooms/limits.js";
-import { CLOSE_CODES, isRoomToken } from "../../../src/rooms/types.js";
+import { CLOSE_CODES } from "../../../src/rooms/types.js";
 import {
 	advance,
 	blocksText,
@@ -291,13 +290,6 @@ describe("tokens and connecting", () => {
 		expect(cat.closed?.code).toBe(CLOSE_CODES.busy);
 	});
 
-	it("issues tokens in the shape a host checks before it asks the room", async () => {
-		const test = new TestRoom();
-		const result = (await test.room.issueToken(test.claims("ana"))) as { token: string };
-		expect(isRoomToken(result.token)).toBe(true);
-		expect(isRoomToken(`${result.token}A`)).toBe(false);
-	});
-
 	it("sends sync step 1 to co-editors only", async () => {
 		const test = new TestRoom();
 		const ana = await test.join("ana");
@@ -537,24 +529,49 @@ describe("restart and shutdown", () => {
 		expect(ben.text()).toBe("Resumed Stored First paragraph.");
 	});
 
-	it("starts over with a recovery revision when a resumed room loads an entry with another hash", async () => {
+	it("resumes from its stored record without the site, and saves the next update", async () => {
+		const test = new TestRoom();
+		const ana = await test.join("ana");
+		ana.type("Stored ");
+		await advance(3000);
+		test.restart();
+		test.room.resume(ana, resumedInfo("ana"));
+		const loads = test.site.loads;
+		ana.type("Resumed ");
+		await settle();
+		await advance(2000);
+		expect(test.site.loads).toBe(loads);
+		expect(test.storedText()).toBe("Resumed Stored First paragraph.");
+	});
+
+	it("loads the entry to resume a record stored without the entry's schema", async () => {
+		const test = new TestRoom();
+		const ana = await test.join("ana");
+		ana.type("Stored ");
+		await advance(3000);
+		if (test.store.record) delete test.store.record.schema;
+		test.restart();
+		test.room.resume(ana, resumedInfo("ana"));
+		const loads = test.site.loads;
+		ana.type("Resumed ");
+		await settle();
+		await advance(2000);
+		expect(test.site.loads).toBe(loads + 1);
+		expect(test.storedText()).toBe("Resumed Stored First paragraph.");
+	});
+
+	it("starts over with a recovery revision when a resumed room's next merge loads another hash", async () => {
 		const test = new TestRoom();
 		const ana = await test.join("ana");
 		ana.setField("title", "Typed");
 		await advance(1000);
 		test.restart();
-		test.room.resume(ana, {
-			userId: "ana",
-			name: "Name ana",
-			access: "edit",
-			connectedAt: Date.now(),
-			clientId: null,
-		});
+		test.room.resume(ana, resumedInfo("ana"));
 		const entry = test.site.current;
 		entry.hash = "schema-2";
 		entry.fields.push({ slug: "subtitle", type: "string" });
 		entry.data.subtitle = "Sub";
-		ana.toRoom(encodeSyncStep1(ana.doc));
+		await test.room.notify([]);
 		await settle();
 		await advance(3000);
 		expect(ana.closed?.code).toBe(CLOSE_CODES.rejoin);

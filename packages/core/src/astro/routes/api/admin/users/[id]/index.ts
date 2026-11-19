@@ -14,6 +14,8 @@ import { isParseError, parseBody } from "#api/parse.js";
 import { userUpdateBody } from "#api/schemas.js";
 import { withTransaction } from "#db/transaction.js";
 
+import { publishChange } from "../../../../../../realtime/publish.js";
+
 export const prerender = false;
 
 export const GET: APIRoute = async ({ params, locals }) => {
@@ -134,6 +136,12 @@ export const PUT: APIRoute = async ({ params, request, locals }) => {
 				email: body.email,
 				role,
 			});
+			// Closes the user's live updates sockets, so their next ticket carries the new role.
+			if (role !== undefined && role !== targetUser.role) {
+				publishChange(`users/${id}`, { op: "update" });
+			} else {
+				publishChange("users", { ids: [id], op: "update" });
+			}
 			return false;
 		});
 

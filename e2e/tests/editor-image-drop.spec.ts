@@ -149,5 +149,6 @@ test("uploads and saves dropped featured and OG images", async ({
 
 	await page.reload();
 	await expect(page.getByText(featured.filename, { exact: true })).toBeVisible();
-	await expect(page.locator(`img[src="${ogUrl}"]`)).toBeVisible();
+	// The preview may be a resized rendition of the file.
+	await expect(page.locator(`img[src*="${og.storageKey}"]`)).toBeVisible();
 });

@@ -302,6 +302,11 @@ export function BulkTagDialog({
 								</Select>
 							)}
 							<div className="space-y-2">
+								{isLoading && (
+									<span role="status" className="sr-only">
+										{t`Loading ${pluralLower}…`}
+									</span>
+								)}
 								{creating ? (
 									<div className="flex flex-wrap items-end gap-2">
 										<div className="min-w-0 grow basis-full sm:basis-0">
@@ -355,9 +360,6 @@ export function BulkTagDialog({
 											{t`Create new ${singularLower}`}
 										</Button>
 									</div>
-								)}
-								{isLoading && (
-									<p className="text-sm text-kumo-subtle">{t`Loading ${pluralLower}…`}</p>
 								)}
 								{termsFailed && (
 									<div className="flex flex-wrap items-center gap-2">

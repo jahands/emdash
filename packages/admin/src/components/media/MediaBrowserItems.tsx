@@ -1,18 +1,20 @@
-import { Badge, Button, LayerCard, Loader } from "@cloudflare/kumo";
+import { Badge, Button, LayerCard, SkeletonLine } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowDown, ArrowUp, Check, FolderSimple, WarningCircle, X } from "@phosphor-icons/react";
 import * as React from "react";
 
 import type { MediaFolder, MediaItem } from "../../lib/api/media.js";
 import {
-	fallbackToOriginalThumbnail,
 	formatFileSize,
 	getFileIcon,
 	getMediaObjectPosition,
 	getMediaPreviewUrl,
 	getMediaThumbnailUrl,
+	renditionWidthFor,
 } from "../../lib/media-utils.js";
+import { useRenditionFallback, useRenditionWidth } from "../../lib/use-media-rendition.js";
 import { cn } from "../../lib/utils.js";
+import { Spinner } from "../Spinner.js";
 import type { MediaUploadJob } from "./useMediaUploadQueue.js";
 
 export const MEDIA_BROWSER_PAGE_SIZES = [35, 70, 90];
@@ -61,14 +63,28 @@ export function MediaBrowserItem({
 	const hasVisualPreview = Boolean(item.url) && (isImage || Boolean(item.provider));
 	const needsDimensions = hasVisualPreview && (!item.width || !item.height);
 	const previewUrl = item.url ? getMediaPreviewUrl(item.url, item.contentHash) : "";
-	const imageUrl =
+	const [previewRef, renditionWidth] = useRenditionWidth<HTMLImageElement>({
+		fit: "cover",
+		sourceWidth: item.width,
+		sourceHeight: item.height,
+	});
+	const renditionUrl =
 		needsDimensions && onDimensionsLoaded
 			? previewUrl
-			: getMediaThumbnailUrl(item.url, item.mimeType, undefined, item.contentHash);
+			: renditionWidth
+				? getMediaThumbnailUrl(item.url, item.mimeType, renditionWidth, item.contentHash)
+				: undefined;
+	const [imageUrl, handleRenditionError] = useRenditionFallback(
+		renditionUrl,
+		previewUrl || undefined,
+	);
 
 	const preview = hasVisualPreview ? (
 		<img
+			ref={previewRef}
 			src={imageUrl}
+			loading="lazy"
+			decoding="async"
 			alt={selectable ? "" : item.alt || item.filename}
 			draggable={false}
 			className="emdash-media-transparency-grid h-full w-full object-cover"
@@ -80,7 +96,7 @@ export function MediaBrowserItem({
 					onDimensionsLoaded(image.naturalWidth, image.naturalHeight);
 				}
 			}}
-			onError={(event) => fallbackToOriginalThumbnail(event.currentTarget, previewUrl)}
+			onError={handleRenditionError}
 		/>
 	) : (
 		<div className="flex h-full w-full items-center justify-center bg-kumo-tint">
@@ -167,6 +183,52 @@ export function MediaBrowserItem({
 	);
 }
 
+// Fixed per item, so placeholders shown again after a remount don't change shape.
+const PLACEHOLDER_NAME_WIDTHS = [64, 48, 72, 56, 40, 68];
+
+/**
+ * A card or row in the shape of `MediaBrowserItem`, shown while items load. It announces
+ * nothing; the list it stands in shows one loading status.
+ */
+export function MediaBrowserItemPlaceholder({
+	layout,
+	index,
+}: {
+	layout: "grid" | "list";
+	index: number;
+}) {
+	const nameWidth = PLACEHOLDER_NAME_WIDTHS[index % PLACEHOLDER_NAME_WIDTHS.length] ?? 60;
+	if (layout === "list") {
+		return (
+			<LayerCard
+				aria-hidden="true"
+				data-media-placeholder
+				className="grid w-full min-w-0 grid-cols-[3.5rem_minmax(0,1fr)_auto] items-center gap-3 px-3 py-2"
+			>
+				<div className="skeleton-line h-10 w-14 rounded-md" />
+				<div className="min-w-0">
+					<SkeletonLine blockHeight={20} minWidth={nameWidth} maxWidth={nameWidth} />
+					<SkeletonLine blockHeight={20} minWidth={40} maxWidth={40} />
+				</div>
+				<div className="skeleton-line hidden h-5 w-11 rounded-md sm:block" />
+			</LayerCard>
+		);
+	}
+	return (
+		<LayerCard aria-hidden="true" data-media-placeholder className="w-full min-w-0">
+			<LayerCard.Primary className="aspect-video p-0">
+				<div className="skeleton-line size-full rounded-none" />
+			</LayerCard.Primary>
+			<LayerCard.Secondary className="my-0 min-w-0 justify-between gap-2 px-3 py-2.5">
+				<div className="min-w-0 flex-1">
+					<SkeletonLine blockHeight={20} minWidth={nameWidth} maxWidth={nameWidth} />
+				</div>
+				<div className="skeleton-line h-5 w-11 rounded-md" />
+			</LayerCard.Secondary>
+		</LayerCard>
+	);
+}
+
 export function MediaBrowserFolder({
 	folder,
 	onOpen,
@@ -213,7 +275,7 @@ export function MediaUploadPlaceholder({
 	const statusIcon = failed ? (
 		<WarningCircle className="size-5 text-kumo-danger" weight="fill" aria-hidden="true" />
 	) : (
-		<Loader size="sm" />
+		<Spinner size="sm" />
 	);
 	const actions = failed ? (
 		<div className="flex flex-wrap items-center gap-1">
@@ -291,7 +353,15 @@ export function MediaSelectionTrayItem({
 			<div className="h-10 w-14 overflow-hidden rounded-md bg-kumo-tint">
 				{image ? (
 					<img
-						src={getMediaThumbnailUrl(item.url, item.mimeType, 80, item.contentHash)}
+						src={getMediaThumbnailUrl(
+							item.url,
+							item.mimeType,
+							renditionWidthFor(
+								{ width: 56, height: 40 },
+								{ fit: "cover", sourceWidth: item.width, sourceHeight: item.height },
+							),
+							item.contentHash,
+						)}
 						alt=""
 						className="emdash-media-transparency-grid h-full w-full object-cover"
 						style={{ objectPosition: getMediaObjectPosition(item) }}

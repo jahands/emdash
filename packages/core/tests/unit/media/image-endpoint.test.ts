@@ -9,12 +9,18 @@ import {
 	originalMediaHeaders,
 	DEFAULT_TRANSFORM_QUALITY,
 	MAX_TRANSFORM_DIMENSION,
+	IMMUTABLE_IMAGE_CACHE,
+	MUTABLE_MEDIA_CACHE_CONTROL,
+	buildImageResizingUrl,
+	getMediaVersion,
+	mediaCacheControl,
 	formatHttpDate,
 	makeWeakEtag,
 	getTransformFingerprint,
 	isNotModified,
 	validatorHeaders,
 } from "../../../src/media/image-endpoint.js";
+import { computeContentHash } from "../../../src/utils/hash.js";
 
 describe("matchInternalMediaKey", () => {
 	it("extracts the key from a relative internal media URL", () => {
@@ -112,11 +118,26 @@ describe("parseTransformParams", () => {
 		});
 	});
 
-	it("rejects out-of-range and non-integer dimensions", () => {
+	it("rejects zero, non-integer and unrepresentable dimensions", () => {
 		expect(parse("w=0").ok).toBe(false);
-		expect(parse(`w=${MAX_TRANSFORM_DIMENSION + 1}`).ok).toBe(false);
 		expect(parse("w=12.5").ok).toBe(false);
 		expect(parse("w=640&h=-1").ok).toBe(false);
+		expect(parse(`w=${"9".repeat(400)}`).ok).toBe(false);
+	});
+
+	it("scales an oversized width down to the limit instead of refusing it", () => {
+		expect(parse(`w=${MAX_TRANSFORM_DIMENSION + 800}`)).toEqual({
+			ok: true,
+			options: { width: MAX_TRANSFORM_DIMENSION, format: "webp", quality: undefined },
+		});
+	});
+
+	it("scales an oversized box down keeping its aspect ratio", () => {
+		const portrait = parse("w=3024&h=4032&f=webp");
+		expect(portrait.ok && portrait.options).toMatchObject({ width: 3000, height: 4000 });
+
+		const landscape = parse("w=4800&h=2700");
+		expect(landscape.ok && landscape.options).toMatchObject({ width: 4000, height: 2250 });
 	});
 
 	it.each([
@@ -336,5 +357,78 @@ describe("isNotModified", () => {
 			headers: { "If-None-Match": makeWeakEtag(1234, lastModified, suffix) },
 		});
 		expect(isNotModified(request, 1234, lastModified, suffix)).toBe(true);
+	});
+});
+
+describe("buildImageResizingUrl", () => {
+	it("points the transformation at the site's own media route", () => {
+		expect(buildImageResizingUrl("01ABC.jpg", { width: 400, format: "webp" })).toBe(
+			"/cdn-cgi/image/width=400,format=webp,quality=85,onerror=redirect/_emdash/api/media/file/01ABC.jpg",
+		);
+	});
+
+	it("pins the source to a version and keeps explicit options", () => {
+		expect(
+			buildImageResizingUrl(
+				"01ABC.jpg",
+				{ width: 640, height: 480, format: "avif", quality: 60 },
+				"sha1:ab/cd",
+			),
+		).toBe(
+			"/cdn-cgi/image/width=640,height=480,format=avif,quality=60,onerror=redirect" +
+				"/_emdash/api/media/file/01ABC.jpg?_emdash_media=sha1%3Aab%2Fcd",
+		);
+	});
+
+	it("keeps the source format and quality for PNG", () => {
+		expect(buildImageResizingUrl("a.png", { width: 80, format: "png" })).toBe(
+			"/cdn-cgi/image/width=80,onerror=redirect/_emdash/api/media/file/a.png",
+		);
+	});
+
+	it("never asks for more than the transform limit", () => {
+		expect(buildImageResizingUrl("a.jpg", { width: 6048, height: 8064, format: "webp" })).toBe(
+			"/cdn-cgi/image/width=3000,height=4000,format=webp,quality=85,onerror=redirect/_emdash/api/media/file/a.jpg",
+		);
+	});
+
+	it("refuses keys that aren't safe in a media URL", () => {
+		expect(buildImageResizingUrl("../x.jpg", { width: 80, format: "webp" })).toBeNull();
+		expect(
+			buildImageResizingUrl("https://evil.test/x.jpg", { width: 80, format: "webp" }),
+		).toBeNull();
+	});
+});
+
+describe("getMediaVersion", () => {
+	it("reads the version from absolute and relative media URLs", () => {
+		expect(
+			getMediaVersion("https://site.test/_emdash/api/media/file/a.jpg?_emdash_media=sha1%3Aab"),
+		).toBe("sha1:ab");
+		expect(getMediaVersion("/_emdash/api/media/file/a.jpg?_emdash_media=v1")).toBe("v1");
+	});
+
+	it("returns null for URLs without one", () => {
+		expect(getMediaVersion("/_emdash/api/media/file/a.jpg")).toBeNull();
+		expect(getMediaVersion("/_emdash/api/media/file/a.jpg?_emdash_media=")).toBeNull();
+		expect(getMediaVersion(null)).toBeNull();
+	});
+});
+
+describe("mediaCacheControl", () => {
+	const bytes = new Uint8Array([1, 2, 3]);
+
+	it("makes bytes that hash to the pinned version immutable", async () => {
+		expect(await mediaCacheControl(await computeContentHash(bytes), bytes)).toBe(
+			IMMUTABLE_IMAGE_CACHE,
+		);
+	});
+
+	it("revalidates unversioned URLs and bytes of another version, even of the same size", async () => {
+		expect(await mediaCacheControl(null, bytes)).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		const sameSize = new Uint8Array([3, 2, 1]);
+		expect(await mediaCacheControl(await computeContentHash(bytes), sameSize)).toBe(
+			MUTABLE_MEDIA_CACHE_CONTROL,
+		);
 	});
 });

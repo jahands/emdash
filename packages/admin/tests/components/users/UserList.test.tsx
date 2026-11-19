@@ -51,4 +51,50 @@ describe("UserList", () => {
 
 		expect(onSelectUser).toHaveBeenCalledWith("user-1");
 	});
+
+	it("keeps the rows and Load More in place while a new search loads", async () => {
+		const props = {
+			users: [makeUser()],
+			hasMore: true,
+			searchQuery: "",
+			roleFilter: undefined,
+			onSearchChange: noop,
+			onRoleFilterChange: noop,
+			onSelectUser: noop,
+			onInviteUser: noop,
+		};
+		const screen = await render(<UserList {...props} />);
+		const rows = () => screen.getByRole("table").element().querySelectorAll("tbody tr");
+		await expect.element(screen.getByRole("button", { name: "Load More" })).toBeVisible();
+
+		await screen.rerender(<UserList {...props} searchQuery="ada" isRefreshing />);
+
+		await expect.element(screen.getByRole("table")).toHaveAttribute("aria-busy", "true");
+		expect(rows()).toHaveLength(1);
+		expect(screen.getByRole("status").query()).toBeNull();
+		await expect.element(screen.getByRole("button", { name: "Load More" })).toBeEnabled();
+	});
+
+	it("says in the table when the users can't be loaded, and loads them again on request", async () => {
+		const onRetry = vi.fn();
+		const screen = await render(
+			<UserList
+				users={[]}
+				loadError="Failed to load users: Server unavailable"
+				onRetry={onRetry}
+				searchQuery=""
+				roleFilter={undefined}
+				onSearchChange={noop}
+				onRoleFilterChange={noop}
+				onSelectUser={noop}
+				onInviteUser={noop}
+			/>,
+		);
+
+		const alert = screen.getByRole("table").getByRole("alert");
+		await expect.element(alert).toHaveTextContent("Failed to load users: Server unavailable");
+		await expect.element(screen.getByRole("heading", { name: "Users" })).toBeVisible();
+		await alert.getByRole("button", { name: "Try again" }).click();
+		expect(onRetry).toHaveBeenCalled();
+	});
 });

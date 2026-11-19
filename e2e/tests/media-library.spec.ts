@@ -540,7 +540,12 @@ test.describe("Media Library", () => {
 		await details.getByRole("button", { name: "Close" }).click();
 		await expect(details).not.toBeVisible();
 		await expect(imageActions).toBeFocused();
-		await featuredPreview.locator("img").dispatchEvent("error");
+		// A rendition that fails falls back to the original before the image counts as missing.
+		const previewImage = featuredPreview.locator("img");
+		const renditionSrc = await previewImage.getAttribute("src");
+		await previewImage.dispatchEvent("error");
+		await expect(previewImage).not.toHaveAttribute("src", renditionSrc!);
+		await previewImage.dispatchEvent("error");
 		await expect(featuredPreview.getByText("Image not found")).toHaveCount(1);
 		expect(
 			await featuredCard.evaluate((element) => element.getBoundingClientRect().height),
@@ -596,12 +601,12 @@ test.describe("Media Library", () => {
 			await expect(page.getByRole("heading", { name: "Media Library" })).toBeVisible();
 			await page.getByRole("tab", { name: "List view" }).click();
 			const table = page.getByRole("table");
-			const loadingRow = table.getByRole("row").filter({ hasText: "Loading folders" });
-			await expect(loadingRow).toBeVisible();
-			await expect(loadingRow.locator("td")).toHaveAttribute("colspan", "5");
+			await expect(table).toHaveAttribute("aria-busy", "true");
+			// Loading folders are placeholder rows of the table, with a cell per column.
+			await expect(table.locator("tbody > tr").first().locator("td")).toHaveCount(5);
 
 			releaseFolders();
-			await expect(loadingRow).not.toBeVisible();
+			await expect(table).not.toHaveAttribute("aria-busy");
 			await page.unroute(folderPattern);
 			const folderName = `List folder ${Date.now()}`;
 			await createFolder(page, folderName);
@@ -1006,10 +1011,11 @@ test.describe("Media Library", () => {
 		await createFolder(page, `Press ${Date.now()}`);
 
 		const mediaGrid = page.locator("[data-media-grid]");
-		const originalImage = mediaGrid.locator("img").first();
+		// A new upload joins the end of the grid until the view changes.
+		const originalImage = mediaGrid.getByRole("img", { name: uniqueFilename });
 		await expect(originalImage).toBeVisible();
 		const originalSrc = await originalImage.getAttribute("src");
-		await mediaGrid.locator("button").first().click();
+		await mediaGrid.getByRole("button", { name: uniqueFilename }).click();
 
 		const details = page.getByRole("dialog", { name: "Media details" });
 		await details.getByRole("combobox", { name: "Location" }).click();

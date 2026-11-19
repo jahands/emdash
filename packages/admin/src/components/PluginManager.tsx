@@ -12,6 +12,7 @@ import {
 	Checkbox,
 	LayerDialog,
 	Link as KumoLink,
+	SkeletonLine,
 	Switch,
 	useKumoToastManager,
 } from "@cloudflare/kumo";
@@ -34,7 +35,6 @@ import { Link } from "@tanstack/react-router";
 import * as React from "react";
 
 import {
-	fetchPlugins,
 	enablePlugin,
 	disablePlugin,
 	setPluginMcpEnabled,
@@ -62,6 +62,7 @@ import {
 	type RegistryRecordVerificationSummary,
 } from "../lib/api/registry.js";
 import { useConfirmPress } from "../lib/dialog-form.js";
+import { pluginsQueryOptions } from "../lib/route-queries.js";
 import { safeIconUrl } from "../lib/url.js";
 import { cn, formatDate } from "../lib/utils.js";
 import { ADMIN_NAV_ICONS } from "./admin-navigation-icons.js";
@@ -98,6 +99,9 @@ export function PluginInstallDocsMessage() {
 	);
 }
 
+// Fixed, so placeholders shown again after a remount don't change shape.
+const PLUGIN_PLACEHOLDER_WIDTHS = [30, 22, 38];
+
 export interface PluginManagerProps {
 	/** Admin manifest — used to check if registry discovery is available */
 	manifest?: AdminManifest;
@@ -110,14 +114,7 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 	const hasRegistry = !!manifest?.registry;
 	const canInstallFromRegistry = hasRegistry && manifest?.sandboxEnabled === true;
 
-	const {
-		data: plugins,
-		isLoading,
-		error,
-	} = useQuery({
-		queryKey: ["plugins"],
-		queryFn: fetchPlugins,
-	});
+	const { data: plugins, isLoading, error } = useQuery(pluginsQueryOptions());
 
 	const {
 		data: updates,
@@ -176,15 +173,6 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 		(p) => p.source === "marketplace" || p.source === "registry",
 	);
 
-	if (isLoading) {
-		return (
-			<div className="space-y-6">
-				<h1 className="text-2xl font-semibold leading-tight">{t`Plugins`}</h1>
-				<div className="text-kumo-subtle">{t`Loading plugins...`}</div>
-			</div>
-		);
-	}
-
 	if (error) {
 		return (
 			<div className="space-y-6">
@@ -209,7 +197,11 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 							variant="ghost"
 							onClick={() => void refetchUpdates()}
 							disabled={isCheckingUpdates}
-							icon={<ArrowsClockwise className={cn(isCheckingUpdates && "animate-spin")} />}
+							icon={
+								<ArrowsClockwise
+									className={cn(isCheckingUpdates && "animate-spin motion-reduce:animate-none")}
+								/>
+							}
 						>
 							{t`Check for updates`}
 						</Button>
@@ -219,13 +211,32 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 							{t`Registry`}
 						</RouterLinkButton>
 					)}
-					<span className="text-sm text-kumo-subtle">
-						{plural(plugins?.length ?? 0, { one: "# plugin", other: "# plugins" })}
-					</span>
+					{plugins ? (
+						<span className="text-sm text-kumo-subtle">
+							{plural(plugins.length, { one: "# plugin", other: "# plugins" })}
+						</span>
+					) : (
+						<div className="w-16 text-sm" aria-hidden="true">
+							<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+						</div>
+					)}
 				</div>
 			</div>
 
 			<div className="grid gap-4">
+				{isLoading && (
+					<>
+						<span role="status" className="sr-only">
+							{t`Loading plugins...`}
+						</span>
+						{Array.from(
+							{ length: manifest ? Object.keys(manifest.plugins).length : 3 },
+							(_, index) => (
+								<PluginCardPlaceholder key={index} index={index} />
+							),
+						)}
+					</>
+				)}
 				{plugins?.map((plugin) => (
 					<PluginCard
 						key={plugin.id}
@@ -247,6 +258,32 @@ export function PluginManager({ manifest }: PluginManagerProps) {
 					</p>
 				</div>
 			)}
+		</div>
+	);
+}
+
+/** A plugin card in outline, as tall as a card with a description and features. */
+function PluginCardPlaceholder({ index }: { index: number }) {
+	const width = PLUGIN_PLACEHOLDER_WIDTHS[index % PLUGIN_PLACEHOLDER_WIDTHS.length];
+	return (
+		<div
+			aria-hidden="true"
+			className="flex items-center gap-4 rounded-lg border border-kumo-border bg-kumo-base p-4"
+		>
+			<div className="skeleton-line size-10 shrink-0 rounded-lg" />
+			<div className="min-w-0 flex-1">
+				<SkeletonLine blockHeight="1lh" minWidth={width} maxWidth={width} />
+				<div className="mt-0.5 text-sm">
+					<SkeletonLine blockHeight="1lh" minWidth={55} maxWidth={55} />
+				</div>
+				<div className="mt-1 text-sm">
+					<SkeletonLine blockHeight="1lh" minWidth={25} maxWidth={25} />
+				</div>
+			</div>
+			<div className="flex items-center gap-2">
+				<div className="skeleton-line h-4.5 w-9 rounded-[5px]" />
+				<div className="size-9" />
+			</div>
 		</div>
 	);
 }

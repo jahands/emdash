@@ -1446,10 +1446,13 @@ export async function runSeed(seed: number, options: RunOptions = {}): Promise<R
 	const { error: consoleError, warn: consoleWarn } = console;
 	// The store reads stored times on the process clock, which has to be the run's.
 	if (db) Date.now = () => run.clock.now;
-	// Nothing in a run makes the site or store fail, so anything the room logs is unexpected.
+	// Nothing in a run makes the site or store fail, so anything the room logs is unexpected,
+	// except a site call the run held past the room's deadline.
 	const logged = (...args: unknown[]) => {
 		const message = args.map(String).join(" ");
-		if (message.startsWith("[co-editing]")) run.ledger.fail(`the room logged: ${message}`);
+		if (message.startsWith("[co-editing]") && !message.includes("didn't answer within")) {
+			run.ledger.fail(`the room logged: ${message}`);
+		}
 	};
 	console.error = logged;
 	console.warn = logged;

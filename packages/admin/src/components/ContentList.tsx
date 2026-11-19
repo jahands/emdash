@@ -5,7 +5,6 @@ import {
 	DatePicker,
 	DropdownMenu,
 	LayerDialog,
-	Loader,
 	Popover,
 	Select,
 	Tabs,
@@ -51,6 +50,11 @@ import { getEntryTitle } from "../lib/entryTitle.js";
 import { useDebouncedValue } from "../lib/hooks.js";
 import { inlineLabel } from "../lib/inline-label.js";
 import { usePluginAdmins } from "../lib/plugin-context.js";
+import {
+	useLiveEnabled,
+	usePresence,
+	type PresentPerson,
+} from "../lib/realtime/LiveSyncProvider.js";
 import { contentUrl } from "../lib/url.js";
 import { cn, formatDate, parseTimestamp } from "../lib/utils.js";
 import { getLocaleDir } from "../locales/config.js";
@@ -64,6 +68,7 @@ import {
 	type BylineFilterState,
 } from "./BylineFilter.js";
 import { ConfirmDialog } from "./ConfirmDialog.js";
+import { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER } from "./content-list-options.js";
 import {
 	ContentStatusBadge,
 	ContentStatusLabel,
@@ -71,8 +76,11 @@ import {
 } from "./ContentStatusBadge.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableBulkBar,
+	DataTableBulkNotice,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	rowTitleClassName,
@@ -80,6 +88,7 @@ import {
 } from "./DataTable.js";
 import { ListPaginationFooter, type ListPagination } from "./ListPaginationFooter.js";
 import { LocaleSwitcher } from "./LocaleSwitcher";
+import { PresenceFaces } from "./presence/PresenceFaces.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
 import { declaredLabelTranslator } from "./Sidebar.js";
 import { TableToolbar, TableToolbarSearch } from "./TableToolbar.js";
@@ -89,6 +98,8 @@ import { TableToolbar, TableToolbarSearch } from "./TableToolbar.js";
  * order fields; a collection's configured titleField/dateField slug is also
  * accepted, which the server validates against the collection.
  */
+export { CONTENT_LIST_PAGE_SIZES, EMPTY_DATE_FILTER };
+
 export type ContentListSortField = "title" | "status" | "locale" | ContentDateField | (string & {});
 export interface ContentListSort {
 	field: ContentListSortField;
@@ -116,9 +127,6 @@ export interface ContentDateFilter {
 	to: string;
 }
 
-/** An empty (inactive) date filter, defaulting to the created-at column. */
-export const EMPTY_DATE_FILTER: ContentDateFilter = { field: "createdAt", from: "", to: "" };
-
 type RowRequest = (id: string) => Promise<unknown> | void;
 
 export interface ContentListProps {
@@ -129,6 +137,9 @@ export interface ContentListProps {
 	listColumns?: ContentListColumn[];
 	trashedItems?: TrashedContentItem[];
 	isLoading?: boolean;
+	/** No entries could be loaded. The list shows an error with a retry that calls `onRetry`. */
+	loadFailed?: boolean;
+	onRetry?: () => void;
 	isTrashedLoading?: boolean;
 	/** Return the request's promise to keep the confirmation open until it lands. */
 	onDelete?: RowRequest;
@@ -143,6 +154,8 @@ export interface ContentListProps {
 	hasMore?: boolean;
 	hasMoreTrashed?: boolean;
 	trashedCount?: number;
+	/** Called when the user switches between all entries and the trash. */
+	onTabChange?: (tab: "all" | "trash") => void;
 	/** i18n config — present when multiple locales are configured */
 	i18n?: { defaultLocale: string; locales: string[]; prefixDefaultLocale?: boolean };
 	/** Currently active locale filter */
@@ -180,8 +193,8 @@ export interface ContentListProps {
 	 * Filter controls. The whole bar is opt-in: it only renders when
 	 * `onStatusFilterChange` is provided, keeping the component
 	 * backward-compatible for callers that haven't wired filters yet. Each
-	 * control renders independently based on the presence of its callback
-	 * (and, for the author filter, a non-empty `authors` list).
+	 * control renders independently based on the presence of its callback.
+	 * The author filter is disabled until `authors` lists someone.
 	 */
 	statusFilter?: ContentStatusFilter;
 	onStatusFilterChange?: (status: ContentStatusFilter) => void;
@@ -234,8 +247,6 @@ type ViewTab = "all" | "trash";
 const PAGE_SIZE = 20;
 
 /** Page sizes offered with `pagination`; the first is the default. */
-export const CONTENT_LIST_PAGE_SIZES = [20, 50, 100];
-
 const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 /**
@@ -279,6 +290,8 @@ export function ContentList({
 	listColumns = [],
 	trashedItems = [],
 	isLoading,
+	loadFailed,
+	onRetry,
 	isTrashedLoading,
 	onDelete,
 	onDuplicate,
@@ -290,6 +303,7 @@ export function ContentList({
 	hasMore,
 	hasMoreTrashed,
 	trashedCount = 0,
+	onTabChange,
 	i18n,
 	activeLocale,
 	onLocaleChange,
@@ -320,6 +334,8 @@ export function ContentList({
 }: ContentListProps) {
 	const { t, i18n: lingui } = useLingui();
 	const pluginAdmins = usePluginAdmins();
+	const presenceSlot = useLiveEnabled();
+	const editorsById = useEditorsById(collection);
 	const [activeTab, setActiveTab] = React.useState<ViewTab>("all");
 	const [searchQuery, setSearchQuery] = React.useState("");
 	const [page, setPage] = React.useState(0);
@@ -506,16 +522,49 @@ export function ContentList({
 		...(i18n ? [{ field: "locale", label: t`Locale` }] : []),
 		{ field: dateSortField, label: t`Date` },
 	];
+	const showToolbar = !!(serverSearch || items.length > 0 || onStatusFilterChange);
+	const toolbar = (
+		<TableToolbar>
+			{(serverSearch || items.length > 0) && (
+				<TableToolbarSearch
+					placeholder={t`Search ${inlineLabel(collectionLabel, lingui.locale)}...`}
+					aria-label={t`Search ${inlineLabel(collectionLabel, lingui.locale)}`}
+					value={searchQuery}
+					onChange={handleSearchChange}
+				/>
+			)}
+			{onStatusFilterChange && (
+				<FilterBar
+					statusFilter={statusFilter}
+					onStatusFilterChange={onStatusFilterChange}
+					authors={authors}
+					authorFilter={authorFilter}
+					onAuthorFilterChange={onAuthorFilterChange}
+					dateFilter={dateFilter}
+					onDateFilterChange={onDateFilterChange}
+					bylineFilter={bylineFilter}
+					onBylineFilterChange={onBylineFilterChange}
+					locale={activeLocale ?? undefined}
+				/>
+			)}
+		</TableToolbar>
+	);
+
+	// Until the first page of a list answers, the footer is held in outline. The trash's
+	// count is known from the list, so a trash known to be empty holds nothing.
+	const allFooterPending = !!pagination && !!isLoading;
+	const trashFooterPending = !!trashPagination && !!isTrashedLoading && trashedCount > 0;
 	const tabPagination = activeTab === "all" ? pagination : trashPagination;
-	const showPaginationFooter = !!tabPagination && tabPagination.totalCount > 0;
+	const showPaginationFooter =
+		(!!tabPagination && tabPagination.totalCount > 0) ||
+		(activeTab === "all" ? allFooterPending : trashFooterPending);
 
 	return (
 		<div
-			className={
-				showPaginationFooter
-					? "flex min-h-full flex-col gap-4 [&_tbody_*]:scroll-mb-48"
-					: "space-y-4"
-			}
+			className={cn(
+				"flex min-h-full flex-col gap-4",
+				showPaginationFooter && "[&_tbody_*]:scroll-mb-48",
+			)}
 		>
 			{/* Header */}
 			<div className="flex flex-wrap items-center justify-between gap-x-4 gap-y-3">
@@ -546,7 +595,10 @@ export function ContentList({
 				variant="underline"
 				value={activeTab}
 				onValueChange={(v) => {
-					if (v === "all" || v === "trash") setActiveTab(v);
+					if (v === "all" || v === "trash") {
+						setActiveTab(v);
+						onTabChange?.(v);
+					}
 				}}
 				tabs={[
 					{ value: "all", label: t`All` },
@@ -566,39 +618,20 @@ export function ContentList({
 			{/* Content based on active tab */}
 			{activeTab === "all" ? (
 				<>
-					{(serverSearch || items.length > 0 || onStatusFilterChange) && (
-						<TableToolbar>
-							{(serverSearch || items.length > 0) && (
-								<TableToolbarSearch
-									placeholder={t`Search ${inlineLabel(collectionLabel, lingui.locale)}...`}
-									aria-label={t`Search ${inlineLabel(collectionLabel, lingui.locale)}`}
-									value={searchQuery}
-									onChange={handleSearchChange}
-								/>
-							)}
-							{onStatusFilterChange && (
-								<FilterBar
-									statusFilter={statusFilter}
-									onStatusFilterChange={onStatusFilterChange}
-									authors={authors}
-									authorFilter={authorFilter}
-									onAuthorFilterChange={onAuthorFilterChange}
-									dateFilter={dateFilter}
-									onDateFilterChange={onDateFilterChange}
-									bylineFilter={bylineFilter}
-									onBylineFilterChange={onBylineFilterChange}
-									locale={activeLocale ?? undefined}
-								/>
-							)}
-						</TableToolbar>
-					)}
-
-					{/* Bulk action toolbar — appears once one or more rows are selected */}
-					{bulkEnabled && selectedCount > 0 && (
+					{showToolbar && !bulkEnabled && toolbar}
+					{showToolbar && bulkEnabled && (
 						<DataTableBulkBar
 							selectedCount={selectedCount}
 							busy={bulkBusy}
 							onClear={clearSelection}
+							toolbar={toolbar}
+							notice={
+								bulkTagEnabled && (
+									<DataTableBulkNotice shown={selectedCount > 50}>
+										{t`Select up to 50 posts at a time.`}
+									</DataTableBulkNotice>
+								)
+							}
 						>
 							{onBulkPublish && (
 								<Button
@@ -649,11 +682,6 @@ export function ContentList({
 										? t`Add ${inlineLabel(soleBulkTagTaxonomy.labelSingular || soleBulkTagTaxonomy.label, lingui.locale)}`
 										: t`Add term`}
 								</Button>
-							)}
-							{bulkTagEnabled && selectedCount > 50 && (
-								<span role="status" className="text-sm text-kumo-danger">
-									{t`Select up to 50 posts at a time.`}
-								</span>
 							)}
 							{onBulkDelete && (
 								<LayerDialog.Root
@@ -747,11 +775,13 @@ export function ContentList({
 										{column.label}
 									</th>
 								))}
+								{/* Fixed widths keep the columns where they are when rows replace the loading row. */}
 								<SortableTh
 									field="status"
 									sort={sort}
 									onSortChange={onSortChange}
 									label={t`Status`}
+									className="w-44"
 									{...tertiaryColumn}
 								/>
 								{i18n && (
@@ -760,6 +790,7 @@ export function ContentList({
 										sort={sort}
 										onSortChange={onSortChange}
 										label={t`Locale`}
+										className="w-24"
 										{...tertiaryColumn}
 									/>
 								)}
@@ -768,6 +799,7 @@ export function ContentList({
 									sort={sort}
 									onSortChange={onSortChange}
 									label={t`Date`}
+									className="w-36"
 									{...tertiaryColumn}
 								/>
 								{extensionColumns.map((column) => (
@@ -780,28 +812,47 @@ export function ContentList({
 									/>
 								))}
 								<th scope="col" className="w-0" aria-label={t`Actions`}>
-									{onSortChange && (
-										// The negative margin keeps the header row as tall as a line of header text.
-										<div className="-my-0.75 @2xl:hidden">
-											<SortMenu
-												fields={sortFields}
-												sort={sort}
-												onSortChange={onSortChange}
-												defaultField={dateSortField}
-											/>
-										</div>
-									)}
+									{/* As wide as a row's actions button, so the column keeps its width while rows load. */}
+									<div className="min-w-6.5">
+										{onSortChange && (
+											// The negative margin keeps the header row as tall as a line of header text.
+											<div className="-my-0.75 @2xl:hidden">
+												<SortMenu
+													fields={sortFields}
+													sort={sort}
+													onSortChange={onSortChange}
+													defaultField={dateSortField}
+												/>
+											</div>
+										)}
+									</div>
 								</th>
 							</tr>
 						</thead>
-						<tbody inert={pagination?.isPending || undefined}>
-							{items.length === 0 && (isLoading || pagination?.isPending) ? (
+						<tbody inert={(pagination?.isPending && !loadFailed) || undefined}>
+							{loadFailed ? (
 								<DataTableMessage colSpan={colSpan}>
-									<span className="inline-flex items-center gap-2">
-										<Loader size="sm" />
-										{t`Loading...`}
-									</span>
+									<div role="alert" className="flex flex-col items-center gap-3">
+										{t`The entries couldn't be loaded.`}
+										<Button variant="secondary" size="sm" onClick={onRetry}>
+											{t`Try again`}
+										</Button>
+									</div>
 								</DataTableMessage>
+							) : items.length === 0 && (isLoading || pagination?.isPending) ? (
+								<DataTablePlaceholderRows
+									rows={pagination?.perPage}
+									cells={[
+										...(bulkEnabled ? (["empty"] as const) : []),
+										"title",
+										...listColumns.map(() => "tertiary" as const),
+										"tertiary",
+										...(i18n ? (["tertiary"] as const) : []),
+										"tertiary",
+										...extensionColumns.map(() => "tertiary" as const),
+										"actions",
+									]}
+								/>
 							) : items.length === 0 ? (
 								<DataTableMessage colSpan={colSpan}>
 									{activeSearch ? (
@@ -843,6 +894,8 @@ export function ContentList({
 										selected={selectedIds.has(item.id)}
 										onToggleSelect={toggleOne}
 										extensionColumns={extensionColumns}
+										presenceSlot={presenceSlot}
+										editors={editorsById.get(item.id)}
 									/>
 								))
 							)}
@@ -896,12 +949,13 @@ export function ContentList({
 						</div>
 					)}
 
-					{pagination && pagination.totalCount > 0 && (
+					{pagination && (pagination.totalCount > 0 || allFooterPending) && (
 						<ListPaginationFooter
 							key="all"
 							pagination={pagination}
 							pageSizes={CONTENT_LIST_PAGE_SIZES}
 							label={t`${collectionLabel} pagination`}
+							loading={pagination.totalCount === 0}
 						/>
 					)}
 				</>
@@ -920,19 +974,19 @@ export function ContentList({
 								<th scope="col" {...tertiaryColumn}>
 									{t`Deleted`}
 								</th>
-								<th scope="col" className="w-0">
-									<span className="sr-only">{t`Actions`}</span>
-								</th>
+								<DataTableActionsHeader />
 							</tr>
 						</thead>
 						<tbody inert={trashPagination?.isPending || undefined}>
 							{trashedItems.length === 0 && (isTrashedLoading || trashPagination?.isPending) ? (
-								<DataTableMessage colSpan={trashColSpan}>
-									<span className="inline-flex items-center gap-2">
-										<Loader size="sm" />
-										{t`Loading...`}
-									</span>
-								</DataTableMessage>
+								<DataTablePlaceholderRows
+									rows={
+										trashPagination && trashedCount > 0
+											? Math.min(trashedCount, trashPagination.perPage)
+											: undefined
+									}
+									cells={["title", ...(i18n ? (["tertiary"] as const) : []), "tertiary", "actions"]}
+								/>
 							) : trashedItems.length === 0 ? (
 								<DataTableMessage colSpan={trashColSpan}>{t`Trash is empty`}</DataTableMessage>
 							) : (
@@ -959,12 +1013,13 @@ export function ContentList({
 						</div>
 					)}
 
-					{trashPagination && trashPagination.totalCount > 0 && (
+					{trashPagination && (trashPagination.totalCount > 0 || trashFooterPending) && (
 						<ListPaginationFooter
 							key="trash"
 							pagination={trashPagination}
 							pageSizes={CONTENT_LIST_PAGE_SIZES}
 							label={t`Trash pagination`}
+							loading={trashPagination.totalCount === 0}
 						/>
 					)}
 				</>
@@ -1008,7 +1063,6 @@ function FilterBar({
 }: FilterBarProps) {
 	const { t } = useLingui();
 
-	const showAuthorFilter = !!onAuthorFilterChange && !!authors && authors.length > 0;
 	const showDateFilter = !!onDateFilterChange;
 
 	const statusItems: Record<ContentStatusFilter, string> = {
@@ -1066,19 +1120,20 @@ function FilterBar({
 				))}
 			</Select>
 
-			{showAuthorFilter && (
+			{onAuthorFilterChange && (
 				<Select
 					size="sm"
 					aria-label={t`Filter by author`}
 					value={authorFilter}
-					onValueChange={(v) => onAuthorFilterChange?.(v ?? "")}
+					disabled={!authors?.length}
+					onValueChange={(v) => onAuthorFilterChange(v ?? "")}
 					items={{
 						"": t`All authors`,
-						...Object.fromEntries(authors.map((a) => [a.id, a.name || a.email])),
+						...Object.fromEntries((authors ?? []).map((a) => [a.id, a.name || a.email])),
 					}}
 				>
 					<Select.Option value="">{t`All authors`}</Select.Option>
-					{authors.map((a) => (
+					{authors?.map((a) => (
 						<Select.Option key={a.id} value={a.id}>
 							{a.name || a.email}
 						</Select.Option>
@@ -1472,6 +1527,24 @@ interface ContentListItemProps {
 	selected?: boolean;
 	onToggleSelect?: (id: string) => void;
 	extensionColumns?: ResolvedContentListColumn[];
+	/** Keeps room beside the actions for who is editing, so a face appearing moves nothing. */
+	presenceSlot?: boolean;
+	editors?: readonly PresentPerson[];
+}
+
+/** Who else is editing each entry of the collection, by entry ID. */
+function useEditorsById(collection: string): ReadonlyMap<string, readonly PresentPerson[]> {
+	const topic = `content/${collection}`;
+	const people = usePresence(topic);
+	return React.useMemo(() => {
+		const byId = new Map<string, PresentPerson[]>();
+		for (const person of people) {
+			if (person.activity !== "editing" || person.topic === topic) continue;
+			const id = person.topic.slice(topic.length + 1);
+			byId.set(id, [...(byId.get(id) ?? []), person]);
+		}
+		return byId;
+	}, [people, topic]);
 }
 
 function ContentListItem({
@@ -1490,6 +1563,8 @@ function ContentListItem({
 	selected,
 	onToggleSelect,
 	extensionColumns,
+	presenceSlot,
+	editors,
 }: ContentListItemProps) {
 	const { t, i18n: lingui } = useLingui();
 	const title = getEntryTitle(item, titleField);
@@ -1515,6 +1590,11 @@ function ContentListItem({
 	);
 	const localeChip = showLocale && <LocaleChip locale={item.locale} />;
 	const formattedDate = <bdi>{formatDate(date, lingui.locale)}</bdi>;
+	const editorNames =
+		editors &&
+		new Intl.ListFormat(lingui.locale, { type: "conjunction" }).format(
+			editors.map((editor) => editor.name),
+		);
 
 	return (
 		<tr data-selected={selected || undefined}>
@@ -1579,53 +1659,67 @@ function ContentListItem({
 				);
 			})}
 			<td className="text-end">
-				<RowActionsMenu label={t`Actions for ${title}`}>
-					<DropdownMenu.LinkItem
-						closeOnClick
-						icon={<Pencil className="size-4" aria-hidden="true" />}
-						render={
-							<Link
-								to="/content/$collection/$id"
-								params={{ collection, id: item.id }}
-								search={{ locale: item.locale }}
-							/>
-						}
-					>
-						{t`Edit`}
-					</DropdownMenu.LinkItem>
-					{item.status === "published" && item.slug && (
+				<div className="flex items-center justify-end gap-2">
+					{presenceSlot && (
+						<span data-presence-slot="" className="flex size-6 shrink-0">
+							{editors && (
+								<PresenceFaces
+									people={editors}
+									max={1}
+									ringClassName="ring-transparent"
+									label={t`Being edited by ${editorNames}`}
+								/>
+							)}
+						</span>
+					)}
+					<RowActionsMenu label={t`Actions for ${title}`}>
 						<DropdownMenu.LinkItem
 							closeOnClick
-							icon={<ArrowSquareOut className="size-4" aria-hidden="true" />}
-							href={contentUrl(collection, item.slug, urlPattern, {
-								locale: item.locale,
-								i18n,
-								id: item.id,
-								date: item.publishedAt,
-							})}
-							target="_blank"
-							rel="noreferrer"
+							icon={<Pencil className="size-4" aria-hidden="true" />}
+							render={
+								<Link
+									to="/content/$collection/$id"
+									params={{ collection, id: item.id }}
+									search={{ locale: item.locale }}
+								/>
+							}
 						>
-							{t`View published`}
+							{t`Edit`}
 						</DropdownMenu.LinkItem>
-					)}
-					{onDuplicate && (
+						{item.status === "published" && item.slug && (
+							<DropdownMenu.LinkItem
+								closeOnClick
+								icon={<ArrowSquareOut className="size-4" aria-hidden="true" />}
+								href={contentUrl(collection, item.slug, urlPattern, {
+									locale: item.locale,
+									i18n,
+									id: item.id,
+									date: item.publishedAt,
+								})}
+								target="_blank"
+								rel="noreferrer"
+							>
+								{t`View published`}
+							</DropdownMenu.LinkItem>
+						)}
+						{onDuplicate && (
+							<DropdownMenu.Item
+								icon={<Copy className="size-4" aria-hidden="true" />}
+								onClick={() => onDuplicate(item.id)}
+							>
+								{t`Duplicate`}
+							</DropdownMenu.Item>
+						)}
+						<DropdownMenu.Separator />
 						<DropdownMenu.Item
-							icon={<Copy className="size-4" aria-hidden="true" />}
-							onClick={() => onDuplicate(item.id)}
+							variant="danger"
+							icon={<Trash className="size-4" aria-hidden="true" />}
+							onClick={trash.show}
 						>
-							{t`Duplicate`}
+							{t`Move to trash`}
 						</DropdownMenu.Item>
-					)}
-					<DropdownMenu.Separator />
-					<DropdownMenu.Item
-						variant="danger"
-						icon={<Trash className="size-4" aria-hidden="true" />}
-						onClick={trash.show}
-					>
-						{t`Move to trash`}
-					</DropdownMenu.Item>
-				</RowActionsMenu>
+					</RowActionsMenu>
+				</div>
 				<ConfirmDialog
 					{...trash.dialog}
 					title={t`Move to Trash?`}

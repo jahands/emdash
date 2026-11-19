@@ -52,6 +52,7 @@ import type { BackingServiceHandler } from "./backing-service.js";
 import { generateCapnpConfig, pluginSocketName } from "./capnp.js";
 import type { LoadedPlugin } from "./capnp.js";
 import { MiniflareDevRunner } from "./dev-runner.js";
+import { RealtimeInvocations } from "./realtime-invocations.js";
 import { waitForWorkerdReady } from "./workerd-startup.js";
 import { generatePluginWrapper, parseRouteTransport, stringifyRouteTransport } from "./wrapper.js";
 
@@ -986,6 +987,8 @@ export class WorkerdSandboxRunner implements SandboxRunner {
 		return this.contentActionsCallback;
 	}
 
+	readonly realtimeInvocations = new RealtimeInvocations();
+
 	/** Get the email send callback */
 	get emailSend() {
 		return this.emailSendCallback;
@@ -1205,10 +1208,17 @@ class WorkerdSandboxedPlugin implements SandboxedPluginInstance {
 			}, wallTimeMs);
 		});
 
+		const closeRealtime = this.runner.realtimeInvocations.open(this.manifest, invocationId);
 		const invocation = fn(invocationId);
 		void invocation.then(
-			() => this.runner.contentActions?.flush(this.manifest.id, invocationId, true),
-			() => this.runner.contentActions?.flush(this.manifest.id, invocationId, true),
+			() => {
+				closeRealtime();
+				return this.runner.contentActions?.flush(this.manifest.id, invocationId, true);
+			},
+			() => {
+				closeRealtime();
+				return this.runner.contentActions?.flush(this.manifest.id, invocationId, true);
+			},
 		);
 		try {
 			return await Promise.race([invocation, timeout]);

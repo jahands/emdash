@@ -148,6 +148,48 @@ describe("CalendarEntryPanel", () => {
 		expect(unscheduleContent).toHaveBeenCalledWith("posts", "launch", { locale: "en" });
 	});
 
+	it("reads the entry with its staged slug, as the editor that shares its cache entry does", async () => {
+		const { screen } = renderPanel(scheduledItem("2026-10-20T09:00:00.000Z"), editor);
+		await expect.element((await screen).getByText("Maya Chen")).toBeVisible();
+
+		expect(fetchContent).toHaveBeenCalledWith("posts", "launch", {
+			locale: undefined,
+			draftSlug: true,
+		});
+	});
+
+	it("holds the details' rows and an editor's actions in place while the details load", async () => {
+		let resolveDetails!: (item: ContentItem) => void;
+		vi.mocked(fetchContent).mockReturnValue(
+			new Promise((resolve) => {
+				resolveDetails = resolve;
+			}),
+		);
+		const { screen } = renderPanel(scheduledItem("2026-10-15T11:00:00.000Z"), editor);
+		const panel = (await screen).getByRole("dialog", { name: "Launch" });
+		const top = (text: string) => panel.getByText(text).element().getBoundingClientRect().top;
+
+		await expect.element(panel.getByRole("status")).toHaveTextContent("Loading...");
+		await expect.element(panel.getByText("Bylines")).toBeVisible();
+		await expect.element(panel.getByRole("button", { name: "Remove schedule" })).toBeVisible();
+		await expect.element(panel.getByRole("button", { name: "Publish now" })).toBeDisabled();
+		const editedTop = top("Last edited");
+		const removeTop = panel
+			.getByRole("button", { name: "Remove schedule" })
+			.element()
+			.getBoundingClientRect().top;
+
+		resolveDetails(details("someone-else"));
+		await expect.element(panel.getByText("Maya Chen")).toBeVisible();
+
+		expect(panel.getByRole("status").query()).toBeNull();
+		await expect.element(panel.getByRole("button", { name: "Publish now" })).toBeEnabled();
+		expect(top("Last edited")).toBe(editedTop);
+		expect(
+			panel.getByRole("button", { name: "Remove schedule" }).element().getBoundingClientRect().top,
+		).toBe(removeTop);
+	});
+
 	it("publishes an overdue schedule now with the revision it loaded", async () => {
 		const author: CurrentUser = { id: "author", email: "author@example.com", role: 30 };
 		vi.mocked(fetchContent).mockResolvedValue(details("author"));

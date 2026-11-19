@@ -73,7 +73,7 @@ describe("EmailSettings", () => {
 		await expect
 			.element(screen.getByRole("heading", { name: "Email Settings", level: 1 }))
 			.toBeInTheDocument();
-		await expect.element(screen.getByText("Loading...")).toBeInTheDocument();
+		await expect.element(screen.getByText("Loading settings...")).toBeInTheDocument();
 		expect(screen.getByLabelText("Recipient email").query()).toBeNull();
 	});
 

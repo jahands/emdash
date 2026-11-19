@@ -110,11 +110,14 @@ import {
 	type MappablePosition,
 	type Range,
 } from "@tiptap/core";
-import CharacterCount from "@tiptap/extension-character-count";
 import Focus from "@tiptap/extension-focus";
 import { isAllowedUri } from "@tiptap/extension-link";
 import Typography from "@tiptap/extension-typography";
-import type { Mark as ProseMirrorMark, Node as ProseMirrorNode } from "@tiptap/pm/model";
+import {
+	Fragment,
+	type Mark as ProseMirrorMark,
+	type Node as ProseMirrorNode,
+} from "@tiptap/pm/model";
 import {
 	AllSelection,
 	NodeSelection,
@@ -136,6 +139,7 @@ import type { Section } from "../lib/api";
 import { fetchMediaItem, uploadMedia } from "../lib/api/media.js";
 import type { RichTextBinding } from "../lib/co-editing/types.js";
 import { guardUnsavedInput, revealErrors } from "../lib/dialog-form.js";
+import { stringifyJson } from "../lib/frozen-json.js";
 import {
 	canonicalMediaProviderId,
 	dropsDisplayHeight,
@@ -148,6 +152,8 @@ import {
 import { cn } from "../lib/utils";
 import { UnsafePortableTextTableError } from "../portable-text-table.js";
 import {
+	convertCachedTopLevelNode,
+	documentToPortableText,
 	equalJsonValues,
 	portableTextToProsemirror,
 	prosemirrorToPortableText,
@@ -1922,7 +1928,12 @@ function DynamicSelect({
 				{field.label}
 			</span>
 			{loading ? (
-				<div className="flex h-10 items-center px-3 text-sm text-kumo-subtle">{t`Loading...`}</div>
+				<>
+					<span role="status" className="sr-only">
+						{t`Loading...`}
+					</span>
+					<div aria-hidden="true" className="skeleton-line h-9 w-full rounded-lg" />
+				</>
 			) : (
 				<Select
 					aria-labelledby={labelId}
@@ -1979,26 +1990,60 @@ function countNonCjkWords(text: string): number {
 	return text.replace(CJK_CHARACTER_REGEX, " ").split(WHITESPACE_REGEX).filter(Boolean).length;
 }
 
-/**
- * Word count for the editor footer. CJK characters are counted individually
- * because they are not delimited by spaces; other scripts are counted by word.
- * Used as the `wordCounter` for the CharacterCount extension, whose default
- * (`text.split(' ')`) reports a spaceless CJK paragraph as a single word.
- */
-export function countWords(text: string): number {
-	return countNonCjkWords(text) + countCjkCharacters(text);
+function readingMinutes(nonCjkWords: number, cjkCharacters: number): number {
+	return Math.ceil(nonCjkWords / WORDS_PER_MINUTE + cjkCharacters / CJK_CHARACTERS_PER_MINUTE);
+}
+
+interface BlockTextCounts {
+	nonCjkWords: number;
+	cjkCharacters: number;
+	characters: number;
+}
+
+export interface DocumentMetrics {
+	words: number;
+	characters: number;
+	readingTime: number;
+}
+
+const blockTextCounts = new WeakMap<ProseMirrorNode, BlockTextCounts>();
+
+function countBlockText(block: ProseMirrorNode): BlockTextCounts {
+	let counts = blockTextCounts.get(block);
+	if (!counts) {
+		const content = Fragment.from(block);
+		// Leaf nodes such as images and hard breaks read as one space: a character, but no word.
+		const wordText = content.textBetween(0, content.size, " ", " ");
+		counts = {
+			nonCjkWords: countNonCjkWords(wordText),
+			cjkCharacters: countCjkCharacters(wordText),
+			characters: content.textBetween(0, content.size, undefined, " ").length,
+		};
+		blockTextCounts.set(block, counts);
+	}
+	return counts;
 }
 
 /**
- * Calculate reading time in minutes for the given text. Word-based scripts are
- * read at WORDS_PER_MINUTE and CJK characters at CJK_CHARACTERS_PER_MINUTE.
- * Returns 0 for an empty document.
+ * Word, character and reading-time counts for a document. Each top-level
+ * block is counted once and remembered by node; ProseMirror keeps the nodes
+ * an edit doesn't touch, so a keystroke recounts only the block it changed.
  */
-export function calculateReadingTime(text: string): number {
-	return Math.ceil(
-		countNonCjkWords(text) / WORDS_PER_MINUTE +
-			countCjkCharacters(text) / CJK_CHARACTERS_PER_MINUTE,
-	);
+export function documentMetrics(doc: ProseMirrorNode): DocumentMetrics {
+	let nonCjkWords = 0;
+	let cjkCharacters = 0;
+	let characters = 0;
+	doc.forEach((block) => {
+		const counts = countBlockText(block);
+		nonCjkWords += counts.nonCjkWords;
+		cjkCharacters += counts.cjkCharacters;
+		characters += counts.characters;
+	});
+	return {
+		words: nonCjkWords + cjkCharacters,
+		characters,
+		readingTime: readingMinutes(nonCjkWords, cjkCharacters),
+	};
 }
 
 /**
@@ -2011,22 +2056,13 @@ function EditorFooter({
 	editor: Editor;
 	variant?: PortableTextEditorProps["variant"];
 }) {
-	const { words, characters, text } = useEditorState({
+	const { words, characters, readingTime } = useEditorState({
 		editor,
-		selector: (ctx) => {
-			const storage: { words: () => number; characters: () => number } =
-				ctx.editor.storage.characterCount;
-			return {
-				words: storage.words(),
-				characters: storage.characters(),
-				text: ctx.editor.getText(),
-			};
-		},
+		selector: (ctx) => documentMetrics(ctx.editor.state.doc),
 	});
 
 	// Subscribes to locale changes so the plural messages below re-render.
 	useLinguiContext();
-	const readingTime = calculateReadingTime(text);
 
 	if (variant === "document") {
 		if (characters === 0) return null;
@@ -2207,10 +2243,7 @@ function normalizeButtonItems(items: unknown): unknown {
 	});
 }
 
-/**
- * Portable Text Editor Component
- */
-export function PortableTextEditor({
+function PortableTextEditorComponent({
 	value,
 	onChange,
 	placeholder,
@@ -2634,11 +2667,8 @@ export function PortableTextEditor({
 		)
 			return;
 		lastReportedDocRef.current = changedEditor.state.doc;
-		const doc = changedEditor.getJSON();
-		// TipTap's getJSON() returns JSONContent which is structurally compatible
-		const pmDoc = doc as Parameters<typeof prosemirrorToPortableText>[0];
 		try {
-			const portableText = prosemirrorToPortableText(pmDoc);
+			const portableText = documentToPortableText(changedEditor.state.doc);
 			if (equalJsonValues(portableText, lastPortableTextValueRef.current)) return;
 			lastPortableTextValueRef.current = portableText;
 			cb(portableText);
@@ -2723,7 +2753,6 @@ export function PortableTextEditor({
 					insertedLineRef.current = null;
 				},
 			}),
-			CharacterCount.configure({ wordCounter: countWords }),
 			Focus.configure({
 				className: "has-focus",
 				mode: "all",
@@ -2776,6 +2805,43 @@ export function PortableTextEditor({
 			editor.setEditable(editorEditable, false);
 		}
 	}, [editor, editorEditable]);
+
+	// The first change builds the loaded document and converts every block, and
+	// the host serializes and checks them, so doing that while the page is idle
+	// keeps the first keystroke as quick as the rest.
+	React.useEffect(() => {
+		if (!editor || collaboration) return;
+		let cancelled = false;
+		let index = 0;
+		const whenIdle = (callback: () => void) => {
+			if (typeof requestIdleCallback === "function") requestIdleCallback(callback);
+			else setTimeout(callback, 50);
+		};
+		const warm = () => {
+			if (cancelled || editor.isDestroyed) return;
+			if (!lastReportedDocRef.current) {
+				lastReportedDocRef.current = editor.schema.nodeFromJSON(initialContent);
+				whenIdle(warm);
+				return;
+			}
+			const { doc } = editor.state;
+			const end = performance.now() + 4;
+			for (; index < doc.childCount && performance.now() < end; index++) {
+				try {
+					const { blocks } = convertCachedTopLevelNode(doc.child(index), index);
+					stringifyJson(blocks);
+					findUnsupportedPortableTextMarks(blocks);
+				} catch {
+					// reportChange surfaces conversion errors when the document changes.
+				}
+			}
+			if (index < doc.childCount) whenIdle(warm);
+		};
+		whenIdle(warm);
+		return () => {
+			cancelled = true;
+		};
+	}, [editor, collaboration]);
 
 	/**
 	 * Takes the line the block insert button typed back out, or only its slash
@@ -3378,14 +3444,6 @@ export function PortableTextEditor({
 		);
 	}
 
-	if (!editor) {
-		return (
-			<div className={cn("border rounded-lg", className)}>
-				<div className="p-4 text-kumo-subtle">{t`Loading editor...`}</div>
-			</div>
-		);
-	}
-
 	const tablePasteErrorMessage =
 		tablePasteError?.reason === "too-large"
 			? t`This paste is too large. Paste fewer cells or less text at a time.`
@@ -3608,6 +3666,38 @@ export function PortableTextEditor({
 		</div>
 	);
 }
+
+/**
+ * The editor reads `value` once, when it mounts, and a host replaces the content
+ * by remounting it. Skipping the render for each value it reported back keeps a
+ * keystroke from re-rendering the whole editor.
+ */
+function samePropsExceptValue(previous: PortableTextEditorProps, next: PortableTextEditorProps) {
+	const keys = new Set([...Object.keys(previous), ...Object.keys(next)]);
+	for (const key of keys as Set<keyof PortableTextEditorProps>) {
+		if (key !== "value" && !Object.is(previous[key], next[key])) return false;
+	}
+	return true;
+}
+
+/**
+ * useEditor destroys an editor whose render has not committed within a
+ * millisecond. A transition, such as opening the editor's route, renders in
+ * slices that yield to the browser, so on a slow device the editor could be
+ * destroyed before its effects run against it. A state update from a layout
+ * effect renders, commits and runs effects in one task, which no timer can
+ * interrupt, and still paints with the first frame.
+ */
+function SynchronouslyMountedEditor(props: PortableTextEditorProps) {
+	const [mounted, setMounted] = React.useState(false);
+	React.useLayoutEffect(() => setMounted(true), []);
+	return mounted ? <PortableTextEditorComponent {...props} /> : null;
+}
+
+/**
+ * Portable Text Editor Component
+ */
+export const PortableTextEditor = React.memo(SynchronouslyMountedEditor, samePropsExceptValue);
 
 /** The editor's floating toolbars, which are only in the page while they show. */
 const BUBBLE_MENU_SELECTOR = [

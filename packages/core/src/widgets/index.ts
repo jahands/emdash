@@ -2,10 +2,12 @@ import type { Kysely } from "kysely";
 
 import { widgetAreaTag } from "../cache/chrome-tags.js";
 import type { Database } from "../database/types.js";
+import { noteLayoutRead } from "../layout-reads.js";
 import { getDb } from "../loader.js";
-import { cachedQuery, CacheNamespace } from "../object-cache/index.js";
+import { cachedQuery, CacheNamespace, isObjectCacheActive } from "../object-cache/index.js";
 import type { CacheHint } from "../query.js";
-import { peekRequestCache, requestCached } from "../request-cache.js";
+import { requestCached } from "../request-cache.js";
+import { SQL_BATCH_SIZE } from "../utils/chunks.js";
 import { getWidgetComponents as getComponentRegistry } from "./components.js";
 import type { Widget, WidgetArea, WidgetRow, WidgetComponentDef } from "./types.js";
 
@@ -22,34 +24,55 @@ export type {
 } from "./types.js";
 export { invalidateWidgetObjectCache } from "../object-cache/index.js";
 
+export const WIDGET_AREA_READ = "widget-area:";
+
 /**
  * Get a widget area by name, with all its widgets.
  */
 export async function getWidgetArea(name: string): Promise<WidgetArea | null> {
-	return requestCached(`widget-area:${name}`, async () => {
-		const prefetched = peekRequestCache<WidgetArea[]>("widget-areas");
-		if (prefetched) {
-			try {
-				const areas = await prefetched;
-				return areas.find((area) => area.name === name) ?? null;
-			} catch {
-				// Optional prefetch failure must still allow the scoped read.
-			}
-		}
+	noteLayoutRead(`${WIDGET_AREA_READ}${name}`, () => getWidgetArea(name));
+	return requestCached(`${WIDGET_AREA_READ}${name}`, () => loadWidgetArea(name));
+}
 
-		return cachedQuery({
-			namespace: CacheNamespace.WIDGETS,
-			key: `area:${name}`,
-			load: async () => {
-				const db = await getDb();
-				const rows = await selectAreasWithWidgets(db)
-					.where("a.name", "=", name)
-					.orderBy("w.sort_order", "asc")
-					.execute();
-				return groupAreaRows(rows)[0] ?? null;
-			},
-		});
+function loadWidgetArea(name: string): Promise<WidgetArea | null> {
+	return cachedQuery({
+		namespace: CacheNamespace.WIDGETS,
+		key: `area:${name}`,
+		load: async () => {
+			const db = await getDb();
+			const rows = await selectAreasWithWidgets(db)
+				.where("a.name", "=", name)
+				.orderBy("w.sort_order", "asc")
+				.execute();
+			return groupAreaRows(rows)[0] ?? null;
+		},
 	});
+}
+
+/**
+ * Start loading the widget areas `names` in one query, for the request's later
+ * `getWidgetArea` calls to find. With the object cache on, each still loads
+ * through it, which usually answers without a query.
+ */
+export function prefetchWidgetAreas(names: readonly string[]): Promise<unknown> {
+	const areas = (async () => {
+		if (names.length > SQL_BATCH_SIZE || (await isObjectCacheActive())) return null;
+		const db = await getDb();
+		const rows = await selectAreasWithWidgets(db)
+			.where("a.name", "in", names)
+			.orderBy("w.sort_order", "asc")
+			.execute();
+		return new Map(groupAreaRows(rows).map((area) => [area.name, area]));
+	})();
+	return Promise.all(
+		names.map((name) =>
+			requestCached(`${WIDGET_AREA_READ}${name}`, async () => {
+				// A layout read may already be waiting on this entry, so a failed batch falls back.
+				const loaded = await areas.catch(() => null);
+				return loaded ? (loaded.get(name) ?? null) : loadWidgetArea(name);
+			}),
+		),
+	);
 }
 
 /**

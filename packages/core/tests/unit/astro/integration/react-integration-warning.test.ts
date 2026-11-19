@@ -18,7 +18,7 @@ describe("missingReactIntegrationWarning (#962)", () => {
 	it("warns with an actionable fix when @astrojs/react is missing", () => {
 		const warning = missingReactIntegrationWarning([{ name: "emdash" }]);
 		expect(warning).toContain("@astrojs/react");
-		expect(warning).toContain("Loading EmDash...");
+		expect(warning).toContain("loading spinner");
 		expect(warning).toContain("integrations: [react(), emdash({ ... })]");
 	});
 

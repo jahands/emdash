@@ -59,6 +59,8 @@ export interface ContentItem {
 	scheduledAt: string | null;
 	liveRevisionId: string | null;
 	draftRevisionId: string | null;
+	/** The slug the draft stages, when the read asked for it with `draftSlug`. */
+	draftSlug?: string;
 	seo?: ContentSeo;
 	/**
 	 * First page of reference-field edges, keyed by field slug.
@@ -205,8 +207,12 @@ export async function fetchContentList(
 		 * explicit credit. Off by default: the filter matches real credits.
 		 */
 		includeInferredBylines?: boolean;
+		/** Return only these fields in each item's `data`; omit for whole entries. */
+		fields?: string[];
+		/** Also count the trash in `locale`, as `trashTotal`. */
+		trashTotal?: boolean;
 	},
-): Promise<FindManyResult<ContentItem>> {
+): Promise<FindManyResult<ContentItem> & { trashTotal?: number }> {
 	const params = new URLSearchParams();
 	if (options?.cursor) params.set("cursor", options.cursor);
 	if (options?.page !== undefined) params.set("page", String(options.page));
@@ -234,10 +240,12 @@ export async function fetchContentList(
 	if (options?.includeInferredBylines && (options.bylinesNone || options.bylines?.length)) {
 		params.set("includeInferredBylines", "1");
 	}
+	if (options?.fields) params.set("fields", options.fields.join(","));
+	if (options?.trashTotal) params.set("trashTotal", "1");
 
 	const url = `${API_BASE}/content/${collection}${params.toString() ? `?${params}` : ""}`;
 	const response = await apiFetch(url);
-	return parseApiResponse<FindManyResult<ContentItem>>(
+	return parseApiResponse<FindManyResult<ContentItem> & { trashTotal?: number }>(
 		response,
 		i18n._(msg`Failed to fetch content`),
 	);
@@ -271,10 +279,11 @@ export async function fetchContentAuthors(collection: string): Promise<ContentAu
 export async function fetchContent(
 	collection: string,
 	id: string,
-	options?: { locale?: string },
+	options?: { locale?: string; draftSlug?: boolean },
 ): Promise<ContentItem> {
 	const params = new URLSearchParams();
 	if (options?.locale) params.set("locale", options.locale);
+	if (options?.draftSlug) params.set("draftSlug", "1");
 	const query = params.toString() ? `?${params}` : "";
 	const response = await apiFetch(`${API_BASE}/content/${collection}/${id}${query}`);
 	const data = await parseApiResponse<{ item: ContentItem; _rev?: string }>(
@@ -583,20 +592,23 @@ export async function discardDraft(
 /**
  * Compare live and draft revisions
  */
-export async function compareRevisions(
-	collection: string,
-	id: string,
-): Promise<{
+export interface RevisionComparison {
 	hasChanges: boolean;
 	live: Record<string, unknown> | null;
 	draft: Record<string, unknown> | null;
-}> {
+	/** The compared revisions, with the fingerprints the revision list gives them. */
+	revisions?: {
+		live: { id: string; fingerprint: string } | null;
+		draft: { id: string; fingerprint: string } | null;
+	};
+}
+
+export async function compareRevisions(
+	collection: string,
+	id: string,
+): Promise<RevisionComparison> {
 	const response = await apiFetch(`${API_BASE}/content/${collection}/${id}/compare`);
-	return parseApiResponse<{
-		hasChanges: boolean;
-		live: Record<string, unknown> | null;
-		draft: Record<string, unknown> | null;
-	}>(response, i18n._(msg`Failed to compare revisions`));
+	return parseApiResponse<RevisionComparison>(response, i18n._(msg`Failed to compare revisions`));
 }
 
 // =============================================================================
@@ -619,6 +631,8 @@ export interface RevisionAuthor {
 }
 
 export interface RevisionListItem extends Revision {
+	/** Changes exactly when the revision's stored data does, including a change in place. */
+	fingerprint?: string;
 	/** `null` when no author was recorded or the account no longer exists. */
 	author: RevisionAuthor | null;
 	/**

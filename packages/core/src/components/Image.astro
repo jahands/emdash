@@ -5,11 +5,21 @@
  * Renders image blocks from WordPress imports and EmDash media.
  * Uses the provider's getSrc function for responsive srcset generation.
  */
-import { Image as AstroImage, getImage } from "astro:assets";
+import { getImage, imageConfig } from "astro:assets";
+import virtualConfig from "virtual:emdash/config";
 import type { ImageEmbed } from "../media/types.js";
 import { getMediaProvider } from "../media/provider-loader.js";
 import { buildRenderMediaUrl } from "../media/url.js";
-import { canOptimizeImage, toAbsoluteMediaUrl, responsiveWidths } from "../media/responsive.js";
+import {
+	lazyImageSizes,
+	mediaImageOrigin,
+	optimizeImage,
+	portableTextImageSizes,
+	responsiveSizes,
+	responsiveWidths,
+	toAbsoluteMediaUrl,
+	type OptimizedImage,
+} from "../media/responsive.js";
 import { getPublicOrigin } from "../api/public-url.js";
 import { sanitizeHref } from "../utils/url.js";
 import { normalizeImageLink } from "../content/converters/image-link.js";
@@ -54,6 +64,13 @@ export interface Props {
 	};
 	/** Render the LQIP placeholder as an inline background. Disable for strict CSP. */
 	placeholder?: boolean;
+	/**
+	 * `sizes` for an image shown at the full width of its column, e.g.
+	 * `"(min-width: 760px) 680px, calc(100vw - 2rem)"`. Defaults to the
+	 * `imageSizes` passed to `PortableText`, then to the viewport width.
+	 * Images with a set display width use that width instead.
+	 */
+	sizes?: string;
 }
 
 /**
@@ -73,7 +90,7 @@ function generateSrcset(
 		.join(", ");
 }
 
-const { node, placeholder = true } = Astro.props;
+const { node, placeholder = true, sizes: columnSizes } = Astro.props;
 
 if (!node?.asset) {
 	return null;
@@ -122,7 +139,6 @@ if (customWidth && customHeight) {
 let src = "";
 let srcset: string | undefined;
 let sizes: string | undefined;
-let astroImageSrc = "";
 const providerId = asset.provider;
 
 if (providerId && providerId !== "local") {
@@ -161,31 +177,6 @@ if (providerId && providerId !== "local") {
 	}
 }
 
-// Fallback for local provider. `asset.url` carries the storage key with
-// extension when present; `asset._ref` is a bare ULID that only the internal
-// `/file/{id}` route can resolve. `buildRenderMediaUrl` picks the right shape.
-if (!src) {
-	src = buildRenderMediaUrl(Astro.locals.emdash?.getPublicMediaUrl, {
-		url: asset.url,
-		id: asset._ref,
-	});
-	if (renderWidth && renderHeight) {
-		const absoluteSrc = toAbsoluteMediaUrl(
-			src,
-			getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
-		);
-		if (
-			await canOptimizeImage(getImage, {
-				src: absoluteSrc,
-				width: renderWidth,
-				height: renderHeight,
-			})
-		) {
-			astroImageSrc = absoluteSrc;
-		}
-	}
-}
-
 // Build placeholder background style. Prefer first-class LQIP fields; fall
 // back to `asset.meta` for legacy snapshots persisted before LQIP was promoted.
 const blurhash = (node.blurhash ?? (node.asset.meta?.blurhash as string | undefined)) as
@@ -202,64 +193,69 @@ if (placeholder && blurhash) {
 	placeholderStyle = `background-color: ${dominantColor};`;
 }
 
+// Fallback for local provider. `asset.url` carries the storage key with
+// extension when present; `asset._ref` is a bare ULID that only the internal
+// `/file/{id}` route can resolve. `buildRenderMediaUrl` picks the right shape.
+let optimized: OptimizedImage | null = null;
+if (!src) {
+	src = buildRenderMediaUrl(Astro.locals.emdash?.getPublicMediaUrl, {
+		url: asset.url,
+		id: asset._ref,
+	});
+	if (renderWidth && renderHeight) {
+		const absoluteSrc = toAbsoluteMediaUrl(
+			src,
+			mediaImageOrigin({
+				internalOrigin: virtualConfig?.internalMediaOrigin,
+				isPrerendered: Astro.isPrerendered,
+				publicOrigin: () => getPublicOrigin(Astro.url, Astro.locals.emdash?.config),
+			}),
+		);
+		const hasDisplaySize = Boolean(customWidth || customHeight);
+		const slotSizes = hasDisplaySize
+			? responsiveSizes(renderWidth)
+			: (columnSizes ?? portableTextImageSizes(node) ?? responsiveSizes(renderWidth));
+		optimized = await optimizeImage(getImage, imageConfig, {
+			src: absoluteSrc,
+			width: renderWidth,
+			height: renderHeight,
+			originalWidth,
+			layout: "constrained",
+			alt,
+			title,
+			sizes: lazyImageSizes(slotSizes),
+			loading: "lazy",
+			decoding: "async",
+			style: placeholderStyle || undefined,
+		});
+	}
+}
+
+const imgAttributes = optimized
+	? { src: optimized.src, srcset: optimized.srcset, ...optimized.attributes }
+	: {
+			src,
+			srcset,
+			sizes,
+			alt,
+			title,
+			width: renderWidth,
+			height: renderHeight,
+			loading: "lazy",
+			decoding: "async",
+			style: placeholderStyle || undefined,
+		};
+
 ---
 
 <figure class:list={["emdash-image", alignment && `emdash-image--align-${alignment}`]}>
 	{
 		linkHref ? (
 			<a href={linkHref} target={linkTarget} rel={linkRel}>
-				{astroImageSrc ? (
-					<AstroImage
-						src={astroImageSrc}
-						alt={alt}
-						title={title}
-						width={renderWidth}
-						height={renderHeight}
-						layout="constrained"
-						loading="lazy"
-						decoding="async"
-						style={placeholderStyle || undefined}
-					/>
-				) : (
-					<img
-						src={src}
-						srcset={srcset}
-						sizes={sizes}
-						alt={alt}
-						title={title}
-						width={renderWidth}
-						height={renderHeight}
-						loading="lazy"
-						decoding="async"
-						style={placeholderStyle || undefined}
-					/>
-				)}
+				<img {...imgAttributes} />
 			</a>
-		) : astroImageSrc ? (
-			<AstroImage
-				src={astroImageSrc}
-				alt={alt}
-				title={title}
-				width={renderWidth}
-				height={renderHeight}
-				layout="constrained"
-				loading="lazy"
-				decoding="async"
-				style={placeholderStyle || undefined}
-			/>
 		) : (
-			<img
-				src={src}
-				srcset={srcset}
-				sizes={sizes}
-				alt={alt}
-				title={title}
-				width={renderWidth}
-				height={renderHeight}
-				loading="lazy"
-				decoding="async"
-				style={placeholderStyle || undefined}
-			/>
+			<img {...imgAttributes} />
 		)
 	}
 	{caption && <figcaption>{caption}</figcaption>}

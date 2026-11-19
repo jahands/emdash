@@ -9,7 +9,6 @@
  * Uses discoverable credentials, so no email or username is needed.
  */
 
-import { Button } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
@@ -18,6 +17,7 @@ import {
 	isPasskeyEnvironmentUsable,
 	isWebAuthnSecureContext,
 } from "../../lib/webauthn-environment";
+import { Button } from "../Button.js";
 import { InsecurePasskeyContextMessage } from "./PasskeyContextMessage.js";
 
 // ============================================================================

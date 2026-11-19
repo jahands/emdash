@@ -89,6 +89,7 @@ export function createBackingServiceHandler(runner: WorkerdSandboxRunner): Backi
 					now: runner.now,
 					httpFetch: runner.httpFetch,
 					storage: runner.mediaStorage,
+					realtime: (invocationId) => runner.realtimeInvocations.get(claims.pluginId, invocationId),
 				});
 				cached = { token, handler: bridgeHandler };
 				handlerCache.set(cacheKey, cached);

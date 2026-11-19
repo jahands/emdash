@@ -76,6 +76,7 @@ Declare every host API in `emdash-plugin.jsonc`. Adding authority, exposing a ro
 | `hooks.email-transport:register` | Exclusive `email:deliver` hook                                             |
 | `hooks.email-events:register`    | Email before/after hooks                                                   |
 | `hooks.page-fragments:register`  | Trusted-only page fragments; excluded from sandbox registration            |
+| `realtime:publish`               | `ctx.realtime.publish()` on channels declared in `realtime.channels`       |
 
 Settings, KV, declared storage, logging, and cron scheduling are plugin-scoped and need no capability. Use `ctx.settings` for user configuration, `ctx.kv` for internal key-value state, and declared `ctx.storage.<collection>` for queryable records.
 
@@ -101,7 +102,7 @@ Sandboxed hooks enter the same priority, dependency, timeout, error-policy, enab
 
 ## Declarative admin UI
 
-Sandboxed pages and widgets return validated Block Kit. Structured links use host-resolved targets; `routeCtx.ui` carries host-attested locale, direction, and surface. External images require matching network authority.
+Sandboxed pages and widgets return validated Block Kit. Structured links use host-resolved targets; `routeCtx.ui` carries host-attested locale, direction, and surface. External images require matching network authority. A page or widget with `refreshOn: ["channel"]` reloads when the plugin publishes to that channel; native React pages use `useLiveTopic()` from `@emdash-cms/admin`. Read [Live updates](https://docs.emdashcms.com/plugins/creating-plugins/live-updates/).
 
 Saved-entry panels and actions point to private routes. Ordinary panel load receives only host-reloaded saved identity and version. Add `admin.editor-draft:read` or `admin.editor-draft:patch` plus extension-level collection and field selectors when an explicit interaction must receive selected unsaved fields or propose an atomic whole-field patch. Patch does not imply read. The host previews accepted patches, marks the form dirty, and never saves them automatically. Read saved content through capability-gated `ctx.content`.
 

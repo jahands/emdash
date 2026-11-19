@@ -262,6 +262,8 @@ import "./i18n.js";
 
 The admin replaces its active catalog when the locale changes. The `change` listener restores the plugin messages, and the message-ID check prevents `i18n.load()` from triggering a loop. For more locales, generate the message objects with the plugin's Lingui build instead of maintaining them by hand. Keep `@lingui/core` and `@lingui/react` as peer dependencies so the plugin uses the host's shared instance.
 
+To reload a page when the plugin's data changes in another tab, subscribe to one of its realtime channels with `useLiveTopic()` from `@emdash-cms/admin`. See [Live updates](/plugins/creating-plugins/live-updates/#refresh-native-react-pages).
+
 ## Dashboard widgets
 
 A widget declaration has a required `id` and optional `title` and `size`:

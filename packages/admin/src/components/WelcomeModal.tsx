@@ -14,6 +14,7 @@ import * as React from "react";
 
 import { useAdminBranding } from "../lib/admin-branding-context";
 import { apiFetch, throwResponseError } from "../lib/api/client";
+import { loadingButtonProps } from "./Button.js";
 import { BrandIcon } from "./Logo.js";
 
 interface WelcomeModalProps {
@@ -146,9 +147,10 @@ export function WelcomeModal({ open, onClose, userName, userRole }: WelcomeModal
 					</div>
 				</LayerDialog.Body>
 				<LayerDialog.Actions>
-					<LayerDialog.Action onClick={handleGetStarted} loading={dismissMutation.isPending}>
-						{t`Get Started`}
-					</LayerDialog.Action>
+					<LayerDialog.Action
+						onClick={handleGetStarted}
+						{...loadingButtonProps(dismissMutation.isPending, { children: t`Get Started` })}
+					/>
 				</LayerDialog.Actions>
 			</LayerDialog.Content>
 		</LayerDialog.Root>

@@ -219,6 +219,7 @@ export function handlersFromRuntime(runtime: EmDashRuntime): EmDashHandlers {
 		sandboxedPluginEntries: runtime.sandboxedPluginEntries,
 		config: runtime.config,
 		getManifest: runtime.getManifest.bind(runtime),
+		getRealtimeChannels: runtime.getRealtimeChannels.bind(runtime),
 		rooms: runtime.rooms,
 		invalidateUrlPatternCache,
 

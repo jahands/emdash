@@ -56,7 +56,11 @@ describe("registry fixture artifact round trip", () => {
 			fieldWidgets: persistedManifest.admin.fieldWidgets,
 			editorPanels: persistedManifest.admin.editorPanels,
 			editorActions: persistedManifest.admin.editorActions,
+			realtime: { channels: { events: { permission: "plugins:read" } } },
+			adminWidgets: expect.arrayContaining([expect.objectContaining({ refreshOn: ["events"] })]),
 		});
+		expect(persistedManifest.realtime).toEqual(descriptor.realtime);
+		expect(persistedManifest.declaredAccess?.realtime).toEqual({ publish: {} });
 		expect(persistedManifest.mcp?.tools).toEqual([
 			expect.objectContaining({ name: "runDiagnostics", destructive: false }),
 			expect.objectContaining({ name: "deleteRecord", destructive: true }),

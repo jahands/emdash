@@ -43,6 +43,25 @@ const contentDateBound = z
  * ceiling once the rest of the list query's placeholders are counted
  * (`SQL_BATCH_SIZE` is 50 for a query binding nothing else).
  */
+const FIELD_SLUG_PATTERN = /^[a-z][a-z0-9_]*$/;
+
+/** Comma-separated field slugs; an empty value selects no fields. */
+const fieldSelectionParam = z
+	.string()
+	.max(2000)
+	.optional()
+	.transform((value) =>
+		value === undefined
+			? undefined
+			: [...new Set(value.split(",").map((slug) => slug.trim()))].filter((slug) => slug.length > 0),
+	)
+	.refine((value) => value === undefined || value.every((slug) => FIELD_SLUG_PATTERN.test(slug)), {
+		message: "fields must be comma-separated field slugs",
+	})
+	.refine((value) => value === undefined || value.length <= 100, {
+		message: "at most 100 fields may be selected",
+	});
+
 const bylineFilterParam = z
 	.string()
 	.trim()
@@ -190,6 +209,17 @@ export const contentListQuery = cursorPaginationQuery
 		includeInferredBylines: booleanParam,
 		/** JSON-encoded indexed custom-field filters, combined with AND semantics. */
 		fieldFilters: contentFieldFiltersQuery.optional(),
+		/**
+		 * Comma-separated field slugs. When set, each item's `data` holds only
+		 * these fields; system fields, SEO and bylines are unaffected. Unknown
+		 * slugs are ignored. Omit it for full entries.
+		 */
+		fields: fieldSelectionParam,
+		/**
+		 * Also count the collection's trashed entries in `locale`, returned as
+		 * `trashTotal`. Ignored for callers who can't read the trash.
+		 */
+		trashTotal: booleanParam,
 	})
 	.refine(({ cursor, page }) => cursor === undefined || page === undefined, {
 		message: "cursor and page cannot be used together",
@@ -209,14 +239,23 @@ const calendarBound = z.iso
 	.datetime({ offset: true, message: "must be an ISO 8601 datetime" })
 	.transform((value) => new Date(value).toISOString());
 
+function refineCalendarRange<T extends z.ZodType<{ from: string; to: string }>>(schema: T) {
+	return schema
+		.refine((query) => query.from < query.to, { message: "to must be after from", path: ["to"] })
+		.refine((query) => Date.parse(query.to) - Date.parse(query.from) <= MAX_CALENDAR_RANGE_MS, {
+			message: "the range can span at most 62 days",
+			path: ["to"],
+		});
+}
+
 /** Calendar range: `from` inclusive, `to` exclusive, at most 62 days apart. */
-export const calendarQuery = cursorPaginationQuery
-	.extend({ from: calendarBound, to: calendarBound })
-	.refine((query) => query.from < query.to, { message: "to must be after from", path: ["to"] })
-	.refine((query) => Date.parse(query.to) - Date.parse(query.from) <= MAX_CALENDAR_RANGE_MS, {
-		message: "the range can span at most 62 days",
-		path: ["to"],
-	});
+export const calendarQuery = refineCalendarRange(
+	cursorPaginationQuery.extend({ from: calendarBound, to: calendarBound }),
+);
+
+export const calendarRangeQuery = refineCalendarRange(
+	z.object({ from: calendarBound, to: calendarBound }),
+);
 
 /** ISO 8601 datetime for `publishedAt` / `createdAt`. Routes gate writes behind `content:publish_any`. */
 const contentDateOverride = contentDateTime.nullish();
@@ -431,6 +470,9 @@ export const contentItemSchema = z
 		scheduledAt: z.string().nullable(),
 		liveRevisionId: z.string().nullable(),
 		draftRevisionId: z.string().nullable(),
+		draftSlug: z.string().optional().meta({
+			description: "The slug the draft stages, present only when `draftSlug=1` asks for it",
+		}),
 		version: z.number().int(),
 		locale: z.string().nullable(),
 		translationGroup: z.string().nullable(),
@@ -468,6 +510,8 @@ export const contentListResponseSchema = z
 		items: z.array(contentItemSchema),
 		nextCursor: z.string().optional(),
 		total: z.number().int().nonnegative().optional(),
+		/** Trashed entries in the requested locale, when `trashTotal` was requested. */
+		trashTotal: z.number().int().nonnegative().optional(),
 	})
 	.meta({ id: "ContentListResponse" });
 
@@ -522,6 +566,16 @@ export const contentCompareResponseSchema = z
 		hasChanges: z.boolean(),
 		live: z.record(z.string(), z.unknown()).nullable(),
 		draft: z.record(z.string(), z.unknown()).nullable(),
+		revisions: z
+			.object({
+				live: z.object({ id: z.string(), fingerprint: z.string() }).nullable(),
+				draft: z.object({ id: z.string(), fingerprint: z.string() }).nullable(),
+			})
+			.optional()
+			.meta({
+				description:
+					"The compared revisions, with the fingerprint the revision list gives each, to tell whether either changed in place since",
+			}),
 	})
 	.meta({ id: "ContentCompareResponse" });
 

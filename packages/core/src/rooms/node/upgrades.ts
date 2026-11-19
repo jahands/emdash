@@ -1,6 +1,7 @@
 /**
- * Room upgrades from the site's own HTTP server. Astro has no WebSocket API, so the server is found
- * through the response it sends for an EmDash request, and room sockets are completed with `ws`.
+ * Room and realtime hub upgrades from the site's own HTTP server. Astro has no WebSocket API, so
+ * the server is found through the response it sends for an EmDash request, and sockets are
+ * completed with `ws`.
  */
 
 import dc from "node:diagnostics_channel";
@@ -11,16 +12,26 @@ import type { Duplex } from "node:stream";
 import { WebSocketServer, type RawData, type WebSocket } from "ws";
 
 import { MAX_UPDATE_BYTES } from "../limits.js";
+import type { RoomTokenClaims } from "../token.js";
+import { HUB_NAME, isRealtimePath } from "../types.js";
 import { CLOSE_CODES, roomIdFromPath, type RoomConnection } from "../types.js";
-import type { AcceptedConnection } from "./registry.js";
+import type { AcceptedConnection, AcceptedHubConnection, HubConnection } from "./registry.js";
 
 const LOG = "[co-editing]";
 const PING_INTERVAL_MS = 30_000;
 const NOT_FOUND = "HTTP/1.1 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
 
-/** The registry that takes room sockets. */
+/** The registry that takes room and hub sockets. */
 export interface UpgradeRegistry {
-	accept(roomId: string, token: string, connection: RoomConnection): AcceptedConnection | null;
+	/** The claims of a token signed for the room, or for the hub with its name, or null. */
+	verify(roomId: string, token: string): Promise<RoomTokenClaims | null>;
+	accept(
+		roomId: string,
+		nonce: string,
+		connection: RoomConnection,
+		userId?: string,
+	): AcceptedConnection | null;
+	acceptHub(ticket: RoomTokenClaims, connection: HubConnection): AcceptedHubConnection | null;
 }
 
 /** Node.js 22.21 and 24.9 onward decide upgrades through this own property of each server. */
@@ -110,16 +121,22 @@ function attach(server: UpgradeServer): void {
 		// Counted at call time, so a listener added later, such as Vite's, still counts.
 		server.shouldUpgradeCallback = function (request) {
 			return (
-				roomUpgrade(request) !== null ||
+				upgradeTarget(request) !== null ||
 				(this.listenerCount("upgrade") > 1 && previous.call(this, request))
 			);
 		};
 	}
 	server.on("upgrade", (request: IncomingMessage, socket: Duplex, head: Buffer) => {
-		const room = roomUpgrade(request);
+		const room = upgradeTarget(request);
 		if (room) {
-			const token = tokenOf(request.url ?? "");
-			sockets.handleUpgrade(request, socket, head, (ws) => connect(ws, room, token));
+			// The server stops handling the socket's errors once it emits the upgrade.
+			const onError = () => socket.destroy();
+			socket.on("error", onError);
+			void (async () => {
+				const claims = await verify(room, tokenOf(request.url ?? ""));
+				socket.off("error", onError);
+				sockets.handleUpgrade(request, socket, head, (ws) => connect(ws, room, claims));
+			})();
 			return;
 		}
 		// Without the callback, a server with an upgrade listener passes it every upgrade request.
@@ -127,14 +144,18 @@ function attach(server: UpgradeServer): void {
 	});
 }
 
-/** The room a WebSocket upgrade on a room path is for, under any base path. */
-function roomUpgrade(request: IncomingMessage): string | null {
+/**
+ * The room a WebSocket upgrade on a room path is for, or the hub's name for the realtime path,
+ * under any base path.
+ */
+function upgradeTarget(request: IncomingMessage): string | null {
 	if (request.method !== "GET" || request.headers.upgrade?.toLowerCase() !== "websocket") {
 		return null;
 	}
 	const url = request.url ?? "";
 	const query = url.indexOf("?");
-	return roomIdFromPath(query === -1 ? url : url.slice(0, query));
+	const pathname = query === -1 ? url : url.slice(0, query);
+	return isRealtimePath(pathname) ? HUB_NAME : roomIdFromPath(pathname);
 }
 
 function tokenOf(url: string): string {
@@ -149,7 +170,16 @@ function refuse(socket: Duplex): void {
 	socket.end(NOT_FOUND);
 }
 
-function connect(ws: WebSocket, room: string, token: string): void {
+async function verify(room: string, token: string): Promise<RoomTokenClaims | null> {
+	try {
+		return (await state().registry?.verify(room, token)) ?? null;
+	} catch (error) {
+		console.error(`${LOG} couldn't check a room token:`, error);
+		return null;
+	}
+}
+
+function connect(ws: WebSocket, room: string, claims: RoomTokenClaims | null): void {
 	// `ws` closes the socket after a protocol error; the close event below cleans up.
 	ws.on("error", () => {});
 	const connection: RoomConnection = {
@@ -163,9 +193,17 @@ function connect(ws: WebSocket, room: string, token: string): void {
 		connection.close(CLOSE_CODES.busy, "No rooms run here");
 		return;
 	}
+	if (!claims) {
+		connection.close(CLOSE_CODES.busy, "No valid token");
+		return;
+	}
+	if (room === HUB_NAME) {
+		connectHub(ws, registry, claims);
+		return;
+	}
 	let accepted: AcceptedConnection | null;
 	try {
-		accepted = registry.accept(room, token, connection);
+		accepted = registry.accept(room, claims.nonce, connection, claims.userId);
 	} catch (error) {
 		console.error(`${LOG} room ${room} couldn't take a socket:`, error);
 		connection.close(CLOSE_CODES.busy, "The room couldn't take the socket");
@@ -175,6 +213,35 @@ function connect(ws: WebSocket, room: string, token: string): void {
 	const stopPinging = keepAlive(ws);
 	ws.on("message", (data, isBinary) => {
 		if (isBinary) accepted.receive(bytesOf(data));
+	});
+	ws.on("close", () => {
+		stopPinging();
+		accepted.disconnect();
+	});
+}
+
+function connectHub(ws: WebSocket, registry: UpgradeRegistry, ticket: RoomTokenClaims): void {
+	let accepted: AcceptedHubConnection | null;
+	try {
+		accepted = registry.acceptHub(ticket, {
+			send: (frame) => {
+				if (ws.readyState === ws.OPEN) ws.send(frame);
+			},
+			close: (code, reason) => ws.close(code, reason),
+		});
+	} catch (error) {
+		console.error("[realtime] the hub couldn't take a socket:", error);
+		ws.close(CLOSE_CODES.busy, "The hub couldn't take the socket");
+		return;
+	}
+	if (!accepted) return;
+	const stopPinging = keepAlive(ws);
+	ws.on("message", (data, isBinary) => {
+		if (isBinary) return;
+		const text = Buffer.from(bytesOf(data)).toString("utf8");
+		// Cloudflare answers the tab's ping without waking the hub; this matches it.
+		if (text === "ping") ws.send("pong");
+		else accepted.receive(text);
 	});
 	ws.on("close", () => {
 		stopPinging();

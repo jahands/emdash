@@ -1,12 +1,4 @@
-import {
-	Badge,
-	Button,
-	DatePicker,
-	LayerCard,
-	Popover,
-	SkeletonLine,
-	TooltipProvider,
-} from "@cloudflare/kumo";
+import { Badge, Button, DatePicker, LayerCard, Popover, TooltipProvider } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { Funnel } from "@phosphor-icons/react";
@@ -22,7 +14,12 @@ import {
 import { cn } from "../../lib/utils.js";
 import { useDateLocale } from "../../locales/date-locale.js";
 import { getLocaleDir } from "../../locales/index.js";
-import { CalendarDayList, CalendarEntryChip, type CalendarSelectHandler } from "./CalendarEntry.js";
+import {
+	CalendarDayList,
+	CalendarDayListPlaceholder,
+	CalendarEntryChip,
+	type CalendarSelectHandler,
+} from "./CalendarEntry.js";
 
 /** A cell's padding, its day number, and the gap below it. */
 const CELL_CHROME = 30;
@@ -526,10 +523,7 @@ function CalendarMonthPicker({
 					)}
 				</h3>
 				{loading ? (
-					<div aria-hidden="true" className="grid gap-3 px-2 py-2">
-						<SkeletonLine minWidth={40} maxWidth={70} />
-						<SkeletonLine minWidth={30} maxWidth={60} />
-					</div>
+					<CalendarDayListPlaceholder rows={2} />
 				) : filteredEmpty && onClearFilters ? (
 					<div className="py-2">
 						<CalendarFilteredNotice

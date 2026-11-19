@@ -65,7 +65,11 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 		const basePath = import.meta.env.BASE_URL.replace(TRAILING_SLASH_RE, "");
 		const mediaRoot = basePath ? siteUrl.slice(0, -basePath.length) : siteUrl;
 
-		const result = await handleSitemapData(emdash.db, collectionSlug, { page });
+		const i18nEnabled = isI18nEnabled();
+		const result = await handleSitemapData(emdash.db, collectionSlug, {
+			page,
+			includeTranslations: i18nEnabled,
+		});
 
 		if (!result.success || !result.data) {
 			return new Response("<!-- Failed to generate sitemap -->", {
@@ -82,7 +86,6 @@ export const GET: APIRoute = async ({ params, locals, url }) => {
 			});
 		}
 
-		const i18nEnabled = isI18nEnabled();
 		const i18nConfig = getI18nConfig();
 
 		// Group entries by `translation_group` so each <url> can advertise

@@ -5,15 +5,7 @@
  * (posts per page, date format, timezone).
  */
 
-import {
-	Autocomplete,
-	Badge,
-	Banner,
-	Button,
-	Input,
-	Loader,
-	useKumoToastManager,
-} from "@cloudflare/kumo";
+import { Autocomplete, Badge, Banner, SkeletonLine, useKumoToastManager } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowSquareOut, WarningCircle, Upload, X } from "@phosphor-icons/react";
@@ -34,12 +26,23 @@ import {
 	type SiteSettingsUpdate,
 } from "../../lib/api";
 import { useCurrentUser } from "../../lib/api/current-user.js";
+import { useLiveQueries } from "../../lib/realtime/LiveSyncProvider.js";
 import { useDateLocale } from "../../locales/date-locale.js";
+import { Button } from "../Button.js";
+import { ChangedElsewhereNotice } from "../ChangedElsewhereNotice.js";
 import { ConfirmDialog } from "../ConfirmDialog.js";
 import { MediaPickerModal } from "../MediaPickerModal";
+import { ScreenPresence } from "../presence/ScreenPresence.js";
 import { SaveButton } from "../SaveButton.js";
 import { ChangeDomainDialog } from "./ChangeDomainDialog.js";
-import { SettingRow, SettingsFrame, SettingsSection } from "./SettingsLayout.js";
+import {
+	PendingSaveAction,
+	SettingRow,
+	SettingsFieldPlaceholder,
+	SettingsFrame,
+	SettingsInput,
+	SettingsSection,
+} from "./SettingsLayout.js";
 
 const ROLE_ADMIN = 50;
 
@@ -153,13 +156,16 @@ export function GeneralSettings() {
 		queryFn: fetchSettings,
 		staleTime: Infinity,
 	});
-	const { data: siteDomain } = useQuery({
-		queryKey: ["site-domain"],
-		queryFn: fetchSiteDomain,
-	});
 	const { data: manifest } = useQuery({
 		queryKey: ["manifest"],
 		queryFn: fetchManifest,
+	});
+	const { data: siteDomain } = useQuery({
+		queryKey: ["site-domain"],
+		queryFn: fetchSiteDomain,
+		// The manifest is loaded before the page draws, so rows that depend on the domain are
+		// there from the start rather than arriving later and pushing the settings below down.
+		placeholderData: manifest?.siteDomain,
 	});
 	const { data: emailSettings } = useQuery({
 		queryKey: ["email-settings"],
@@ -191,6 +197,7 @@ export function GeneralSettings() {
 		() => generalSettingsSnapshot(formData) !== generalSettingsSnapshot(savedFormData),
 		[formData, savedFormData],
 	);
+	const live = useLiveQueries({ queryKeys: [["settings"]], dirty: isDirty });
 
 	const saveMutation = useMutation({
 		mutationFn: (data: SiteSettingsUpdate) => updateSettings(data),
@@ -288,6 +295,7 @@ export function GeneralSettings() {
 		// Refetching now would reset unsaved edits in this form.
 		void queryClient.invalidateQueries({ queryKey: ["settings"], refetchType: "none" });
 		void queryClient.invalidateQueries({ queryKey: ["site-domain"] });
+		void queryClient.invalidateQueries({ queryKey: ["manifest"] });
 		toastManager.add({
 			title: checked ? t`Domain changed to ${url}` : t`Site URL set to ${url}`,
 			description: t`Passkeys only work at the address where they were created.`,
@@ -307,20 +315,6 @@ export function GeneralSettings() {
 	const title = t`General Settings`;
 	const description = t`Site identity, logo, favicon, and reading preferences`;
 
-	if (isLoading) {
-		return (
-			<SettingsFrame title={title} description={description}>
-				<div
-					className="flex items-center gap-2 rounded-xl border border-kumo-line bg-kumo-base px-4 py-4 text-sm text-kumo-subtle"
-					role="status"
-				>
-					<Loader size="sm" />
-					<span>{t`Loading settings...`}</span>
-				</div>
-			</SettingsFrame>
-		);
-	}
-
 	if (loadError && settings === undefined) {
 		return (
 			<SettingsFrame title={title} description={description}>
@@ -338,21 +332,31 @@ export function GeneralSettings() {
 		<SettingsFrame
 			title={title}
 			description={description}
+			loading={isLoading}
 			actions={
-				<SaveButton
-					type="submit"
-					form="general-settings-form"
-					isDirty={isDirty}
-					isSaving={saveMutation.isPending}
-				/>
+				<>
+					<ScreenPresence topic="settings" editing={isDirty} />
+					{isLoading ? (
+						<PendingSaveAction />
+					) : (
+						<SaveButton
+							type="submit"
+							form="general-settings-form"
+							isDirty={isDirty}
+							isSaving={saveMutation.isPending}
+						/>
+					)}
+				</>
 			}
 		>
 			<form id="general-settings-form" onSubmit={handleSubmit} className="grid gap-8">
+				{live.changedElsewhere && <ChangedElsewhereNotice onLoad={live.loadLatest} />}
 				<SiteStatusSection />
 
 				<SettingsSection title={t`Site Identity`}>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							label={t`Site Title`}
 							value={formData.title ?? ""}
 							onChange={(e) => handleChange("title", e.target.value)}
@@ -360,7 +364,8 @@ export function GeneralSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							label={t`Tagline`}
 							value={formData.tagline ?? ""}
 							onChange={(e) => handleChange("tagline", e.target.value)}
@@ -381,13 +386,20 @@ export function GeneralSettings() {
 								)}
 							</div>
 							<div className="flex min-w-0 flex-wrap items-center gap-3 sm:justify-end">
-								<span className="min-w-0 break-all font-mono text-sm" dir="ltr" translate="no">
-									{formData.url || t`Not set`}
-								</span>
+								{isLoading ? (
+									<div aria-hidden="true" className="w-40 font-mono text-sm">
+										<SkeletonLine blockHeight="1lh" minWidth={100} maxWidth={100} />
+									</div>
+								) : (
+									<span className="min-w-0 break-all font-mono text-sm" dir="ltr" translate="no">
+										{formData.url || t`Not set`}
+									</span>
+								)}
 								<Button
 									type="button"
 									variant="outline"
 									size="sm"
+									disabled={isLoading}
 									onClick={() => setDomainDialogOpen(true)}
 								>
 									{t`Change domain`}
@@ -439,7 +451,11 @@ export function GeneralSettings() {
 						<div className="grid gap-4 sm:grid-cols-2 sm:items-center">
 							<div className="text-base font-medium">{t`Logo`}</div>
 							<div className="min-w-0">
-								{formData.logo?.mediaId ? (
+								{isLoading ? (
+									<div aria-hidden="true" className="flex justify-end">
+										<div className="skeleton-line h-9 w-32 rounded-lg" />
+									</div>
+								) : formData.logo?.mediaId ? (
 									<div className="grid gap-3">
 										{formData.logo.url ? (
 											<img
@@ -499,7 +515,11 @@ export function GeneralSettings() {
 						<div className="grid gap-4 sm:grid-cols-2 sm:items-center">
 							<div className="text-base font-medium">{t`Favicon`}</div>
 							<div className="min-w-0">
-								{formData.favicon?.mediaId ? (
+								{isLoading ? (
+									<div aria-hidden="true" className="flex justify-end">
+										<div className="skeleton-line h-9 w-36 rounded-lg" />
+									</div>
+								) : formData.favicon?.mediaId ? (
 									<div className="grid gap-3">
 										{formData.favicon.url ? (
 											<img
@@ -558,7 +578,8 @@ export function GeneralSettings() {
 
 				<SettingsSection title={t`Reading`}>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							label={t`Posts Per Page`}
 							type="number"
 							value={formData.postsPerPage ?? 10}
@@ -569,7 +590,8 @@ export function GeneralSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Input
+						<SettingsInput
+							loading={isLoading}
 							dir="ltr"
 							label={t`Date Format`}
 							value={pattern}
@@ -582,46 +604,57 @@ export function GeneralSettings() {
 						/>
 					</SettingRow>
 					<SettingRow>
-						<Autocomplete
-							label={t`Timezone`}
-							items={timezones}
-							value={timezone}
-							onValueChange={(value: string) => handleChange("timezone", value)}
-							description={
-								recognizedTimezone
-									? t`Search for an IANA timezone (e.g., Europe/London)`
-									: savedTimezoneUnchanged
-										? t`This saved timezone isn't recognized. Choose a suggestion for reliable date display.`
-										: t`Choose a recognized timezone for reliable date display.`
-							}
-							error={
-								showTimezoneError && !canSaveTimezone
-									? t`Enter a recognized timezone to save`
-									: undefined
-							}
-						>
-							<Autocomplete.InputGroup placeholder={t`Search timezones…`} />
-							<Autocomplete.Content>
-								<Autocomplete.List className="max-h-64 overflow-y-auto">
-									{(item: string) => (
-										<Autocomplete.Item key={item} value={item}>
-											{item}
-										</Autocomplete.Item>
-									)}
-								</Autocomplete.List>
-								<Autocomplete.Empty>{t`No matching timezones`}</Autocomplete.Empty>
-							</Autocomplete.Content>
-						</Autocomplete>
+						{isLoading ? (
+							<SettingsFieldPlaceholder
+								label={t`Timezone`}
+								description={t`Search for an IANA timezone (e.g., Europe/London)`}
+							/>
+						) : (
+							<Autocomplete
+								label={t`Timezone`}
+								items={timezones}
+								value={timezone}
+								onValueChange={(value: string) => handleChange("timezone", value)}
+								description={
+									recognizedTimezone
+										? t`Search for an IANA timezone (e.g., Europe/London)`
+										: savedTimezoneUnchanged
+											? t`This saved timezone isn't recognized. Choose a suggestion for reliable date display.`
+											: t`Choose a recognized timezone for reliable date display.`
+								}
+								error={
+									showTimezoneError && !canSaveTimezone
+										? t`Enter a recognized timezone to save`
+										: undefined
+								}
+							>
+								<Autocomplete.InputGroup placeholder={t`Search timezones…`} />
+								<Autocomplete.Content>
+									<Autocomplete.List className="max-h-64 overflow-y-auto">
+										{(item: string) => (
+											<Autocomplete.Item key={item} value={item}>
+												{item}
+											</Autocomplete.Item>
+										)}
+									</Autocomplete.List>
+									<Autocomplete.Empty>{t`No matching timezones`}</Autocomplete.Empty>
+								</Autocomplete.Content>
+							</Autocomplete>
+						)}
 					</SettingRow>
 				</SettingsSection>
 
 				<div className="flex justify-end">
-					<SaveButton
-						type="submit"
-						isDirty={isDirty}
-						isSaving={saveMutation.isPending}
-						announce={false}
-					/>
+					{isLoading ? (
+						<PendingSaveAction />
+					) : (
+						<SaveButton
+							type="submit"
+							isDirty={isDirty}
+							isSaving={saveMutation.isPending}
+							announce={false}
+						/>
+					)}
 				</div>
 			</form>
 

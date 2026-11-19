@@ -19,6 +19,7 @@ import {
 import { isolate } from "../lib/utils.js";
 import { getLocaleDir } from "../locales/config.js";
 import { useDateLocale } from "../locales/date-locale.js";
+import { loadingButtonProps } from "./Button.js";
 import { DialogError, getMutationError } from "./DialogError.js";
 
 interface PublishingDateTimeFieldsProps {
@@ -392,15 +393,12 @@ function PublishingDateTimeDialogContent({
 				<LayerDialog.Action
 					type="submit"
 					form={formId}
-					loading={pending}
 					onClick={(event) => {
 						event.preventDefault();
 						onSubmit();
 					}}
-					disabled={pending || submitDisabled}
-				>
-					{submitLabel}
-				</LayerDialog.Action>
+					{...loadingButtonProps(pending, { disabled: submitDisabled, children: submitLabel })}
+				/>
 			</LayerDialog.Actions>
 		</LayerDialog.Content>
 	);

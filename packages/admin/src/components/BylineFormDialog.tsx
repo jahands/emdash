@@ -1,4 +1,12 @@
-import { Button, Input, InputArea, LayerDialog, Select, Switch } from "@cloudflare/kumo";
+import {
+	Button,
+	Input,
+	InputArea,
+	LayerDialog,
+	Select,
+	SkeletonLine,
+	Switch,
+} from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
@@ -498,25 +506,44 @@ export function BylineFormDialog({
 								/>
 							</DialogSection>
 
-							{customFieldDefs.length > 0 && (
-								<DialogSection title={t`Additional details`}>
-									{customFieldDefs.map((field) => (
-										<CustomFieldInput
-											key={field.id}
-											field={field}
-											value={form.customFields[field.slug]}
-											onChange={(next) =>
-												setForm((prev) => ({
-													...prev,
-													customFields: {
-														...prev.customFields,
-														[field.slug]: next,
-													},
-												}))
-											}
-										/>
-									))}
-								</DialogSection>
+							{!customFieldsList && !customFieldsError ? (
+								<div className="grid gap-4 border-t border-kumo-line pt-5">
+									<span role="status" className="sr-only">
+										{t`Loading custom fields...`}
+									</span>
+									<div aria-hidden="true" className="grid gap-4">
+										<div className="text-base">
+											<SkeletonLine blockHeight="1lh" minWidth={35} maxWidth={35} />
+										</div>
+										<div className="grid gap-2">
+											<div className="text-base">
+												<SkeletonLine blockHeight="1lh" minWidth={25} maxWidth={25} />
+											</div>
+											<div className="skeleton-line h-9 w-full rounded-lg" />
+										</div>
+									</div>
+								</div>
+							) : (
+								customFieldDefs.length > 0 && (
+									<DialogSection title={t`Additional details`}>
+										{customFieldDefs.map((field) => (
+											<CustomFieldInput
+												key={field.id}
+												field={field}
+												value={form.customFields[field.slug]}
+												onChange={(next) =>
+													setForm((prev) => ({
+														...prev,
+														customFields: {
+															...prev.customFields,
+															[field.slug]: next,
+														},
+													}))
+												}
+											/>
+										))}
+									</DialogSection>
+								)
 							)}
 							{customFieldsError && (
 								<div className="rounded-md border border-kumo-danger/40 bg-kumo-danger/5 p-3 text-sm">

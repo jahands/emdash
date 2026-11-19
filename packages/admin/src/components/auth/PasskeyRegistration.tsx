@@ -11,7 +11,7 @@
  * - User settings (adding additional passkeys)
  */
 
-import { Button, Input, LinkButton, Loader } from "@cloudflare/kumo";
+import { Input, LinkButton } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import {
 	DeviceMobile,
@@ -32,6 +32,7 @@ import {
 	isWebAuthnSecureContext,
 } from "../../lib/webauthn-environment";
 import type { PasskeyClientCapabilities, PasskeyPlatform } from "../../lib/webauthn-environment";
+import { Button } from "../Button.js";
 import { InsecurePasskeyContextMessage } from "./PasskeyContextMessage.js";
 
 // ============================================================================
@@ -486,15 +487,6 @@ export function PasskeyRegistration({
 		);
 	}
 
-	if (showEducation && capabilityState.status === "checking") {
-		return (
-			<div className="flex items-center justify-center gap-3 py-8 text-sm text-kumo-subtle">
-				<Loader />
-				{t`Checking this device for passkey support...`}
-			</div>
-		);
-	}
-
 	if (showEducation && showSuccessStep && state.status === "success") {
 		return (
 			<div className="space-y-5 text-center">
@@ -736,6 +728,7 @@ export function PasskeyRegistration({
 					type="button"
 					className="w-full justify-center"
 					loading={state.status === "loading"}
+					disabled={capabilityState.status === "checking"}
 					onClick={() => void handleRegister(selectedPreference)}
 				>
 					{t`Create passkey`}

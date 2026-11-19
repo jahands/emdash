@@ -2,6 +2,7 @@ import { sql, type Kysely } from "kysely";
 import { ulid } from "ulidx";
 
 import { interpolateUrlPattern } from "../../i18n/resolve.js";
+import { publishChange, withChangeQueue } from "../../realtime/publish.js";
 import { isSiteRelativeDestination } from "../../redirects/destination.js";
 import {
 	compilePattern,
@@ -189,21 +190,26 @@ export class RedirectRepository {
 		return row?.config_revision ?? null;
 	}
 
+	/** Changes the action publishes wait until its transaction commits, and are dropped if it throws. */
 	async withWriteLock<T>(
 		action: (fence: RedirectWriteFence, repository: RedirectRepository) => Promise<T>,
 	): Promise<T> {
-		if (isPostgres(this.db)) {
-			if (this.db.isTransaction) {
-				await sql`SELECT pg_advisory_xact_lock(${POSTGRES_REDIRECT_LOCK_KEY})`.execute(this.db);
-				return this.withLease(action);
+		return withChangeQueue(async () => {
+			if (isPostgres(this.db)) {
+				if (this.db.isTransaction) {
+					await sql`SELECT pg_advisory_xact_lock(${POSTGRES_REDIRECT_LOCK_KEY})`.execute(this.db);
+					return this.withLease(action);
+				}
+				return this.db.transaction().execute(async (transaction) => {
+					await sql`SELECT pg_advisory_xact_lock(${POSTGRES_REDIRECT_LOCK_KEY})`.execute(
+						transaction,
+					);
+					const repository = new RedirectRepository(transaction);
+					return repository.withLease(action);
+				});
 			}
-			return this.db.transaction().execute(async (transaction) => {
-				await sql`SELECT pg_advisory_xact_lock(${POSTGRES_REDIRECT_LOCK_KEY})`.execute(transaction);
-				const repository = new RedirectRepository(transaction);
-				return repository.withLease(action);
-			});
-		}
-		return this.withLease(action);
+			return this.withLease(action);
+		});
 	}
 
 	private async withLease<T>(
@@ -384,6 +390,7 @@ export class RedirectRepository {
 		if ((result.numInsertedOrUpdatedRows ?? 0n) === 0n) {
 			throw new Error("redirect write lease expired");
 		}
+		publishChange("redirects", { ids: [id], op: "create" });
 
 		return (await this.findById(id))!;
 	}
@@ -440,6 +447,7 @@ export class RedirectRepository {
 		}
 		const result = await query.executeTakeFirst();
 		if (BigInt(result.numUpdatedRows) === 0n) return null;
+		publishChange("redirects", { ids: [id], op: "update" });
 
 		return (await this.findById(id))!;
 	}
@@ -471,7 +479,9 @@ export class RedirectRepository {
 			);
 		}
 		const result = await query.executeTakeFirst();
-		return BigInt(result.numDeletedRows) > 0n;
+		const deleted = BigInt(result.numDeletedRows) > 0n;
+		if (deleted) publishChange("redirects", { ids: [id], op: "delete" });
+		return deleted;
 	}
 
 	/**
@@ -606,7 +616,7 @@ export class RedirectRepository {
 			if (oldUrl === newUrl) return null;
 
 			// The new URL serves live content again — any redirect from it would
-			await repository.db
+			const shadowing = await repository.db
 				.deleteFrom("_emdash_redirects")
 				.where("source", "in", redirectPathVariants(newUrl))
 				.where((eb) =>
@@ -619,7 +629,8 @@ export class RedirectRepository {
 							.where("generation", "=", fence.generation),
 					),
 				)
-				.execute();
+				.executeTakeFirst();
+			if (BigInt(shadowing.numDeletedRows) > 0n) publishChange("redirects", { op: "delete" });
 
 			// Collapse chains: update any existing redirects pointing to the old URL
 			await repository.collapseChains(oldUrl, newUrl, fence);
@@ -696,7 +707,9 @@ export class RedirectRepository {
 			);
 		}
 		const result = await query.executeTakeFirst();
-		return Number(result.numUpdatedRows);
+		const updated = Number(result.numUpdatedRows);
+		if (updated > 0) publishChange("redirects", { op: "update" });
+		return updated;
 	}
 
 	// --- 404 log ------------------------------------------------------------

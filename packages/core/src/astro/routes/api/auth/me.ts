@@ -9,9 +9,10 @@ import type { APIRoute } from "astro";
 
 export const prerender = false;
 
+import { loadCurrentUserData } from "#api/current-user.js";
 import { apiError, apiSuccess, handleError } from "#api/error.js";
 import { isParseError, parseBody, validate } from "#api/parse.js";
-import { adminLayoutSchema, authMeActionBody, setAdminLayoutBody } from "#api/schemas.js";
+import { authMeActionBody, setAdminLayoutBody } from "#api/schemas.js";
 import { UserRepository } from "#db/repositories/user.js";
 
 export const GET: APIRoute = async ({ locals }) => {
@@ -20,35 +21,17 @@ export const GET: APIRoute = async ({ locals }) => {
 	if (!user) {
 		return apiError("NOT_AUTHENTICATED", "Not authenticated", 401);
 	}
-
-	let userData = user.data;
-	if (locals.__playgroundDb) {
-		if (!emdash) return apiError("NOT_CONFIGURED", "EmDash is not initialized", 500);
-
-		try {
-			const persistedUser = await new UserRepository(emdash.db).findById(user.id);
-			if (persistedUser) userData = persistedUser.data;
-		} catch (error) {
-			return handleError(error, "Failed to fetch current user", "CURRENT_USER_ERROR");
-		}
+	if (locals.__playgroundDb && !emdash) {
+		return apiError("NOT_CONFIGURED", "EmDash is not initialized", 500);
 	}
 
-	// Check if this is the user's first login (for welcome modal).
-	// The flag is persisted in the user's `data` JSON column so it survives
-	// session expiry / rotation.
-	const isFirstLogin = !userData?.welcomeDismissed;
-	const adminLayout = adminLayoutSchema.safeParse(userData?.adminLayout);
-
-	// Return safe user info (no sensitive data)
-	return apiSuccess({
-		id: user.id,
-		email: user.email,
-		name: user.name,
-		role: user.role,
-		avatarUrl: user.avatarUrl,
-		isFirstLogin,
-		adminLayout: adminLayout.success ? adminLayout.data : null,
-	});
+	try {
+		return apiSuccess(
+			await loadCurrentUserData(user, locals.__playgroundDb ? emdash?.db : undefined),
+		);
+	} catch (error) {
+		return handleError(error, "Failed to fetch current user", "CURRENT_USER_ERROR");
+	}
 };
 
 /**

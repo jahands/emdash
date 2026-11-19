@@ -1,9 +1,14 @@
 import { useLingui } from "@lingui/react/macro";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import * as React from "react";
 
-import type { ContentItem, RevisionListItem, RevisionListResponse } from "../../lib/api";
-import { diffVersion, restoresNothing } from "../../lib/revision-diff/index.js";
+import {
+	compareRevisions,
+	type ContentItem,
+	type RevisionListItem,
+	type RevisionListResponse,
+} from "../../lib/api";
+import { restoresNothing } from "../../lib/revision-diff/fingerprint.js";
 import type { DiffFieldDescriptor, RevisionDiff } from "../../lib/revision-diff/types.js";
 import { isolate } from "../../lib/utils.js";
 import {
@@ -58,6 +63,8 @@ export interface RevisionView {
 	diff: RevisionDiff | null;
 	/** The diff for the viewed revision threw. */
 	diffFailed: boolean;
+	/** The draft is shown against the live version rather than the version before it. */
+	comparingLive: boolean;
 	authorColor: AuthorColor;
 	/** Accessible name for the shown version. */
 	label: string;
@@ -94,6 +101,42 @@ export interface RevisionView {
 }
 
 const CHANGE_TOP_MARGIN_PX = 24;
+
+type DiffLibrary = typeof import("../../lib/revision-diff/index.js");
+
+let diffLibrary: DiffLibrary | null = null;
+let loadingDiffLibrary: Promise<DiffLibrary> | null = null;
+
+/** The diff code, which only the version view uses, loaded the first time a version opens. */
+function useDiffLibrary(load: boolean): DiffLibrary | "failed" | null {
+	const [library, setLibrary] = React.useState<DiffLibrary | "failed" | null>(diffLibrary);
+	React.useEffect(() => {
+		if (!load) {
+			// Opening a version again tries again.
+			if (library === "failed") setLibrary(null);
+			return;
+		}
+		if (library) return;
+		let active = true;
+		loadingDiffLibrary ??= import("../../lib/revision-diff/index.js");
+		loadingDiffLibrary.then(
+			(loaded) => {
+				diffLibrary = loaded;
+				if (active) setLibrary(loaded);
+				return undefined;
+			},
+			(error: unknown) => {
+				loadingDiffLibrary = null;
+				console.error("[revisions] Failed to load the version comparison:", error);
+				if (active) setLibrary("failed");
+			},
+		);
+		return () => {
+			active = false;
+		};
+	}, [load, library]);
+	return library;
+}
 
 type PendingFocus = "bar" | "opener" | "afterRestore" | null;
 
@@ -172,6 +215,7 @@ export function useRevisionView({
 	const currentRevisionId = draftRevisionId ?? liveRevisionId ?? null;
 
 	const [viewingId, setViewingId] = React.useState<string | null>(null);
+	const [comparingLive, setComparingLive] = React.useState(false);
 	const [showChanges, setShowChangesState] = React.useState(true);
 	const [listLimit, setListLimit] = React.useState(REVISION_LIST_LIMIT);
 	const [restorePending, setRestorePending] = React.useState(false);
@@ -190,6 +234,7 @@ export function useRevisionView({
 	if (identity !== previousIdentity) {
 		setPreviousIdentity(identity);
 		setViewingId(null);
+		setComparingLive(false);
 		setListLimit(REVISION_LIST_LIMIT);
 		setRestorePending(false);
 		setRowToFocus(null);
@@ -203,6 +248,66 @@ export function useRevisionView({
 		enabled: isViewing && Boolean(entryId),
 	});
 	const list = query.data;
+
+	const library = useDiffLibrary(isViewing);
+	const diffing = library === "failed" ? null : library;
+
+	const comparing = isViewing && comparingLive;
+	const compareQuery = useQuery({
+		queryKey: [
+			"contentCompare",
+			collection,
+			entryId ?? "",
+			draftRevisionId ?? null,
+			liveRevisionId ?? null,
+		] as const,
+		queryFn: async () => {
+			const requestedAt = Date.now();
+			return { ...(await compareRevisions(collection, entryId ?? "")), requestedAt };
+		},
+		enabled: comparing && Boolean(entryId),
+		placeholderData: (previous, previousQuery) =>
+			previousQuery?.queryKey[1] === collection && previousQuery.queryKey[2] === entryId
+				? previous
+				: undefined,
+	});
+	// A save that keeps the draft's id leaves the comparison's key as it was. When the list that
+	// arrived after the comparison was requested shows a compared revision changed in place, the
+	// comparison is requested again, which then comes after that list and settles it. A list that
+	// arrived before the request, such as a cached one, decides nothing.
+	const queryClient = useQueryClient();
+	const comparison = compareQuery.data;
+	const listArrivedAt = query.dataUpdatedAt;
+	React.useEffect(() => {
+		if (!comparison?.revisions || !list || listArrivedAt <= comparison.requestedAt) return;
+		const changed = [comparison.revisions.draft, comparison.revisions.live].some((compared) => {
+			const listed = compared && list.items.find((item) => item.id === compared.id);
+			return listed?.fingerprint !== undefined && listed.fingerprint !== compared?.fingerprint;
+		});
+		if (!changed) return;
+		void queryClient.invalidateQueries({
+			queryKey: ["contentCompare", collection, entryId ?? ""],
+		});
+	}, [comparison, list, listArrivedAt, queryClient, collection, entryId]);
+	const compared = comparing ? compareQuery.data : undefined;
+	const liveDiff = React.useMemo(() => {
+		if (!compared) return null;
+		const current = compared.draft ?? compared.live;
+		if (!current || library === "failed") return { diff: null, failed: true };
+		if (!diffing) return null;
+		try {
+			return {
+				diff: diffing.diffRevisions(compared.live, current, fields, {
+					locale: locale ?? undefined,
+					titleField,
+				}),
+				failed: false,
+			};
+		} catch (error) {
+			console.error("[revisions] Failed to compare the draft with the live version:", error);
+			return { diff: null, failed: true };
+		}
+	}, [compared, diffing, library, fields, locale, titleField]);
 
 	const index = list && viewingId ? list.items.findIndex((item) => item.id === viewingId) : -1;
 	const visibleCount = list ? visibleRevisionCount(list) : 0;
@@ -234,7 +339,10 @@ export function useRevisionView({
 	if (!isViewing) shownRef.current = null;
 	let shown = null;
 	const comparedRevision = comparable ? list?.items[index] : undefined;
-	if (list && comparedRevision) {
+	if (list && comparedRevision && !diffing) {
+		shown = { revision: comparedRevision, diff: null, failed: library === "failed" };
+		shownRef.current = shown;
+	} else if (list && comparedRevision && diffing) {
 		const cached = diffCacheRef.current;
 		if (
 			cached &&
@@ -249,7 +357,7 @@ export function useRevisionView({
 			let diff: RevisionDiff | null = null;
 			let failed = false;
 			try {
-				diff = diffVersion({
+				diff = diffing.diffVersion({
 					revisions: list.items,
 					index,
 					total: list.total,
@@ -270,8 +378,12 @@ export function useRevisionView({
 		shown = shownRef.current;
 	}
 	const revision = isViewing ? (shown?.revision ?? null) : null;
-	const diff = isViewing ? (shown?.diff ?? null) : null;
-	const diffFailed = isViewing && Boolean(shown?.failed);
+	const diff = !isViewing ? null : comparing ? (liveDiff?.diff ?? null) : (shown?.diff ?? null);
+	const diffFailed =
+		isViewing &&
+		(comparing
+			? Boolean(liveDiff?.failed) || (compareQuery.isError && !compared)
+			: Boolean(shown?.failed));
 	const currentItem = list?.items.find((item) => item.id === currentRevisionId);
 	const sameAsCurrent =
 		revision !== null &&
@@ -297,6 +409,10 @@ export function useRevisionView({
 	currentRevisionIdRef.current = currentRevisionId;
 	const draftRevisionIdRef = React.useRef(draftRevisionId ?? null);
 	draftRevisionIdRef.current = draftRevisionId ?? null;
+	const liveRevisionIdRef = React.useRef(liveRevisionId ?? null);
+	liveRevisionIdRef.current = liveRevisionId ?? null;
+	const comparingLiveRef = React.useRef(comparingLive);
+	comparingLiveRef.current = comparingLive;
 	const showChangesRef = React.useRef(showChanges);
 	showChangesRef.current = showChanges;
 	const onEnterRef = React.useRef(onEnter);
@@ -350,12 +466,17 @@ export function useRevisionView({
 		[canvasRef],
 	);
 
-	const view = React.useCallback<RevisionViewContextValue["view"]>(
-		(revisionId, options) => {
+	const show = React.useCallback(
+		(revisionId: string, compareWithLive: boolean, opener: HTMLElement | null) => {
 			if (!enabledRef.current || restoreRef.current) return;
-			const opener = options?.opener ?? null;
 			if (opener) openerRef.current = opener;
-			if (viewingIdRef.current === revisionId) return;
+			if (viewingIdRef.current === revisionId) {
+				if (comparingLiveRef.current !== compareWithLive) {
+					setComparingLive(compareWithLive);
+					pendingAnnounceRef.current = true;
+				}
+				return;
+			}
 			if (viewingIdRef.current === null) {
 				onEnterRef.current?.();
 				savedScrollRef.current = canvasRef.current?.scrollTop ?? 0;
@@ -370,9 +491,24 @@ export function useRevisionView({
 			}
 			pendingStepRef.current = false;
 			setRowToFocus(null);
+			setComparingLive(compareWithLive);
 			select(revisionId);
 		},
 		[canvasRef, select],
+	);
+
+	const view = React.useCallback<RevisionViewContextValue["view"]>(
+		(revisionId, options) => show(revisionId, false, options?.opener ?? null),
+		[show],
+	);
+
+	const viewDraftChanges = React.useCallback<RevisionViewContextValue["viewDraftChanges"]>(
+		(options) => {
+			const draft = draftRevisionIdRef.current;
+			if (!draft || draft === liveRevisionIdRef.current) return;
+			show(draft, true, options?.opener ?? null);
+		},
+		[show],
 	);
 
 	const leave = React.useCallback(
@@ -412,7 +548,9 @@ export function useRevisionView({
 				return;
 			}
 			const next = current.items[to];
-			if (next) select(next.id);
+			if (!next) return;
+			setComparingLive(false);
+			select(next.id);
 		},
 		[select],
 	);
@@ -514,9 +652,13 @@ export function useRevisionView({
 	React.useEffect(() => {
 		if (!pendingAnnounceRef.current || !revision) return;
 		pendingAnnounceRef.current = false;
+		if (comparing) {
+			announce(t`Viewing the draft's changes since the published version.`);
+			return;
+		}
 		const name = isolate(format.people(revisionNamed(revision)));
 		announce(t`Viewing the version from ${when} by ${name}.`);
-	}, [revision, when, format, announce, t]);
+	}, [revision, comparing, when, format, announce, t]);
 
 	React.useEffect(() => {
 		if (!pendingStepRef.current || !list || query.isPlaceholderData) return;
@@ -624,6 +766,7 @@ export function useRevisionView({
 			listLimit,
 			showOlderVersions,
 			view,
+			viewDraftChanges,
 			exit,
 			goToChange,
 		}),
@@ -639,6 +782,7 @@ export function useRevisionView({
 			listLimit,
 			showOlderVersions,
 			view,
+			viewDraftChanges,
 			exit,
 			goToChange,
 		],
@@ -649,8 +793,13 @@ export function useRevisionView({
 		revision,
 		diff,
 		diffFailed,
+		comparingLive: comparing,
 		authorColor,
-		label: revision ? t`Version from ${when}` : "",
+		label: !revision
+			? ""
+			: comparing
+				? t`Changes since the published version`
+				: t`Version from ${when}`,
 		isCurrent: revision !== null && revision.id === currentRevisionId,
 		isPublished: revision !== null && revision.id === liveRevisionId,
 		sameAsCurrent,

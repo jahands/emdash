@@ -4,7 +4,7 @@
  * taxonomy term edit so the admin shows one consistent affordance.
  */
 
-import { Button, Text } from "@cloudflare/kumo";
+import { Banner, Button, Text } from "@cloudflare/kumo";
 import { useLingui } from "@lingui/react/macro";
 import * as React from "react";
 
@@ -29,6 +29,11 @@ export interface TranslationsPanelProps {
 	/** Locale variants that already exist (may include the current locale).
 	 * The panel only needs `id` + `locale`; callers may pass richer summaries. */
 	translations: PanelTranslation[];
+	/** The translations are still loading, so which locales exist is unknown. */
+	loading?: boolean;
+	/** The translations failed to load. Ignored while `loading`. */
+	error?: boolean;
+	onRetry?: () => unknown;
 	/** Called when the user clicks "Edit" on a sibling translation. */
 	onOpen?: (summary: PanelTranslation) => void;
 	/** Called when the user clicks "Translate" for a missing locale. */
@@ -44,11 +49,15 @@ export function TranslationsPanel({
 	defaultLocale,
 	currentLocale,
 	translations,
+	loading = false,
+	error = false,
+	onRetry,
 	onOpen,
 	onCreate,
 	pendingLocale,
 }: TranslationsPanelProps) {
 	const { t } = useLingui();
+	const failed = error && !loading;
 	const byLocale = React.useMemo(
 		() => new Map(translations.map((tr) => [tr.locale, tr])),
 		[translations],
@@ -59,7 +68,26 @@ export function TranslationsPanel({
 			<Text as="h3" DANGEROUS_className={cn("mb-4 font-semibold", headingClassName)}>
 				{title ?? t`Translations`}
 			</Text>
-			<div className="space-y-2">
+			{loading && (
+				<span role="status" className="sr-only">
+					{t`Loading translations...`}
+				</span>
+			)}
+			{failed && (
+				<Banner
+					variant="error"
+					role="alert"
+					title={t`Couldn’t load translations.`}
+					action={
+						onRetry ? (
+							<Button size="sm" variant="secondary" onClick={() => onRetry()}>
+								{t`Try again`}
+							</Button>
+						) : undefined
+					}
+				/>
+			)}
+			<div className="space-y-2" aria-busy={loading || undefined} hidden={failed}>
 				{locales.map((locale) => {
 					const translation = byLocale.get(locale);
 					const isCurrent = locale === currentLocale;
@@ -70,9 +98,11 @@ export function TranslationsPanel({
 								"-mx-3 flex items-center justify-between rounded-md px-3 py-2 text-base",
 								isCurrent
 									? "bg-kumo-brand/10 font-medium"
-									: translation
-										? "hover:bg-kumo-tint/50"
-										: "text-kumo-subtle",
+									: loading
+										? undefined
+										: translation
+											? "hover:bg-kumo-tint/50"
+											: "text-kumo-subtle",
 							)}
 						>
 							<div className="flex items-center gap-2">
@@ -84,7 +114,9 @@ export function TranslationsPanel({
 									<span className="text-xs leading-4 text-kumo-link">{t`current`}</span>
 								)}
 							</div>
-							{isCurrent ? null : translation && onOpen ? (
+							{isCurrent ? null : loading ? (
+								<div aria-hidden="true" className="skeleton-line h-6 w-14 rounded-md" />
+							) : translation && onOpen ? (
 								<Button
 									type="button"
 									variant="ghost"

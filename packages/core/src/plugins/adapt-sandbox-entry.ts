@@ -348,6 +348,7 @@ export function adaptSandboxEntry(
 		displayName: descriptor.displayName,
 		description: descriptor.description,
 		version,
+		...(descriptor.realtime ? { realtime: descriptor.realtime } : {}),
 		capabilities,
 		allowedHosts,
 		storage,

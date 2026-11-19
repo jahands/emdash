@@ -476,6 +476,7 @@ describe("CAPABILITY_LABELS", () => {
 			"hooks.email-events:register",
 			"hooks.email-transport:register",
 			"hooks.page-fragments:register",
+			"realtime:publish",
 			// Legacy aliases
 			"read:content",
 			"write:content",

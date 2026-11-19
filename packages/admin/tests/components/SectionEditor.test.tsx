@@ -132,6 +132,37 @@ describe("SectionEditor", () => {
 		},
 	);
 
+	it("keeps the header's height when the section arrives", async () => {
+		let resolveSection!: (section: Section) => void;
+		mockFetchSection.mockReturnValue(new Promise((resolve) => (resolveSection = resolve)));
+		const screen = await render(<SectionEditor />, { wrapper: Wrapper });
+
+		await expect.element(screen.getByRole("status")).toHaveTextContent("Loading section...");
+		await expect.element(screen.getByRole("link", { name: "Back to sections" })).toBeVisible();
+		const header = () => document.querySelector("[data-editor-header]")!.getBoundingClientRect();
+		const pendingHeight = header().height;
+
+		resolveSection(makeSection());
+		await expect.element(screen.getByRole("heading", { name: "Footer" })).toBeVisible();
+		expect(header().height).toBe(pendingHeight);
+	});
+
+	it("draws a section opened from the list without waiting for it", async () => {
+		mockFetchSection.mockReturnValue(new Promise(() => {}));
+		const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+		qc.setQueryData(["sections", { source: null, search: "" }], { items: [makeSection()] });
+		const screen = await render(
+			<QueryClientProvider client={qc}>
+				<Toasty>
+					<SectionEditor />
+				</Toasty>
+			</QueryClientProvider>,
+		);
+
+		await expect.element(screen.getByRole("heading", { name: "Footer" })).toBeVisible();
+		await expect.element(screen.getByRole("textbox", { name: "Title" })).toHaveValue("Footer");
+	});
+
 	it("opens the image settings panel when a block requests the sidebar", async () => {
 		const screen = await render(<SectionEditor />, { wrapper: Wrapper });
 

@@ -8,6 +8,7 @@ import { cn } from "../lib/utils.js";
 import {
 	DataTable,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowMeta,
 	cellCodeClassName,
 	tertiaryColumn,
@@ -35,20 +36,21 @@ export function BlockTypeList({ blockTypes, isLoading = false }: BlockTypeListPr
 				<thead>
 					<tr>
 						<th scope="col">{t`Name`}</th>
-						<th scope="col" {...tertiaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-48" {...tertiaryColumn}>
 							{t`Slug`}
 						</th>
-						<th scope="col" className="w-0">
+						<th scope="col" className="w-32">
 							{t`Version`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-1/3" {...tertiaryColumn}>
 							{t`Block type versions`}
 						</th>
 					</tr>
 				</thead>
 				<tbody>
 					{isLoading ? (
-						<DataTableMessage colSpan={4}>{t`Loading block types…`}</DataTableMessage>
+						<DataTablePlaceholderRows cells={["title", "tertiary", "text", "tertiary"]} />
 					) : blockTypes.length === 0 ? (
 						<DataTableMessage colSpan={4}>{t`No block types defined`}</DataTableMessage>
 					) : (

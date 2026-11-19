@@ -7,19 +7,26 @@ import { normalizeExplicitDatetime } from "../../datetime-normalization.js";
 import { getLocaleCandidates } from "../../i18n/config.js";
 import { canonicalLocaleColumn, localeMatches, localeOrder } from "../../i18n/query.js";
 import { invalidateCollectionCache } from "../../object-cache/index.js";
+import { publishChange, type ChangeOp } from "../../realtime/publish.js";
+import { contentTopic } from "../../realtime/topics.js";
 import { notifyRoom } from "../../rooms/notifications.js";
 import type { OutsideValue } from "../../rooms/types.js";
 import { isIndexableFieldType, isStoragelessFieldRow, type FieldType } from "../../schema/types.js";
 import { buildFtsPrefixMatch, buildSlugGlobPrefix } from "../../search/match.js";
 import { chunks, SQL_BATCH_SIZE } from "../../utils/chunks.js";
-import { isMissingTableError } from "../../utils/db-errors.js";
+import { isMissingTableError, isTooManyResultColumnsError } from "../../utils/db-errors.js";
 import { slugify } from "../../utils/slugify.js";
 import { ContentDatetimeNormalizer, type DatetimeContextCache } from "../content-datetime.js";
 import { executeAtomicBatchIfSupported, isPostgres } from "../dialect-helpers.js";
 import { withTransaction } from "../transaction.js";
 import type { Database } from "../types.js";
 import { validateIdentifier } from "../validate.js";
-import { createRevisionId, RevisionRepository, startingRevisionId } from "./revision.js";
+import {
+	createRevisionId,
+	RevisionRepository,
+	startingRevisionId,
+	type Revision,
+} from "./revision.js";
 import type {
 	CreateContentInput,
 	UpdateContentInput,
@@ -50,6 +57,8 @@ const LIKE_WILDCARD_RE = /[\\%_]/g;
 const MAX_INDEXED_FIELD_FILTERS = 20;
 const MAX_IN_FILTER_VALUES = SQL_BATCH_SIZE;
 const MAX_FILTER_STRING_LENGTH = 2048;
+const FOLD_COLUMN = "_emdash_fold";
+const D1_MAX_BOUND_PARAMETERS = 100;
 
 function readyToPublishCondition(now: string): RawBuilder<unknown> {
 	return sql`scheduled_at IS NOT NULL AND scheduled_at <= ${now} AND deleted_at IS NULL`;
@@ -76,6 +85,20 @@ type ResolvedFieldFilter =
 			kind: "range";
 			bounds: Partial<Record<"gt" | "gte" | "lt" | "lte", NormalizedFilterScalar>>;
 	  };
+
+/**
+ * Tells the entry's room, and admin tabs through the realtime hub, that a write changed the
+ * entry. The hub's change also reaches the collection's list.
+ */
+function entryChanged(
+	type: string,
+	id: string,
+	outside: readonly OutsideValue[] = [],
+	op: ChangeOp = "update",
+): void {
+	notifyRoom({ collection: type, id }, outside);
+	publishChange(contentTopic(type, id), { op });
+}
 
 /** The values outside a room's document that an update writes. */
 function outsideValuesWritten(input: UpdateContentInput): OutsideValue[] {
@@ -619,6 +642,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
+		publishChange(contentTopic(type, id), { op: "create" });
 
 		// Fetch and return the created item
 		const item = await this.findById(type, id);
@@ -1061,22 +1085,11 @@ export class ContentRepository {
 				);
 			} else {
 				const { orderValue, id: cursorId } = decodeCursor(options.cursor);
-
-				if (safeOrderDirection === "DESC") {
-					query = query.where((eb) =>
-						eb.or([
-							eb(dbField as any, "<", orderValue),
-							eb.and([eb(dbField as any, "=", orderValue), eb("id", "<", cursorId)]),
-						]),
-					);
-				} else {
-					query = query.where((eb) =>
-						eb.or([
-							eb(dbField as any, ">", orderValue),
-							eb.and([eb(dbField as any, "=", orderValue), eb("id", ">", cursorId)]),
-						]),
-					);
-				}
+				const cmp = safeOrderDirection === "ASC" ? sql.raw(">") : sql.raw("<");
+				// The row value, unlike the equivalent OR, is an index bound on Postgres.
+				query = query.where(
+					sql<boolean>`(${sql.ref(dbField)}, ${sql.ref("id")}) ${cmp} (${orderValue}, ${cursorId})`,
+				);
 			}
 		}
 
@@ -1098,6 +1111,22 @@ export class ContentRepository {
 			options.offset === undefined
 				? query.limit(limit + 1)
 				: query.limit(limit).offset(options.offset);
+		// D1 refuses a statement with more than 100 bound parameters or result
+		// columns; locale aliases add parameters to the fold and the fold adds a
+		// column. The fold is extra, so the page is read without it instead.
+		let foldedQuery = options.fold ? query.select(options.fold.as(FOLD_COLUMN)) : undefined;
+		if (foldedQuery && foldedQuery.compile().parameters.length > D1_MAX_BOUND_PARAMETERS) {
+			foldedQuery = undefined;
+		}
+		const readPage = async (): Promise<{ rows: unknown[]; folded: boolean }> => {
+			if (!foldedQuery) return { rows: await query.execute(), folded: false };
+			try {
+				return { rows: await foldedQuery.execute(), folded: true };
+			} catch (error) {
+				if (!isTooManyResultColumnsError(error)) throw error;
+				return { rows: await query.execute(), folded: false };
+			}
+		};
 
 		// Run the page fetch and the unbounded count together — the UI needs
 		// both to render a stable denominator (kept on every page intentionally),
@@ -1108,19 +1137,28 @@ export class ContentRepository {
 		// holding a pooled connection, so a Postgres pool destroyed in that window
 		// never finishes closing.
 		const [rowsResult, countResult] = await Promise.allSettled([
-			query.execute(),
+			readPage(),
 			this.countWithResolvedFilters(type, options.where, resolvedFieldFilters),
 		]);
 		if (rowsResult.status === "rejected") throw rowsResult.reason;
 		if (countResult.status === "rejected") throw countResult.reason;
-		const rows = rowsResult.value;
+		const { rows, folded } = rowsResult.value;
 		const total = countResult.value;
 		const hasMore = rows.length > limit;
 		const items = rows.slice(0, limit);
 
+		const folds = folded
+			? items.map((row) => {
+					const record = row as Record<string, unknown>;
+					const value = record[FOLD_COLUMN];
+					delete record[FOLD_COLUMN];
+					return value;
+				})
+			: undefined;
 		const mappedResult: FindManyResult<ContentItem> = {
 			items: items.map((row) => this.mapRow(type, row as Record<string, unknown>)),
 			total,
+			...(folds ? { folds } : {}),
 		};
 
 		if (hasMore && items.length > 0) {
@@ -1233,7 +1271,7 @@ export class ContentRepository {
 
 		if (hasColumnWrites) invalidateCollectionCache(type);
 		if (result.numUpdatedRows > 0n) {
-			notifyRoom({ collection: type, id }, outsideValuesWritten(input));
+			entryChanged(type, id, outsideValuesWritten(input));
 		}
 
 		const updated = await this.findById(type, id);
@@ -1345,7 +1383,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 		const item = await this.findById(type, id);
 		if (!item) throw new Error("Content not found");
 
@@ -1419,7 +1457,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 		await new RevisionRepository(this.db, this.datetimeContexts).queuePruning(type, id, revisionId);
 		return revisionId;
 	}
@@ -1643,7 +1681,7 @@ export class ContentRepository {
 
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed && liveMetadataChanged) invalidateCollectionCache(type);
-		if (changed) notifyRoom({ collection: type, id }, outsideValuesWritten(input));
+		if (changed) entryChanged(type, id, outsideValuesWritten(input));
 		return changed;
 	}
 
@@ -1798,7 +1836,7 @@ export class ContentRepository {
 			}
 
 			if (synced) {
-				notifyRoom({ collection: type, id: current.id });
+				entryChanged(type, current.id);
 				return true;
 			}
 			await cleanUp();
@@ -1826,7 +1864,7 @@ export class ContentRepository {
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed) {
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id });
+			entryChanged(type, id, [], "delete");
 		}
 		return changed;
 	}
@@ -1868,7 +1906,7 @@ export class ContentRepository {
 		if (!restored) throw new ContentMutationConflictError("Content changed while restoring");
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id: existing.id });
+		entryChanged(type, existing.id);
 		return this.mapRow(type, restored);
 	}
 
@@ -1897,7 +1935,7 @@ export class ContentRepository {
 		const changed = (result.numAffectedRows ?? 0n) > 0n;
 		if (changed) {
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id });
+			entryChanged(type, id, [], "delete");
 		}
 		return changed;
 	}
@@ -2270,26 +2308,35 @@ export class ContentRepository {
 		const tableName = getTableName(type);
 		const nowIso = now.toISOString();
 
-		const result = await this.db
-			.selectFrom(tableName as keyof Database)
-			.select((eb) => [
-				eb.fn.count("id").as("total"),
-				eb.fn.sum(eb.case().when("status", "=", "published").then(1).else(0).end()).as("published"),
-				eb.fn.sum(eb.case().when("status", "=", "draft").then(1).else(0).end()).as("draft"),
-				sql<number>`SUM(CASE WHEN scheduled_at IS NOT NULL THEN 1 ELSE 0 END)`.as("scheduled"),
-				sql<number>`SUM(CASE WHEN scheduled_at IS NOT NULL AND scheduled_at <= ${nowIso} THEN 1 ELSE 0 END)`.as(
-					"overdue_scheduled",
-				),
-			])
-			.where("deleted_at" as never, "is", null)
-			.executeTakeFirst();
+		// Counting per status reads only the (deleted_at, status) index, and the
+		// scheduled counts only the partial (deleted_at, scheduled_at) index; one
+		// aggregate over every live row reads the table.
+		const table = sql.ref(tableName);
+		const { rows } = await sql<{
+			status: string;
+			count: number | string;
+			scheduled: number | string;
+			overdue_scheduled: number | string;
+		}>`
+			SELECT status, COUNT(*) AS count,
+				(SELECT COUNT(*) FROM ${table}
+					WHERE deleted_at IS NULL AND scheduled_at IS NOT NULL) AS scheduled,
+				(SELECT COUNT(*) FROM ${table}
+					WHERE deleted_at IS NULL AND scheduled_at IS NOT NULL AND scheduled_at <= ${nowIso}
+				) AS overdue_scheduled
+			FROM ${table}
+			WHERE deleted_at IS NULL
+			GROUP BY status
+		`.execute(this.db);
 
+		const countOf = (status: string) =>
+			Number(rows.find((row) => row.status === status)?.count ?? 0);
 		return {
-			total: Number(result?.total || 0),
-			published: Number(result?.published || 0),
-			draft: Number(result?.draft || 0),
-			scheduled: Number(result?.scheduled || 0),
-			overdueScheduled: Number(result?.overdue_scheduled || 0),
+			total: rows.reduce((sum, row) => sum + Number(row.count), 0),
+			published: countOf("published"),
+			draft: countOf("draft"),
+			scheduled: Number(rows[0]?.scheduled ?? 0),
+			overdueScheduled: Number(rows[0]?.overdue_scheduled ?? 0),
 		};
 	}
 
@@ -2343,7 +2390,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
@@ -2395,7 +2442,7 @@ export class ContentRepository {
 		}
 
 		invalidateCollectionCache(type);
-		if ((result.numAffectedRows ?? 0n) > 0n) notifyRoom({ collection: type, id });
+		if ((result.numAffectedRows ?? 0n) > 0n) entryChanged(type, id);
 
 		const updated = await this.findById(type, id);
 		if (!updated) {
@@ -2663,11 +2710,13 @@ export class ContentRepository {
 		requireSlug = true,
 		expectedRevision?: ContentRevisionPrecondition,
 		currentTime: Date = new Date(),
+		preloaded?: { existing: ContentItem; draftRevision?: Revision | null },
 	): Promise<ContentItem> {
 		const tableName = getTableName(type);
 		const now = currentTime.toISOString();
 
-		const existing = await this.findById(type, id);
+		const existing =
+			preloaded?.existing.id === id ? preloaded.existing : await this.findById(type, id);
 		if (!existing) {
 			throw new EmDashValidationError("Content item not found");
 		}
@@ -2765,7 +2814,7 @@ export class ContentRepository {
 				}
 
 				invalidateCollectionCache(type);
-				notifyRoom({ collection: type, id }, ["publishedAt"]);
+				entryChanged(type, id, ["publishedAt"]);
 				const updated = await this.findById(type, id);
 				if (!updated) throw new Error("Content not found");
 				return updated;
@@ -2802,7 +2851,11 @@ export class ContentRepository {
 				provisionalRevisionId = revision.id;
 			}
 
-			const revision = await revisionRepo.findById(revisionToPublish);
+			const preloadedRevision = preloaded?.draftRevision;
+			const revision =
+				preloadedRevision && preloadedRevision.id === revisionToPublish
+					? preloadedRevision
+					: await revisionRepo.findById(revisionToPublish);
 			if (!revision || revision.collection !== type || revision.entryId !== id) {
 				throw new EmDashValidationError("Revision does not belong to the specified content item");
 			}
@@ -2848,8 +2901,9 @@ export class ContentRepository {
 				? sql`AND scheduled_at IS NOT NULL AND scheduled_at <= ${now}`
 				: sql``;
 			let promoted = false;
+			let updated: ContentItem | null = null;
 			try {
-				const result = await sql`
+				const result = await sql<Record<string, unknown>>`
 					UPDATE ${sql.ref(tableName)}
 					SET ${sql.join(assignments, sql`, `)}
 					WHERE id = ${id}
@@ -2867,8 +2921,11 @@ export class ContentRepository {
 						AND revisions.collection = ${type}
 						AND revisions.entry_id = ${id}
 					)
+					RETURNING *
 				`.execute(this.db);
-				promoted = (result.numAffectedRows ?? 0n) > 0n;
+				const row = result.rows[0];
+				if (row) updated = this.mapRow(type, row);
+				promoted = updated !== null;
 			} catch (error) {
 				if (isConfirmedStatementFailure(error)) throw error;
 				let observed: ContentItem | null;
@@ -2906,8 +2963,8 @@ export class ContentRepository {
 			}
 
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id }, ["publishedAt"]);
-			const updated = await this.findById(type, id);
+			entryChanged(type, id, ["publishedAt"]);
+			updated ??= await this.findById(type, id);
 			if (!updated) {
 				throw new Error("Content not found");
 			}
@@ -2992,7 +3049,7 @@ export class ContentRepository {
 			if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
 
 			invalidateCollectionCache(type);
-			notifyRoom({ collection: type, id });
+			entryChanged(type, id);
 			const updated = await this.findById(type, id);
 			if (!updated) throw new Error("Content not found");
 			return updated;
@@ -3053,18 +3110,18 @@ export class ContentRepository {
 	}
 
 	/**
-	 * `replaceDraftRevision`, returning the `version` and `updatedAt` the entry has after the
-	 * update, or null when the entry no longer matches `expected`. Scheduling moves `updatedAt`
-	 * without bumping `version`, so the entry's `_rev` can't be derived from `expected`.
+	 * `replaceDraftRevision`, returning the row as it stands after the update, or null when the
+	 * entry no longer matches `expected`. Scheduling moves `updatedAt` without bumping `version`,
+	 * so the entry's `_rev` can't be derived from `expected`.
 	 */
 	async stageDraftRevision(
 		type: string,
 		id: string,
 		revisionId: string,
 		expected: Pick<ContentItem, "version" | "liveRevisionId" | "draftRevisionId">,
-	): Promise<Pick<ContentItem, "version" | "updatedAt"> | null> {
+	): Promise<ContentItem | null> {
 		const tableName = getTableName(type);
-		const result = await sql<{ version: number; updated_at: string }>`
+		const result = await sql<Record<string, unknown>>`
 			UPDATE ${sql.ref(tableName)}
 			SET draft_revision_id = ${revisionId},
 				version = version + 1
@@ -3079,12 +3136,12 @@ export class ContentRepository {
 				AND revisions.collection = ${type}
 				AND revisions.entry_id = ${id}
 			)
-			RETURNING version, updated_at
+			RETURNING *
 		`.execute(this.db);
 		const row = result.rows[0];
 		if (!row) return null;
-		notifyRoom({ collection: type, id });
-		return { version: row.version, updatedAt: row.updated_at };
+		entryChanged(type, id);
+		return this.mapRow(type, row);
 	}
 
 	/**
@@ -3155,7 +3212,7 @@ export class ContentRepository {
 			AND ${nullableColumnMatch("scheduled_at", existing.scheduledAt)}
 		`.execute(this.db);
 		if ((result.numAffectedRows ?? 0n) === 0n) throw new ContentMutationConflictError();
-		notifyRoom({ collection: type, id });
+		entryChanged(type, id);
 
 		const updated = await this.findById(type, id);
 		if (!updated) {

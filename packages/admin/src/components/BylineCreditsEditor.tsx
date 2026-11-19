@@ -5,8 +5,8 @@ import {
 	DropdownMenu,
 	Input,
 	LayerCard,
-	Loader,
 	Popover,
+	SkeletonLine,
 	Text,
 } from "@cloudflare/kumo";
 import {
@@ -30,6 +30,7 @@ import {
 import { CSS } from "@dnd-kit/utilities";
 import { useLingui } from "@lingui/react/macro";
 import {
+	CircleNotch,
 	DotsSixVertical,
 	DotsThree,
 	PencilSimple,
@@ -45,6 +46,13 @@ import { fetchBylines, type BylineCreditInput, type BylineSummary } from "../lib
 import { useDebouncedValue } from "../lib/hooks.js";
 import { BylineFormDialog, toBylineSlug, type BylineFormValues } from "./BylineFormDialog.js";
 import { RouterLinkButton } from "./RouterLinkButton.js";
+
+// Fixed, so placeholders shown again after a remount don't change shape.
+const SEARCH_PLACEHOLDER_WIDTHS = [
+	[45, 30],
+	[60, 38],
+	[38, 26],
+] as const;
 
 const restrictToBylineList: Modifier = ({ activeNodeRect, containerNodeRect, transform }) => {
 	if (!containerNodeRect || !activeNodeRect) return { ...transform, x: 0 };
@@ -131,13 +139,12 @@ export function BylineCreditsEditor({
 		return map;
 	}, [bylines, knownBylines, searchResults.data?.items, selectedBylineDetails]);
 
-	const resultPool = searchIsDebouncing
-		? []
-		: searchEnabled
-			? searchResults.isError
-				? []
-				: (searchResults.data?.items ?? [])
-			: bylines;
+	// While the next search waits or runs, the last results stay listed.
+	const resultPool = searchEnabled
+		? searchResults.isError
+			? []
+			: (searchResults.data?.items ?? [])
+		: bylines;
 	const selectedIds = React.useMemo(
 		() => new Set(credits.map((credit) => credit.bylineId)),
 		[credits],
@@ -334,7 +341,7 @@ export function BylineCreditsEditor({
 								size="base"
 								aria-label={t`Search bylines`}
 								placeholder={t`Search bylines to add…`}
-								className={searchBusy ? "w-full pe-10" : "w-full"}
+								className="w-full pe-10"
 								value={search}
 								onChange={(event) => setSearch(event.target.value)}
 							/>
@@ -343,7 +350,7 @@ export function BylineCreditsEditor({
 									className="pointer-events-none absolute end-3 top-1/2 flex -translate-y-1/2 items-center"
 									aria-hidden="true"
 								>
-									<Loader size="sm" />
+									<CircleNotch className="size-4 animate-spin text-kumo-subtle motion-reduce:animate-none" />
 								</span>
 							) : null}
 						</div>
@@ -354,14 +361,23 @@ export function BylineCreditsEditor({
 							aria-busy={searchBusy}
 							className="-mx-1 max-h-42 min-h-0 shrink overflow-y-auto overscroll-contain p-1"
 						>
-							{searchIsDebouncing ||
-							(searchEnabled && searchResults.isLoading && !searchResults.data) ? (
-								<div className="flex h-full items-center justify-center gap-2">
-									<Loader size="sm" />
-									<Text variant="secondary" size="xs">
-										{t`Searching…`}
-									</Text>
-								</div>
+							{searchBusy && options.length === 0 ? (
+								<ul className="space-y-2" aria-hidden="true">
+									{SEARCH_PLACEHOLDER_WIDTHS.map(([name, slug], index) => (
+										<li key={index}>
+											<LayerCard className="flex min-h-14 items-center gap-3 px-4 py-2.5">
+												<div className="min-w-0 flex-1">
+													<div className="text-base">
+														<SkeletonLine blockHeight="1lh" minWidth={name} maxWidth={name} />
+													</div>
+													<div className="text-xs">
+														<SkeletonLine blockHeight="1lh" minWidth={slug} maxWidth={slug} />
+													</div>
+												</div>
+											</LayerCard>
+										</li>
+									))}
+								</ul>
 							) : searchEnabled && searchResults.isError ? (
 								<div className="flex h-full flex-col items-center justify-center gap-2 text-center">
 									<Text variant="error" size="xs">

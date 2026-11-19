@@ -18,10 +18,18 @@ import * as React from "react";
 
 import { ThemeProvider } from "./components/ThemeProvider";
 import { AdminBrandingProvider, type AdminBranding } from "./lib/admin-branding-context";
-import { refetchCurrentUserOnForbidden } from "./lib/api/current-user";
+import type { AdminManifest, AuthModeInfo } from "./lib/api/client";
+import type { CommentCounts } from "./lib/api/comments";
+import {
+	currentUserQueryKey,
+	refetchCurrentUserOnForbidden,
+	type CurrentUser,
+} from "./lib/api/current-user";
 import { AuthProviderProvider, type AuthProviders } from "./lib/auth-provider-context";
 import { PluginAdminProvider, type PluginAdmins } from "./lib/plugin-context";
-import { getLoadedDateLocale, waitForDateLocale } from "./locales/date-locale.js";
+import { setRoutePrefetchFiles, type RoutePrefetchFiles } from "./lib/route-prefetch.js";
+import { setLiveQueryDefaults } from "./lib/route-queries.js";
+import { loadDateLocale } from "./locales/date-locale.js";
 import { LocaleDirectionProvider } from "./locales/index.js";
 import { KumoTranslationsProvider } from "./locales/KumoTranslationsProvider.js";
 import { createAdminRouter } from "./router";
@@ -37,11 +45,11 @@ const queryClient = new QueryClient({
 });
 
 refetchCurrentUserOnForbidden(queryClient);
+setLiveQueryDefaults(queryClient);
 
 // Create the router with query client context
 const router = createAdminRouter(queryClient);
 const ADMIN_BASEPATH = "/_emdash/admin";
-const DATE_LOCALE_BOOT_TIMEOUT_MS = 3000;
 
 export function normalizeAdminHref(href: string): string {
 	if (href === ADMIN_BASEPATH) return "/";
@@ -53,27 +61,12 @@ export function normalizeAdminHref(href: string): string {
 	return href;
 }
 
-function getAnchorHref(destination: string, routerDestination: string): string {
-	if (routerDestination.startsWith("/") && !routerDestination.startsWith("//")) {
-		if (
-			routerDestination === "/" ||
-			routerDestination.startsWith("/?") ||
-			routerDestination.startsWith("/#")
-		) {
-			return `${ADMIN_BASEPATH}${routerDestination.slice(1)}`;
-		}
-		return `${ADMIN_BASEPATH}${routerDestination}`;
-	}
-	return destination;
-}
-
 const KumoRouterLink = React.forwardRef<HTMLAnchorElement, LinkComponentProps>(
 	({ href, to, target, download, children, ...props }, ref) => {
 		const destination = href ?? to ?? "";
-		const hasSearchOrHash = destination.includes("?") || destination.includes("#");
 		const routerDestination = normalizeAdminHref(destination);
 		const isRouterPath = routerDestination.startsWith("/") && !routerDestination.startsWith("//");
-		const shouldUseAnchor = !isRouterPath || hasSearchOrHash || target || download != null;
+		const shouldUseAnchor = !isRouterPath || target || download != null;
 		const linkProps = props as LinkComponentProps & {
 			"aria-current"?: React.AriaAttributes["aria-current"];
 			"data-active"?: boolean | string;
@@ -82,24 +75,25 @@ const KumoRouterLink = React.forwardRef<HTMLAnchorElement, LinkComponentProps>(
 			linkProps["aria-current"] ?? (linkProps["data-active"] ? "page" : undefined);
 
 		if (shouldUseAnchor) {
-			const anchorHref =
-				hasSearchOrHash && !target && download == null
-					? getAnchorHref(destination, routerDestination)
-					: destination;
 			return (
-				<a ref={ref} href={anchorHref} target={target} download={download} {...props}>
+				<a ref={ref} href={destination} target={target} download={download} {...props}>
 					{children}
 				</a>
 			);
 		}
 
+		// A query string or hash goes to the router as its own props, so the link still navigates
+		// in place and preloads on intent.
+		const url = new URL(routerDestination, "http://admin.invalid");
 		return (
 			<Link
 				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Kumo provides runtime hrefs; TanStack requires literal route types.
 				{...(props as Omit<LinkProps, "to" | "children">)}
 				ref={ref}
 				// eslint-disable-next-line typescript/no-unsafe-type-assertion -- Kumo provides runtime hrefs; TanStack requires literal route types.
-				to={routerDestination as "/"}
+				to={url.pathname as "/"}
+				search={url.search ? Object.fromEntries(url.searchParams) : undefined}
+				hash={url.hash ? url.hash.slice(1) : undefined}
 				aria-current={ariaCurrent}
 			>
 				{children}
@@ -121,6 +115,19 @@ export interface AdminAppProps {
 	locale?: string;
 	/** Compiled Lingui messages for the active locale */
 	messages?: Messages;
+	/** Files of the screens to download before they open, read from the build. Without them, screens load when opened or when a link to them shows intent. */
+	routePrefetchFiles?: RoutePrefetchFiles;
+	/** The manifest and signed-in user the admin page embedded. Without them, the admin fetches both before showing a screen. */
+	initialData?: AdminInitialData;
+	/** The auth mode the signed-out login page embedded. Without it, the login page fetches it. */
+	initialAuthMode?: AuthModeInfo;
+}
+
+export interface AdminInitialData {
+	manifest: AdminManifest;
+	currentUser: CurrentUser;
+	/** Comment counts by status, for users who moderate comments. */
+	commentCounts?: CommentCounts;
 }
 
 /**
@@ -129,6 +136,7 @@ export interface AdminAppProps {
 const EMPTY_PLUGINS: PluginAdmins = {};
 const EMPTY_AUTH_PROVIDERS: AuthProviders = {};
 const EMPTY_ADMIN_BRANDING: AdminBranding = {};
+const NO_PREFETCH_FILES: RoutePrefetchFiles = {};
 
 export function AdminApp({
 	pluginAdmins = EMPTY_PLUGINS,
@@ -136,36 +144,47 @@ export function AdminApp({
 	adminBranding = EMPTY_ADMIN_BRANDING,
 	locale = "en",
 	messages = {},
+	routePrefetchFiles = NO_PREFETCH_FILES,
+	initialData,
+	initialAuthMode,
 }: AdminAppProps) {
-	// Date locales can't be serialized from the server, so the first render waits
-	// for the active one. Otherwise calendars would render with the US week start
-	// and then shift. The timeout keeps a stalled request from blocking the admin.
-	const [dateLocaleReady, setDateLocaleReady] = React.useState(
-		() => getLoadedDateLocale(locale) !== undefined,
+	// The admin's screens remove the boot loader as they first show. A screen
+	// that fails to render shows the router's error screen instead, which doesn't.
+	React.useEffect(
+		() =>
+			router.subscribe("onResolved", () => {
+				document.getElementById("emdash-boot-loader")?.remove();
+			}),
+		[],
 	);
-	React.useEffect(() => {
-		if (dateLocaleReady) return;
-		let active = true;
-		void (async () => {
-			await waitForDateLocale(locale, DATE_LOCALE_BOOT_TIMEOUT_MS);
-			if (active) setDateLocaleReady(true);
-		})();
-		return () => {
-			active = false;
-		};
-	}, [locale, dateLocaleReady]);
 
 	React.useEffect(() => {
-		if (dateLocaleReady) document.getElementById("emdash-boot-loader")?.remove();
-	}, [dateLocaleReady]);
+		setRoutePrefetchFiles(routePrefetchFiles);
+	}, [routePrefetchFiles]);
 
 	const i18nInitialized = React.useRef(false);
 	if (!i18nInitialized.current) {
 		i18n.loadAndActivate({ locale, messages });
+		void loadDateLocale(locale);
 		i18nInitialized.current = true;
 	}
 
-	if (!dateLocaleReady) return null;
+	// Seeded once, as fetched data rather than `initialData`, so a reset after
+	// an authorization failure refetches instead of restoring the seed.
+	const initialDataSeeded = React.useRef(false);
+	if (!initialDataSeeded.current) {
+		initialDataSeeded.current = true;
+		if (initialData && queryClient.getQueryData(["manifest"]) === undefined) {
+			queryClient.setQueryData(["manifest"], initialData.manifest);
+			queryClient.setQueryData(currentUserQueryKey, initialData.currentUser);
+			if (initialData.commentCounts) {
+				queryClient.setQueryData(["commentCounts"], initialData.commentCounts);
+			}
+		}
+		if (initialAuthMode && queryClient.getQueryData(["authMode"]) === undefined) {
+			queryClient.setQueryData(["authMode"], initialAuthMode);
+		}
+	}
 
 	return (
 		<ThemeProvider>
@@ -178,7 +197,7 @@ export function AdminApp({
 									<PluginAdminProvider pluginAdmins={pluginAdmins}>
 										<QueryClientProvider client={queryClient}>
 											<LinkProvider component={KumoRouterLink}>
-												<RouterProvider router={router} />
+												<RouterProvider router={router} context={{ pluginAdmins }} />
 											</LinkProvider>
 										</QueryClientProvider>
 									</PluginAdminProvider>

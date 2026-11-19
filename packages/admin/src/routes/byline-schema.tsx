@@ -15,7 +15,7 @@
  * this page — so the in-component check is the source of truth.
  */
 
-import { Button, DropdownMenu, Loader, useKumoToastManager } from "@cloudflare/kumo";
+import { Button, DropdownMenu, useKumoToastManager } from "@cloudflare/kumo";
 import { plural } from "@lingui/core/macro";
 import { useLingui } from "@lingui/react/macro";
 import { ArrowDown, ArrowUp, IdentificationCard, Pencil, Plus, Trash } from "@phosphor-icons/react";
@@ -26,7 +26,9 @@ import { BylineFieldEditor } from "../components/BylineFieldEditor.js";
 import { ConfirmDialog } from "../components/ConfirmDialog.js";
 import {
 	DataTable,
+	DataTableActionsHeader,
 	DataTableMessage,
+	DataTablePlaceholderRows,
 	RowActionsMenu,
 	RowMeta,
 	RowTitleButton,
@@ -38,7 +40,6 @@ import {
 	createBylineField,
 	deleteBylineField,
 	getBylineFieldUsage,
-	listBylineFields,
 	reorderBylineFields,
 	updateBylineField,
 	type BylineFieldDefinition,
@@ -46,6 +47,7 @@ import {
 	type UpdateBylineFieldInput,
 } from "../lib/api/byline-fields.js";
 import { useCurrentUser } from "../lib/api/current-user.js";
+import { bylineFieldsQueryOptions } from "../lib/route-queries.js";
 import { cn } from "../lib/utils.js";
 
 // Mirror of `packages/auth/src/rbac.ts:Role.ADMIN`. Inline here for the
@@ -57,7 +59,7 @@ const ROLE_ADMIN = 50;
 // byline form's field-defs cache in the same session. The "usage"
 // subkeys below stay under a `byline-schema` prefix — they're a
 // per-field impact lookup, not the field list itself.
-const QUERY_KEY = ["byline-fields"] as const;
+const QUERY_KEY = bylineFieldsQueryOptions().queryKey;
 
 export function BylineSchemaPage() {
 	const { t } = useLingui();
@@ -70,8 +72,7 @@ export function BylineSchemaPage() {
 	const [deletingField, setDeletingField] = React.useState<BylineFieldDefinition | null>(null);
 
 	const fieldsQuery = useQuery({
-		queryKey: QUERY_KEY,
-		queryFn: listBylineFields,
+		...bylineFieldsQueryOptions(),
 		// Only fetch when the user actually has permission. Skipping the
 		// query for non-admins avoids a 403 in the console.
 		enabled: !!currentUser && currentUser.role >= ROLE_ADMIN,
@@ -146,13 +147,7 @@ export function BylineSchemaPage() {
 		},
 	});
 
-	if (userLoading) {
-		return (
-			<div className="flex items-center justify-center min-h-[50vh]">
-				<Loader />
-			</div>
-		);
-	}
+	if (userLoading) return null;
 
 	// Permission gate. Sidebar already hides the entry for non-admins, but
 	// direct URL navigation still lands here — render an access-denied
@@ -222,26 +217,27 @@ export function BylineSchemaPage() {
 				<thead>
 					<tr>
 						<th scope="col">{t`Label`}</th>
-						<th scope="col" {...secondaryColumn}>
+						{/* Fixed widths keep the columns where they are when rows replace the placeholder rows. */}
+						<th scope="col" className="w-48" {...secondaryColumn}>
 							{t`Slug`}
 						</th>
-						<th scope="col" {...secondaryColumn}>
+						<th scope="col" className="w-32" {...secondaryColumn}>
 							{t`Type`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-40" {...tertiaryColumn}>
 							{t`Translatable`}
 						</th>
-						<th scope="col" {...tertiaryColumn}>
+						<th scope="col" className="w-28" {...tertiaryColumn}>
 							{t`Required`}
 						</th>
-						<th scope="col" className="w-0">
-							<span className="sr-only">{t`Actions`}</span>
-						</th>
+						<DataTableActionsHeader />
 					</tr>
 				</thead>
 				<tbody>
 					{fieldsQuery.isLoading ? (
-						<DataTableMessage colSpan={6}>{t`Loading byline fields…`}</DataTableMessage>
+						<DataTablePlaceholderRows
+							cells={["title", "secondary", "secondary", "tertiary", "tertiary", "actions"]}
+						/>
 					) : fieldsQuery.isError ? (
 						// Distinguish "couldn't load" from "empty list" — falling
 						// through to the empty-state copy would tell the admin "no

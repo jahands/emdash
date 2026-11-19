@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import type { EmDashRoom } from "../../../cloudflare/src/rooms/object.js";
 import { CLOSE_CODES } from "../../src/rooms/types.js";
-import { blocksText, claims, newRoom, RoomClient } from "./room-object-client.js";
+import { blocksText, claims, newRoom, RoomClient, signedToken } from "./room-object-client.js";
 
 const SECOND = 1000;
 const MINUTE = 60 * SECOND;
@@ -77,7 +77,7 @@ describe("EmDashRoom", () => {
 		ben.close();
 	});
 
-	it("resumes hibernated sockets with their attachments, relays presence without loading, and loads for an update", async () => {
+	it("resumes hibernated sockets with their attachments, relays presence, and applies an update, all without the site", async () => {
 		const { site, stub } = newRoom();
 		const ana = await RoomClient.join(stub, site, "ana");
 		const ben = await RoomClient.join(stub, site, "ben");
@@ -107,7 +107,7 @@ describe("EmDashRoom", () => {
 
 		ben.type("Resumed ");
 		await vi.waitFor(() => expect(ana.text()).toBe("Resumed Stored First paragraph."));
-		expect(site.loads).toBe(loads + 1);
+		expect(site.loads).toBe(loads);
 		expect(vic.received).toHaveLength(0);
 
 		await evictDurableObject(stub);
@@ -129,19 +129,30 @@ describe("EmDashRoom", () => {
 		await vi.waitFor(() => expect(client.closed?.code).toBe(CLOSE_CODES.busy));
 	});
 
-	it("closes a socket whose info can't be kept with busy", async () => {
+	it("lets in a user whose name alone would pass the attachment limit, keeping its start", async () => {
 		const { site, stub } = newRoom();
 		const issued = await stub.issueToken({ ...claims(site, "ana"), name: "a".repeat(20_000) });
 		if (typeof issued !== "object" || issued === null) throw new Error("No token");
 		const client = new RoomClient("ana");
-		await client.upgrade(stub, issued.token);
+		await client.upgrade(stub, await signedToken(issued.token, "ana"));
+		await vi.waitFor(() => expect(client.received.some((m) => m.type === "welcome")).toBe(true));
+		expect(client.closed).toBeNull();
+		const names = await runInDurableObject(stub, (_instance, state) =>
+			state
+				.getWebSockets()
+				.map((ws) => (ws.deserializeAttachment() as { info: { name: string } }).info.name),
+		);
+		expect(names).toEqual(["a".repeat(256)]);
+		client.close();
+	});
+
+	it("closes a socket whose token names another user than the room issued it to", async () => {
+		const { site, stub } = newRoom();
+		const issued = await stub.issueToken(claims(site, "ana"));
+		if (typeof issued !== "object" || issued === null) throw new Error("No token");
+		const client = new RoomClient("ben");
+		await client.upgrade(stub, await signedToken(issued.token, "ben"));
 		await vi.waitFor(() => expect(client.closed?.code).toBe(CLOSE_CODES.busy));
-		// The refused socket doesn't count toward the user's five connections.
-		for (let i = 0; i < 5; i++) {
-			expect(await stub.issueToken(claims(site, "ana"))).toMatchObject({
-				token: expect.any(String),
-			});
-		}
 	});
 
 	const LIMIT = 2 * 1024 * 1024;
@@ -178,7 +189,7 @@ describe("EmDashRoom", () => {
 		expect(blocksText(site.current.data.body)).toBe("First paragraph.");
 		site.forced = [];
 		const ben = await RoomClient.join(stub, site, "ben");
-		expect(ben.text()).toBe("Unsaved First paragraph.");
+		await vi.waitFor(() => expect(ben.text()).toBe("Unsaved First paragraph."));
 		ben.close();
 	});
 });

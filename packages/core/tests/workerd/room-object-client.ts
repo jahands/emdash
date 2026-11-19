@@ -14,7 +14,7 @@ import {
 	type Message,
 } from "@emdash-cms/admin/internal/co-editing";
 import { env } from "cloudflare:workers";
-import { COMMIT, VERSION } from "emdash/internal/co-editing";
+import { COMMIT, signRoomToken, VERSION } from "emdash/internal/co-editing";
 import { expect, vi } from "vitest";
 import * as Y from "yjs";
 
@@ -66,6 +66,16 @@ export function claims(site: FakeSite, userId: string): TokenClaims {
 	};
 }
 
+/** A token for a nonce the room issued, as the join route signs it. The Worker checks the key. */
+export function signedToken(nonce: string, userId: string): Promise<string> {
+	return signRoomToken("test-secret", {
+		roomId: "posts:entry",
+		userId,
+		nonce,
+		expiresAt: Date.now() + 60_000,
+	});
+}
+
 export function paragraph(key: string, text: string) {
 	return {
 		_type: "block",
@@ -113,8 +123,9 @@ export class RoomClient {
 		if (typeof result !== "object" || result === null) {
 			throw new Error(`No token: ${String(result)}`);
 		}
-		await this.upgrade(stub, result.token);
-		await vi.waitFor(() => expect(this.received.some((m) => m.type === "welcome")).toBe(true));
+		await this.upgrade(stub, await signedToken(result.token, this.userId));
+		// The document arrives in the reply to the client's sync step 1, after the welcome.
+		await vi.waitFor(() => expect(this.received.some((m) => m.type === "sync-step-2")).toBe(true));
 	}
 
 	async upgrade(stub: DurableObjectStub<EmDashRoom>, token: string): Promise<void> {

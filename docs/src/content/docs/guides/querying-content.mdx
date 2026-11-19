@@ -268,6 +268,14 @@ without their CSS, JavaScript or automatic height. Iframe blocks also lose their
 the policy's `frame-src` must allow the hosts they embed. Video blocks whose media is on another
 host, such as a storage public URL or a media provider, need that host in `media-src`.
 
+Images in rich text load at the width the browser lays them out at, in browsers that support `sizes="auto"`. For other browsers, pass the width of the text column as `imageSizes`, in the syntax of the [`sizes` attribute](https://developer.mozilla.org/en-US/docs/Web/HTML/Reference/Elements/img#sizes). Without it, they assume an image can be as wide as the viewport and download a larger file than the column needs:
+
+```astro
+<PortableText value={post.data.content} imageSizes="(min-width: 800px) 680px, 92vw" />
+```
+
+An image with its own display width set in the editor keeps that width.
+
 `PortableText` shows tables as read-only placeholders in edit mode. To localize their initial label, pass `tablePlaceholder={translatedLabel}`. It defaults to `"Table (edit in admin)"` and does not affect published table content.
 
 ## Read reference fields

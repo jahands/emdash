@@ -1,5 +1,5 @@
-import { fieldMode, slugOf, stagedReferences, valueKey } from "./fields.js";
 import type { DiffFieldDescriptor, RevisionData, RevisionLike } from "./types.js";
+import { fieldMode, slugOf, stagedReferences, valueKey } from "./values.js";
 
 type Fields = Readonly<Record<string, DiffFieldDescriptor>>;
 
@@ -92,4 +92,21 @@ export function findRestoredSource(
 	// Saving again without changes copies the previous version; that isn't a restore.
 	if (!previous || sameContent(current.data, previous.data, fields)) return null;
 	return older.findLast((revision) => sameContent(current.data, revision.data, fields))?.id ?? null;
+}
+
+/**
+ * The revisions (newest first) that copy an older loaded one, mapped to the id of the version each
+ * restored. The same test `diffVersion` uses to describe a version as restored.
+ */
+export function restoredSources(
+	revisions: readonly RevisionLike[],
+	fields: Readonly<Record<string, DiffFieldDescriptor>>,
+): Map<string, string> {
+	const sources = new Map<string, string>();
+	revisions.forEach((revision, index) => {
+		const previous = revisions[index + 1] ?? null;
+		const source = findRestoredSource(revision, previous, revisions.slice(index + 2), fields);
+		if (source) sources.set(revision.id, source);
+	});
+	return sources;
 }

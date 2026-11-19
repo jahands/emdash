@@ -252,6 +252,38 @@ describe("ContentSettingsPanel", () => {
 		]);
 	});
 
+	it("offers no Translate action until the entry's translations load", async () => {
+		const screen = await render(
+			<ContentSettingsPanel
+				{...makePanelProps({ translations: undefined, translationsLoading: true })}
+			/>,
+		);
+		const section = screen
+			.getByRole("heading", { name: "Translations" })
+			.element()
+			.closest("section")!;
+
+		await expect.element(screen.getByText("Loading translations...")).toBeInTheDocument();
+		expect(section.querySelectorAll("button")).toHaveLength(0);
+
+		await screen.rerender(
+			<ContentSettingsPanel
+				{...makePanelProps({
+					translations: [
+						{
+							id: "item-ar",
+							locale: "ar",
+							slug: "my-post",
+							status: "draft",
+							updatedAt: "2025-01-15T10:30:00Z",
+						},
+					],
+				})}
+			/>,
+		);
+		await expect.element(screen.getByRole("button", { name: "Edit" })).toBeVisible();
+	});
+
 	it("shows the collection's titleField value as the SEO Title placeholder", async () => {
 		const manifest: AdminManifest = {
 			...TEST_MANIFEST,

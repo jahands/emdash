@@ -11,39 +11,11 @@
 
 import type { APIRoute } from "astro";
 
+import { loadAuthModeInfo } from "#api/auth-mode-info.js";
 import { apiSuccess } from "#api/error.js";
-import { getAuthMode } from "#auth/mode.js";
 
 export const prerender = false;
 
 export const GET: APIRoute = async ({ locals }) => {
-	const { emdash } = locals;
-
-	const authMode = getAuthMode(emdash?.config);
-
-	// Only check signup for passkey auth (external providers handle their own)
-	let signupEnabled = false;
-	if (emdash?.db && authMode.type === "passkey") {
-		try {
-			const { sql } = await import("kysely");
-			const result = await sql<{ cnt: unknown }>`
-				SELECT COUNT(*) as cnt FROM allowed_domains WHERE enabled = 1
-			`.execute(emdash.db);
-			signupEnabled = Number(result.rows[0]?.cnt ?? 0) > 0;
-		} catch {
-			// Table may not exist yet
-		}
-	}
-
-	// Collect pluggable auth providers (from authProviders config)
-	const providers = (emdash?.config?.authProviders ?? []).map((p) => ({
-		id: p.id,
-		label: p.label,
-	}));
-
-	return apiSuccess({
-		authMode: authMode.type === "external" ? authMode.providerType : "passkey",
-		signupEnabled,
-		providers,
-	});
+	return apiSuccess(await loadAuthModeInfo(locals.emdash ?? {}));
 };
