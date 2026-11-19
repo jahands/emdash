@@ -527,7 +527,13 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	});
 	registry.onChange = scheduleTopics;
 	registry.onRemove = (registration) => {
-		pendingRegistrations.delete(registration);
+		// Its queries stay cached; marked stale, the next screen to show them reads them again.
+		if (pendingRegistrations.delete(registration)) {
+			void queryClient.invalidateQueries({
+				predicate: (query) => owns(registration, query),
+				refetchType: "none",
+			});
+		}
 		lastRun.delete(registration);
 	};
 	registry.onCatchUp = (registration, arrival, since) => {

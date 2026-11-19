@@ -209,6 +209,46 @@ describe("LiveSyncProvider", () => {
 		expect(screen.container.textContent).toBe("Current");
 	});
 
+	it("reads an entry again on return when a change for it was still queued as the screen left", async () => {
+		const entryReads: string[] = [];
+		let show: (id: string) => void = () => {};
+		function Entry() {
+			const [id, setId] = React.useState("a");
+			show = setId;
+			useQuery({
+				queryKey: ["entry", id],
+				queryFn: () => {
+					entryReads.push(id);
+					return Promise.resolve(id);
+				},
+				staleTime: 60_000,
+				gcTime: 60_000,
+			});
+			useLiveQueries({ topics: [`content/posts/${id}`], queryKeys: [["entry", id]], dirty: false });
+			return null;
+		}
+		await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Entry />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["content/posts/a"]));
+		socket.change("content/posts/a", { op: "update" });
+		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a"]));
+		socket.change("content/posts/a", { op: "update" });
+
+		show("b");
+		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a", "b"]));
+		show("a");
+
+		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a", "b", "a"]));
+	});
+
 	it("lets the save's own read cover a change held under unsaved edits", async () => {
 		let settingsReads = 0;
 		let setDirty: (dirty: boolean) => void = () => {};
