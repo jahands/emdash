@@ -332,7 +332,11 @@ describeEachDialect("version-pinned media caching", (dialect) => {
 			const lastModified = new Date("2026-01-01T00:00:00Z");
 			const described: Storage = {
 				...storage,
-				stat: async () => ({ contentType: "image/png", size: BYTES.length, lastModified }),
+				describeStoredFile: async () => ({
+					contentType: "image/png",
+					size: BYTES.length,
+					lastModified,
+				}),
 				download: () => Promise.reject(new Error("HEAD downloaded the file")),
 			};
 			const request = new Request(`http://localhost/_emdash/api/media/file/${KEY}?${pin(hash)}`, {
@@ -350,6 +354,31 @@ describeEachDialect("version-pinned media caching", (dialect) => {
 			expect(response.headers.get("Content-Length")).toBe(String(BYTES.length));
 			expect(response.headers.get("Last-Modified")).toBe(lastModified.toUTCString());
 			expect(response.headers.get("Cache-Control")).toBe(MUTABLE_MEDIA_CACHE_CONTROL);
+		});
+
+		it("downloads for HEAD when the storage describes a file in a shape it doesn't expect", async () => {
+			let downloads = 0;
+			const odd = {
+				...storage,
+				describeStoredFile: async () => ({ isFile: true, bytes: "8" }),
+				download: (key: string) => {
+					downloads++;
+					return storage.download(key);
+				},
+			} as unknown as Storage;
+			const request = new Request(`http://localhost/_emdash/api/media/file/${KEY}`, {
+				method: "HEAD",
+			});
+
+			const response = await fileGET({
+				params: { key: KEY },
+				locals: { emdash: { storage: odd } },
+				request,
+			} as never);
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get("Content-Length")).toBe(String(BYTES.length));
+			expect(downloads).toBe(1);
 		});
 
 		it("streams a pinned original too large to verify, revalidating", async () => {

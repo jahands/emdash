@@ -74,7 +74,7 @@ describe("LocalStorage ranged download", () => {
 	});
 });
 
-describe("LocalStorage stat", () => {
+describe("LocalStorage describeStoredFile", () => {
 	let directory: string | undefined;
 
 	afterEach(async () => {
@@ -90,11 +90,11 @@ describe("LocalStorage stat", () => {
 			contentType: "image/png",
 		});
 
-		expect(await storage.stat("hero.png")).toMatchObject({
+		expect(await storage.describeStoredFile("hero.png")).toMatchObject({
 			contentType: "image/png",
 			size: 3,
 			lastModified: expect.any(Date),
 		});
-		expect(await storage.stat("missing.png")).toBeNull();
+		expect(await storage.describeStoredFile("missing.png")).toBeNull();
 	});
 });

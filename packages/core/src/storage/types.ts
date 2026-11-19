@@ -212,7 +212,7 @@ export interface Storage {
 	 * Describe a file without reading it, or null when there is no file at `key`. Optional: the
 	 * media route answers `HEAD` with it, and downloads the file without it.
 	 */
-	stat?(key: string): Promise<StoredFileInfo | null>;
+	describeStoredFile?(key: string): Promise<StoredFileInfo | null>;
 
 	/**
 	 * Delete a file from storage

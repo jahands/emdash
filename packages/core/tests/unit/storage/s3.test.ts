@@ -421,7 +421,7 @@ describe("S3Storage ranged download", () => {
 	});
 });
 
-describe("S3Storage stat", () => {
+describe("S3Storage describeStoredFile", () => {
 	afterEach(() => s3Send.mockReset());
 
 	function storage() {
@@ -441,7 +441,7 @@ describe("S3Storage stat", () => {
 			LastModified: uploaded,
 		});
 
-		expect(await storage().stat!("hero.png")).toEqual({
+		expect(await storage().describeStoredFile!("hero.png")).toEqual({
 			contentType: "image/png",
 			size: 3,
 			lastModified: uploaded,
@@ -451,6 +451,6 @@ describe("S3Storage stat", () => {
 		expect(s3Send.mock.calls[0]![0]).not.toHaveProperty("input.Range");
 
 		s3Send.mockRejectedValueOnce(Object.assign(new Error("missing"), { name: "NotFound" }));
-		expect(await storage().stat!("missing.png")).toBeNull();
+		expect(await storage().describeStoredFile!("missing.png")).toBeNull();
 	});
 });

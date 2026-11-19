@@ -288,7 +288,7 @@ export class S3Storage implements Storage {
 		}
 	}
 
-	async stat(key: string): Promise<StoredFileInfo | null> {
+	async describeStoredFile(key: string): Promise<StoredFileInfo | null> {
 		try {
 			const response = await this.client.send(
 				new HeadObjectCommand({ Bucket: this.bucket, Key: key }),

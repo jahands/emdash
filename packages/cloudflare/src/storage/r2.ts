@@ -134,7 +134,7 @@ export class R2Storage implements Storage {
 		}
 	}
 
-	async stat(key: string): Promise<StoredFileInfo | null> {
+	async describeStoredFile(key: string): Promise<StoredFileInfo | null> {
 		try {
 			const object = await this.bucket.head(key);
 			if (!object) return null;

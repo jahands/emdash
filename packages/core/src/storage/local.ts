@@ -151,7 +151,7 @@ export class LocalStorage implements Storage {
 		}
 	}
 
-	async stat(key: string): Promise<StoredFileInfo | null> {
+	async describeStoredFile(key: string): Promise<StoredFileInfo | null> {
 		try {
 			const stat = await fs.stat(this.getFilePath(key));
 			if (!stat.isFile()) return null;

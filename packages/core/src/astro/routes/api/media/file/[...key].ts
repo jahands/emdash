@@ -19,6 +19,7 @@ import {
 } from "#media/image-endpoint.js";
 
 import { parseRangeHeader, resolveByteRange } from "../../../../../storage/range.js";
+import type { Storage, StoredFileInfo } from "../../../../../storage/types.js";
 import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
 
 export const prerender = false;
@@ -66,6 +67,33 @@ const SAFE_INLINE_TYPES = new Set([
 	"audio/ogg",
 ]);
 
+/**
+ * What an adapter says about the file at `key`: null for no file, undefined when it can't say.
+ * A custom adapter's answer is checked, and one that doesn't fit is ignored.
+ */
+async function describeStoredFile(
+	storage: Storage,
+	key: string,
+): Promise<StoredFileInfo | null | undefined> {
+	if (typeof storage.describeStoredFile !== "function") return undefined;
+	let details: unknown;
+	try {
+		details = await storage.describeStoredFile(key);
+	} catch {
+		return undefined;
+	}
+	if (details === null) return null;
+	if (typeof details !== "object") return undefined;
+	const contentType = "contentType" in details ? details.contentType : undefined;
+	const size = "size" in details ? details.size : undefined;
+	const lastModified = "lastModified" in details ? details.lastModified : undefined;
+	if (typeof contentType !== "string" || !contentType) return undefined;
+	if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return undefined;
+	if (lastModified === undefined) return { contentType, size };
+	if (!(lastModified instanceof Date) || Number.isNaN(lastModified.getTime())) return undefined;
+	return { contentType, size, lastModified };
+}
+
 export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 	const { key } = params;
 	const { emdash } = locals;
@@ -91,7 +119,7 @@ export const GET: APIRoute = async ({ params, locals, request, cache }) => {
 	try {
 		// A HEAD answered from the file's details reads none of it.
 		const details =
-			request.method === "HEAD" && emdash.storage.stat ? await emdash.storage.stat(key) : undefined;
+			request.method === "HEAD" ? await describeStoredFile(emdash.storage, key) : undefined;
 		if (details === null) return apiError("NOT_FOUND", "File not found", 404);
 		// Range requests that include If-Range are served as whole-file responses
 		// because this route does not compare If-Range validators.
