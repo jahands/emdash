@@ -8,7 +8,7 @@ import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
 
-import { LiveSyncProvider } from "../../src/lib/realtime/LiveSyncProvider";
+import { LiveSyncProvider, useLiveQueries } from "../../src/lib/realtime/LiveSyncProvider";
 import { TAB_ID } from "../../src/lib/realtime/tab-id";
 import { contentListQuery, menusQueryOptions } from "../../src/lib/route-queries";
 import { pagedQueryOptions } from "../../src/lib/use-paged-query";
@@ -136,6 +136,36 @@ describe("LiveSyncProvider", () => {
 
 		await vi.waitFor(() => expect(reads.posts).toBe(counted + 2), { timeout: 3000 });
 		expect(Date.now() - starts[0]!).toBeGreaterThanOrEqual(1900);
+	});
+
+	it("throttles a screen's registered queries from their last read like any other", async () => {
+		function Editor() {
+			useQuery(menusQueryOptions(undefined));
+			useLiveQueries({ topics: ["widgets"], queryKeys: [["menus"]], dirty: false });
+			return null;
+		}
+		await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Editor />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["menus", "widgets"]));
+		await vi.waitFor(() => expect(reads.menus).toBe(1));
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		const read = Date.now();
+		await queryClient.refetchQueries({ queryKey: ["menus"] });
+		expect(reads.menus).toBe(2);
+
+		socket.change("widgets");
+		await new Promise((resolve) => setTimeout(resolve, 600));
+		expect(reads.menus).toBe(2);
+		await vi.waitFor(() => expect(reads.menus).toBe(3), { timeout: 3000 });
+		expect(Date.now() - read).toBeGreaterThanOrEqual(1900);
 	});
 
 	it("refetches a list less often for its entries' updates than for entries added or removed", async () => {

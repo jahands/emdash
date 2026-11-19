@@ -383,17 +383,31 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		flushTimer = undefined;
 		flushAt = Number.POSITIVE_INFINITY;
 		const startedAt = Date.now();
-		const queries = takeDue(pendingQueries, startedAt);
-		const registrations = takeDue(pendingRegistrations, startedAt);
 		for (const [key, ranAt] of lastRun) {
 			if (ranAt + ENTRY_UPDATE_THROTTLE_MS < startedAt) lastRun.delete(key);
 		}
-		schedule();
 
 		const held = [...registry.registrations].filter((registration) => registration.held());
 		const told = new Map<LiveRegistration, Arrival>();
 		const tell = (registration: LiveRegistration, arrival: Arrival) =>
 			told.set(registration, merge(told.get(registration), arrival));
+		// A registration's queries queue like any other query, so they share its throttle.
+		for (const [registration, pending] of takeDue(pendingRegistrations, startedAt)) {
+			if (held.includes(registration)) {
+				tell(registration, pending.arrival);
+				continue;
+			}
+			for (const query of cache.getAll()) {
+				if (!owns(registration, query)) continue;
+				pendingQueries.set(
+					query.queryHash,
+					mergePending(pendingQueries.get(query.queryHash), pending),
+				);
+			}
+		}
+		const queries = takeDue(pendingQueries, startedAt);
+		schedule();
+
 		for (const [hash, pending] of queries) {
 			const query = cache.get(hash);
 			const holder = query && held.find((registration) => owns(registration, query));
@@ -401,24 +415,12 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			queries.delete(hash);
 			tell(holder, pending.arrival);
 		}
-		const refetchKeys: Array<{ queryKey: QueryKey; pending: Pending }> = [];
-		for (const [registration, pending] of registrations) {
-			if (held.includes(registration)) tell(registration, pending.arrival);
-			else for (const queryKey of registration.queryKeys) refetchKeys.push({ queryKey, pending });
-		}
 		for (const [registration, arrival] of told) registration.arrived(arrival);
 
-		if (queries.size === 0 && refetchKeys.length === 0) return;
 		const now = new Set<string>();
-		for (const query of cache.getAll()) {
-			const hash = query.queryHash;
-			let pending = queries.get(hash);
-			for (const key of refetchKeys) {
-				if (matchQuery({ queryKey: key.queryKey }, query)) {
-					pending = mergePending(pending, key.pending);
-				}
-			}
-			if (!pending) continue;
+		for (const [hash, pending] of queries) {
+			const query = cache.get(hash);
+			if (!query) continue;
 			if (query.state.fetchStatus === "fetching") {
 				if ((fetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) > pending.since) continue;
 				// List reads ignore the abort signal, so cancelling would only make the server do the
