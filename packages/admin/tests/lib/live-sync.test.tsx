@@ -37,19 +37,27 @@ describe("LiveSyncProvider", () => {
 	const reads = { menus: 0, posts: 0 };
 	/** While set, list reads wait for it, as a slow server would. */
 	let postsGate: Promise<void> | null = null;
+	/** The socket lifetime tickets carry, or none, as hubs from before it send. */
+	let ticketLifetime: number | undefined;
 
 	beforeEach(() => {
 		FakeSocket.instances = [];
 		reads.menus = 0;
 		reads.posts = 0;
 		postsGate = null;
+		ticketLifetime = undefined;
 		vi.stubGlobal("WebSocket", FakeSocket);
 		vi.spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
 			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 			const json = (data: unknown) =>
 				new Response(JSON.stringify({ data }), { headers: { "Content-Type": "application/json" } });
 			if (url.endsWith("/_emdash/api/realtime") && init?.method === "POST") {
-				return json({ mode: "live", url: "/_emdash/api/realtime", ticket: "ticket-1" });
+				return json({
+					mode: "live",
+					url: "/_emdash/api/realtime",
+					ticket: "ticket-1",
+					lifetime: ticketLifetime,
+				});
 			}
 			if (url.includes("/_emdash/api/menus")) {
 				reads.menus++;
@@ -175,24 +183,62 @@ describe("LiveSyncProvider", () => {
 		await vi.waitFor(() => expect(reads).toEqual({ menus: 3, posts: 2 }));
 	});
 
-	it("moves to a new socket when the hub asks it to renew, without refetching", async () => {
+	it("moves to a new socket once the hub hands the old one off, without refetching", async () => {
 		const socket = await connect();
+		vi.spyOn(Math, "random").mockReturnValue(0);
 
 		socket.push({ t: "renew" });
 		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
 		const next = FakeSocket.instances[1]!;
 		next.open();
 		expect(next.topics()).toEqual(["content/posts", "menus"]);
+		next.presence([], true);
 		expect(socket.readyState).toBe(FakeSocket.OPEN);
 
-		next.presence([], true);
+		// Sent to the old socket before the handoff, so the new one never got it.
+		socket.change("menus");
+		await vi.waitFor(() => expect(reads.menus).toBe(2));
+		socket.push({ t: "handoff" });
 		expect(socket.readyState).toBe(3);
 		await new Promise((resolve) => setTimeout(resolve, 300));
-		expect(reads).toEqual({ menus: 1, posts: 1 });
+		expect(reads).toEqual({ menus: 2, posts: 1 });
 		expect(FakeSocket.instances).toHaveLength(2);
 
+		// Within the throttle window of the refetch above.
 		next.change("menus");
-		await vi.waitFor(() => expect(reads.menus).toBe(2));
+		await vi.waitFor(() => expect(reads.menus).toBe(3), { timeout: 3000 });
+	});
+
+	it("moves over and refetches when a hub that never hands off has the new socket's topics", async () => {
+		const socket = await connect();
+		vi.spyOn(Math, "random").mockReturnValue(0);
+
+		socket.push({ t: "renew" });
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
+		const next = FakeSocket.instances[1]!;
+		next.open();
+		next.presence([], true);
+
+		await vi.waitFor(() => expect(socket.readyState).toBe(3), { timeout: 7000 });
+		await vi.waitFor(() => expect(reads).toEqual({ menus: 2, posts: 2 }));
+	});
+
+	it("spreads the renewals the hub asks for over the socket's last minute", async () => {
+		const socket = await connect();
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+
+		socket.push({ t: "renew" });
+
+		await new Promise((resolve) => setTimeout(resolve, 500));
+		expect(FakeSocket.instances).toHaveLength(1);
+	});
+
+	it("renews its socket itself before the lifetime the ticket gives, on a quiet hub", async () => {
+		ticketLifetime = 61_000;
+		vi.spyOn(Math, "random").mockReturnValue(0.5);
+		await connect();
+
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2), { timeout: 3000 });
 	});
 
 	it("refetches the pages it has when a change arrives before it loads another one", async () => {

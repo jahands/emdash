@@ -3,9 +3,9 @@
  * hub which topics the tab shows and where the tab is, and reports the changes and rosters the
  * hub sends. It stays open for five minutes in a hidden tab, because a hibernated socket costs
  * nothing and every reconnect makes the tab refetch, and reconnects with jitter so a deploy
- * doesn't bring every tab back at once. When the hub asks a socket near the end of its lifetime
- * to renew, the tab opens the next one and closes the old one once the hub has the new one's
- * topics, so nothing is missed and nothing needs refetching.
+ * doesn't bring every tab back at once. Near the end of a socket's lifetime, when the hub asks or
+ * the tab's own timer fires, the tab opens the next one and closes the old one once the hub says
+ * over it that the new one has the topics, so nothing is missed and nothing needs refetching.
  */
 
 import { API_BASE, apiFetch } from "../api/client.js";
@@ -75,8 +75,16 @@ const BUSY_RETRY_MS = 5000;
  * the admin reloads, and keeps the freshness it has without live updates.
  */
 const MAX_FAILED_SOCKETS = 3;
+/** How long the hub keeps a socket open when the ticket doesn't say. */
+const DEFAULT_LIFETIME_MS = 15 * 60_000;
+/** A socket renews about this long before its lifetime ends, give or take half of it. */
+const RENEW_BEFORE_MS = 60_000;
+/** Renewing after the hub asks leaves at least this long before the socket closes. */
+const RENEW_MARGIN_MS = 15_000;
+/** A hub from before the handoff never sends one; the tab then moves over without it. */
+const HANDOFF_WAIT_MS = 5000;
 
-type Target = { url: string; ticket: string };
+type Target = { url: string; ticket: string; lifetime: number };
 
 export function openLiveConnection(events: LiveConnectionEvents): LiveConnection {
 	let topics: readonly string[] = [];
@@ -93,6 +101,14 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	let paused = false;
 	/** An open socket closed, so changes may have been missed until the hub has the topics again. */
 	let missed = false;
+	let lifetime = DEFAULT_LIFETIME_MS;
+	/** When each socket opened. */
+	const openedAt = new WeakMap<WebSocket, number>();
+	/** Sockets whose topics the hub has answered. */
+	const acked = new WeakSet<WebSocket>();
+	let renewTimer: number | undefined;
+	let renewAt = Number.POSITIVE_INFINITY;
+	let handoffTimer: number | undefined;
 	let failures = 0;
 	let attempt = 0;
 	let retryTimer: number | undefined;
@@ -126,9 +142,33 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		else retryIn(backoff());
 	}
 
+	/** Renews `socket` at `at`, in ms, unless it already renews sooner. */
+	function renewAtOrBefore(at: number): void {
+		if (at >= renewAt) return;
+		window.clearTimeout(renewTimer);
+		renewAt = at;
+		renewTimer = window.setTimeout(
+			() => {
+				renewAt = Number.POSITIVE_INFINITY;
+				void renew();
+			},
+			Math.max(0, at - Date.now()),
+		);
+	}
+
+	function cancelRenewal(): void {
+		window.clearTimeout(renewTimer);
+		renewAt = Number.POSITIVE_INFINITY;
+	}
+
+	/** The time `ws` reaches the end of its lifetime. */
+	function endOf(ws: WebSocket): number {
+		return (openedAt.get(ws) ?? Date.now()) + lifetime;
+	}
+
 	/** Opens the socket that replaces the current one. A failed ticket leaves it to expire. */
 	async function renew(): Promise<void> {
-		if (renewRequested || renewing || stopped || paused) return;
+		if (renewRequested || renewing || stopped || paused || !socket) return;
 		renewRequested = true;
 		let target: Target | "off" | null;
 		try {
@@ -139,8 +179,9 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		if (target && target !== "off" && !stopped && !paused && !renewing) open(target, true);
 	}
 
-	/** Makes the renewing socket the tab's socket, once the hub has its topics. */
+	/** Makes the renewing socket the tab's socket. */
 	function promote(ws: WebSocket): void {
+		window.clearTimeout(handoffTimer);
 		renewing = null;
 		const old = socket;
 		socket = ws;
@@ -148,9 +189,16 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			retired.add(old);
 			old.close(1000, "Renewed");
 		}
+		cancelRenewal();
+		renewAtOrBefore(endOf(ws) - RENEW_BEFORE_MS * (0.5 + Math.random()));
+		if (missed && acked.has(ws)) {
+			missed = false;
+			events.resync(Date.now());
+		}
 	}
 
 	function open(target: Target, renewal: boolean): void {
+		lifetime = target.lifetime;
 		const ws = new WebSocket(socketUrl(target));
 		if (renewal) renewing = ws;
 		else socket = ws;
@@ -159,6 +207,8 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		ws.addEventListener("open", () => {
 			opened = true;
 			attempt = 0;
+			openedAt.set(ws, Date.now());
+			if (!renewal) renewAtOrBefore(endOf(ws) - RENEW_BEFORE_MS * (0.5 + Math.random()));
 			sendTopics(ws);
 			if (place) sendPlace(ws);
 			pingTimer = window.setInterval(() => {
@@ -172,23 +222,42 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			if (frame?.t === "changes" && frame.changes.length > 0) events.changes(frame.changes);
 			else if (frame?.t === "presence") {
 				// The hub answers a socket's topics with every roster under them, once they're in effect.
-				if (frame.all && ws === renewing) promote(ws);
+				if (frame.all) acked.add(ws);
+				if (frame.all && ws === renewing) {
+					window.clearTimeout(handoffTimer);
+					handoffTimer = window.setTimeout(() => {
+						if (renewing !== ws) return;
+						// Without a handoff, changes may have gone only to the old socket meanwhile.
+						missed = true;
+						promote(ws);
+					}, HANDOFF_WAIT_MS);
+				}
 				if (frame.all && ws === socket && missed) {
 					missed = false;
 					events.resync(Date.now());
 				}
 				events.presence(frame.places, frame.all);
-			} else if (frame?.t === "renew" && ws === socket) void renew();
+			} else if (frame?.t === "handoff" && ws === socket) {
+				if (renewing?.readyState === WebSocket.OPEN) promote(renewing);
+			} else if (frame?.t === "renew" && ws === socket) {
+				// Spread out over what is left, as the hub asks every socket near its end at once.
+				const left = Math.max(0, endOf(ws) - RENEW_MARGIN_MS - Date.now());
+				renewAtOrBefore(Date.now() + Math.random() * left);
+			}
 		});
 		ws.addEventListener("close", (event) => {
 			window.clearInterval(pingTimer);
 			if (retired.has(ws)) return;
 			if (ws === renewing) {
+				window.clearTimeout(handoffTimer);
 				renewing = null;
 				if (!socket && !stopped && !paused) retryIn(backoff());
 				return;
 			}
-			if (socket === ws) socket = null;
+			if (socket === ws) {
+				socket = null;
+				cancelRenewal();
+			}
 			if (opened) {
 				missed = true;
 				// Rosters stop reaching a closed socket, so what the tab knows would go stale.
@@ -228,6 +297,7 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 				const ws = socket;
 				socket = null;
 				ws?.close(1000, "The tab is hidden");
+				cancelRenewal();
 				retireRenewing();
 			}, HIDDEN_GRACE_MS);
 			return;
@@ -250,6 +320,8 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		stopped = true;
 		window.clearTimeout(retryTimer);
 		window.clearTimeout(hiddenTimer);
+		window.clearTimeout(handoffTimer);
+		cancelRenewal();
 		document.removeEventListener("visibilitychange", onVisibility);
 		window.removeEventListener("online", onOnline);
 		const ws = socket;
@@ -295,7 +367,11 @@ async function fetchTicket(): Promise<Target | "off" | null> {
 		const body: unknown = await response.json();
 		const data = isRecord(body) && isRecord(body.data) ? body.data : null;
 		if (data?.mode === "live" && typeof data.url === "string" && typeof data.ticket === "string") {
-			return { url: data.url, ticket: data.ticket };
+			const lifetime =
+				typeof data.lifetime === "number" && data.lifetime > 0
+					? data.lifetime
+					: DEFAULT_LIFETIME_MS;
+			return { url: data.url, ticket: data.ticket, lifetime };
 		}
 		return "off";
 	} catch {
@@ -313,7 +389,8 @@ function socketUrl({ url, ticket }: Target): string {
 type Frame =
 	| { t: "changes"; changes: LiveChange[] }
 	| { t: "presence"; places: LivePresencePlace[]; all: boolean }
-	| { t: "renew" };
+	| { t: "renew" }
+	| { t: "handoff" };
 
 function readFrame(text: string): Frame | null {
 	let frame: unknown;
@@ -340,6 +417,7 @@ function readFrame(text: string): Frame | null {
 		return { t: "presence", places, all: frame.all === true };
 	}
 	if (frame.t === "renew") return { t: "renew" };
+	if (frame.t === "handoff") return { t: "handoff" };
 	return null;
 }
 

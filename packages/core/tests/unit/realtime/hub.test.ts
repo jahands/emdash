@@ -263,6 +263,20 @@ describe("Hub", () => {
 			expect(silent.changes()).toEqual([]);
 		});
 
+		it("hands a tab's old socket off once its new socket's topics are in effect, after earlier changes", () => {
+			const { hub, connect } = setup();
+			const old = connect({ clientId: "tab-a" }, ["menus"]);
+			const other = connect({ userId: "bo", clientId: "tab-b" }, ["menus"]);
+			const next = connect({ clientId: "tab-a" });
+
+			hub.publish([{ topic: "menus" }]);
+			hub.receive(next, JSON.stringify({ t: "topics", topics: ["menus"] }));
+
+			expect(old.frames.map((frame) => frame.t)).toEqual(["presence", "changes", "handoff"]);
+			expect(next.frames.filter((frame) => frame.t === "handoff")).toEqual([]);
+			expect(other.frames.filter((frame) => frame.t === "handoff")).toEqual([]);
+		});
+
 		it("asks a socket near the end of its lifetime to renew, once", () => {
 			const { hub, connect, advance } = setup();
 			const old = connect({}, ["menus"]);

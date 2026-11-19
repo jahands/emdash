@@ -8,7 +8,7 @@ import type { Kysely } from "kysely";
 
 import type { Database } from "../../database/types.js";
 import { isClientId } from "../../realtime/publish.js";
-import { capUserName } from "../../rooms/limits.js";
+import { capUserName, CONNECTION_LIFETIME_MS } from "../../rooms/limits.js";
 import { resolveRoomTokenSecret } from "../../rooms/token-secret.js";
 import { signRoomToken } from "../../rooms/token.js";
 import { HUB_NAME } from "../../rooms/types.js";
@@ -23,7 +23,13 @@ import type { ApiResult } from "../types.js";
 const TICKET_LIFETIME_MS = 30_000;
 
 export type RealtimeTicketResult =
-	| { mode: "live"; url: string; ticket: string }
+	| {
+			mode: "live";
+			url: string;
+			ticket: string;
+			/** How long the hub keeps a socket open, in ms, so the tab can renew it in time. */
+			lifetime: number;
+	  }
 	/** This host runs no hub. */
 	| { mode: "off" };
 
@@ -69,7 +75,12 @@ export async function handleRealtimeTicket(
 		});
 		return {
 			success: true,
-			data: { mode: "live", url: `${input.basePath}/_emdash/api/realtime`, ticket },
+			data: {
+				mode: "live",
+				url: `${input.basePath}/_emdash/api/realtime`,
+				ticket,
+				lifetime: CONNECTION_LIFETIME_MS,
+			},
 		};
 	} catch (error) {
 		console.error("[realtime] couldn't sign a ticket:", error);

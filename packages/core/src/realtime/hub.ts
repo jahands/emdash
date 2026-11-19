@@ -112,7 +112,12 @@ export type HubFrame =
 	 * Open a new socket, then close this one. Sent once per socket while the hub stays awake,
 	 * near the end of its lifetime. Tabs from before it ignore it.
 	 */
-	| { t: "renew" };
+	| { t: "renew" }
+	/**
+	 * Another socket of the same tab now gets the changes to its topics, so this one can close.
+	 * Every change sent before it reached this socket first. Tabs from before it ignore it.
+	 */
+	| { t: "handoff" };
 
 export interface HubOptions {
 	sockets: HubSockets;
@@ -232,6 +237,14 @@ export class Hub {
 		}
 		const frame: HubFrame = { t: "presence", places, all: true };
 		socket.send(JSON.stringify(frame));
+		const { clientId, userId } = socket.state;
+		if (!clientId) return;
+		const handoff: HubFrame = { t: "handoff" };
+		for (const other of this.#sockets.all()) {
+			if (other !== socket && other.state.clientId === clientId && other.state.userId === userId) {
+				other.send(JSON.stringify(handoff));
+			}
+		}
 	}
 
 	#announce(socket: HubSocket, frame: { topic: string | null; activity: Activity }): void {
