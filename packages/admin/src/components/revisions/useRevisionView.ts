@@ -268,19 +268,29 @@ export function useRevisionView({
 				? previous
 				: undefined,
 	});
-	// The list is read again whenever the draft changes, including saves that keep the draft's id,
-	// so the comparison is too. Its first read runs alongside the list's.
+	// A save that keeps the draft's id leaves the comparison's key as it was, so it's read again
+	// when the list shows the draft's content changed. A new id or a longer list doesn't.
 	const queryClient = useQueryClient();
-	const listUpdatedAt = query.dataUpdatedAt;
-	const seenListUpdateRef = React.useRef(listUpdatedAt);
+	const listedDraft = list?.items.find((item) => item.id === draftRevisionId);
+	const listedLive = list?.items.find((item) => item.id === liveRevisionId);
+	const comparedContent = React.useMemo(
+		() =>
+			listedDraft
+				? `${draftRevisionId}|${liveRevisionId}|${JSON.stringify([listedDraft.data, listedLive?.data])}`
+				: null,
+		[draftRevisionId, liveRevisionId, listedDraft, listedLive],
+	);
+	const seenContentRef = React.useRef(comparedContent);
 	React.useEffect(() => {
-		const seen = seenListUpdateRef.current;
-		seenListUpdateRef.current = listUpdatedAt;
-		if (seen === 0 || seen === listUpdatedAt) return;
+		const seen = seenContentRef.current;
+		seenContentRef.current = comparedContent;
+		if (seen === null || comparedContent === null || seen === comparedContent) return;
+		const ids = `${draftRevisionId}|${liveRevisionId}|`;
+		if (!seen.startsWith(ids)) return;
 		void queryClient.invalidateQueries({
 			queryKey: ["contentCompare", collection, entryId ?? ""],
 		});
-	}, [listUpdatedAt, queryClient, collection, entryId]);
+	}, [comparedContent, draftRevisionId, liveRevisionId, queryClient, collection, entryId]);
 	const compared = comparing ? compareQuery.data : undefined;
 	const liveDiff = React.useMemo(() => {
 		if (!compared) return null;

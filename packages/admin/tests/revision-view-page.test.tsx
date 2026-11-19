@@ -315,6 +315,11 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 		holdNextListRead: () => hold("list"),
 		holdNextEntryRead: () => hold("entry"),
 		holdNextAutosave: () => hold("autosave"),
+		/** Changes the draft's content without giving it a new id, as a co-editing checkpoint does. */
+		checkpointDraft(data: Record<string, unknown>) {
+			const [draft] = revisions;
+			if (draft) draft.data = { ...draft.data, ...data };
+		},
 		restore() {
 			globalThis.fetch = originalFetch;
 		},
@@ -443,6 +448,26 @@ describe("ContentEditPage revision view", () => {
 		const changes = screen.getByRole("article", { name: "Changes since the published version" });
 		await expect.element(changes).toHaveTextContent(/^title$/);
 		expect(compareReads()).toHaveLength(1);
+	});
+
+	it("reads the comparison again for a draft changed under the same id, not for a reread list", async () => {
+		server = createMockServer();
+		const screen = await renderEditPage();
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+		await screen.getByRole("button", { name: "View changes" }).click();
+		const changes = screen.getByRole("article", { name: "Changes since the published version" });
+		await expect.element(changes).toHaveTextContent(/^title$/);
+		const lists = listReads().length;
+
+		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
+		await vi.waitFor(() => expect(listReads().length).toBeGreaterThan(lists));
+		await new Promise((resolve) => setTimeout(resolve, 200));
+		expect(compareReads()).toHaveLength(1);
+
+		server.checkpointDraft({ title: "Checkpointed title" });
+		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
 	});
 
 	it("follows the autosave it sent on the way in to the new current version, dated now", async () => {
