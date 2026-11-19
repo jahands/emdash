@@ -381,6 +381,37 @@ describeEachDialect("version-pinned media caching", (dialect) => {
 			expect(downloads).toBe(1);
 		});
 
+		it.each([
+			["a content type no header can carry", () => ({ contentType: "image/写真", size: 8 })],
+			[
+				"a getter that throws",
+				() => ({
+					get contentType(): string {
+						throw new Error("SDK getter failed");
+					},
+					size: 8,
+				}),
+			],
+		])("downloads for HEAD when the storage describes a file with %s", async (_, details) => {
+			const odd = {
+				...storage,
+				describeStoredFile: async () => details(),
+				download: (key: string) => storage.download(key),
+			} as unknown as Storage;
+			const request = new Request(`http://localhost/_emdash/api/media/file/${KEY}`, {
+				method: "HEAD",
+			});
+
+			const response = await fileGET({
+				params: { key: KEY },
+				locals: { emdash: { storage: odd } },
+				request,
+			} as never);
+
+			expect(response.status).toBe(200);
+			expect(response.headers.get("Content-Type")).toBe("image/png");
+		});
+
 		it("streams a pinned original too large to verify, revalidating", async () => {
 			const large = new Uint8Array(MAX_VERIFIED_MEDIA_BYTES + 1).fill(7);
 			await storage.upload({ key: KEY, body: large, contentType: "image/png" });

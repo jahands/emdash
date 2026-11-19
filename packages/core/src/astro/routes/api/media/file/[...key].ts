@@ -25,6 +25,8 @@ import { isRefusedStorageKey } from "../../../../../transfer/staging/keys.js";
 export const prerender = false;
 
 const MAX_KEY_DECODES = 3;
+/** What a response header can carry: no line breaks or control characters, and nothing past Latin-1. */
+const HEADER_VALUE = /^[\t\x20-\x7e\x80-\xff]+$/;
 
 /**
  * Whether a key is, or percent-decodes to, a key this route must refuse.
@@ -75,23 +77,23 @@ async function describeStoredFile(
 	storage: Storage,
 	key: string,
 ): Promise<StoredFileInfo | null | undefined> {
-	if (typeof storage.describeStoredFile !== "function") return undefined;
-	let details: unknown;
+	// Everything a custom adapter hands back is read in here, getters included.
 	try {
-		details = await storage.describeStoredFile(key);
+		if (typeof storage.describeStoredFile !== "function") return undefined;
+		const details: unknown = await storage.describeStoredFile(key);
+		if (details === null) return null;
+		if (typeof details !== "object") return undefined;
+		const contentType = "contentType" in details ? details.contentType : undefined;
+		const size = "size" in details ? details.size : undefined;
+		const lastModified = "lastModified" in details ? details.lastModified : undefined;
+		if (typeof contentType !== "string" || !HEADER_VALUE.test(contentType)) return undefined;
+		if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return undefined;
+		if (lastModified === undefined) return { contentType, size };
+		if (!(lastModified instanceof Date) || Number.isNaN(lastModified.getTime())) return undefined;
+		return { contentType, size, lastModified };
 	} catch {
 		return undefined;
 	}
-	if (details === null) return null;
-	if (typeof details !== "object") return undefined;
-	const contentType = "contentType" in details ? details.contentType : undefined;
-	const size = "size" in details ? details.size : undefined;
-	const lastModified = "lastModified" in details ? details.lastModified : undefined;
-	if (typeof contentType !== "string" || !contentType) return undefined;
-	if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return undefined;
-	if (lastModified === undefined) return { contentType, size };
-	if (!(lastModified instanceof Date) || Number.isNaN(lastModified.getTime())) return undefined;
-	return { contentType, size, lastModified };
 }
 
 export const GET: APIRoute = async ({ params, locals, request, cache }) => {
