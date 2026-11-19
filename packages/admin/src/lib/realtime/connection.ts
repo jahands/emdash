@@ -41,7 +41,10 @@ export interface LivePlace {
 
 export interface LiveConnectionEvents {
 	changes(changes: LiveChange[]): void;
-	/** The socket opened again after a gap since `since`, in ms, in which changes may have been missed. */
+	/**
+	 * The hub has the tab's topics again after a gap, as of `since`, in ms. A read that started
+	 * before then may have missed a change.
+	 */
 	resync(since: number): void;
 	/**
 	 * Rosters under the tab's topics. With `all`, every place that has anyone, so a place left
@@ -88,9 +91,8 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	let stopped = false;
 	/** Closed while the tab was hidden; it reopens when the tab shows again. */
 	let paused = false;
-	let everOpened = false;
-	/** When the last open socket closed. */
-	let closedAt = 0;
+	/** An open socket closed, so changes may have been missed until the hub has the topics again. */
+	let missed = false;
 	let failures = 0;
 	let attempt = 0;
 	let retryTimer: number | undefined;
@@ -145,9 +147,6 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		if (old) {
 			retired.add(old);
 			old.close(1000, "Renewed");
-		} else {
-			// The old socket closed before the new one took over.
-			events.resync(closedAt);
 		}
 	}
 
@@ -165,9 +164,6 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			pingTimer = window.setInterval(() => {
 				if (ws.readyState === WebSocket.OPEN) ws.send("ping");
 			}, PING_MS);
-			if (renewal) return;
-			if (everOpened) events.resync(closedAt);
-			everOpened = true;
 		});
 		ws.addEventListener("message", (event) => {
 			if (typeof event.data !== "string" || event.data === "pong") return;
@@ -175,8 +171,12 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			const frame = readFrame(event.data);
 			if (frame?.t === "changes" && frame.changes.length > 0) events.changes(frame.changes);
 			else if (frame?.t === "presence") {
-				// The hub answers a socket's topics with every roster under them.
+				// The hub answers a socket's topics with every roster under them, once they're in effect.
 				if (frame.all && ws === renewing) promote(ws);
+				if (frame.all && ws === socket && missed) {
+					missed = false;
+					events.resync(Date.now());
+				}
 				events.presence(frame.places, frame.all);
 			} else if (frame?.t === "renew" && ws === socket) void renew();
 		});
@@ -190,7 +190,7 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			}
 			if (socket === ws) socket = null;
 			if (opened) {
-				closedAt = Date.now();
+				missed = true;
 				// Rosters stop reaching a closed socket, so what the tab knows would go stale.
 				events.presence([], true);
 			}

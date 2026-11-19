@@ -356,7 +356,6 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			}
 		},
 		resync(since) {
-			// React Query's own focus and reconnect refetches have often caught up already.
 			mark({ arrival: "gap", since }, () => THROTTLE_MS);
 		},
 		presence(places, all) {
@@ -481,8 +480,10 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			dataFetchStarted.delete(event.query.queryHash);
 		} else if (event.type === "updated") {
 			const hash = event.query.queryHash;
-			if (event.action.type === "fetch") fetchStarted.set(hash, Date.now());
-			else if (event.action.type === "success" && !event.action.manual) {
+			// Loading another page leaves the pages already loaded as old as they were.
+			if (event.action.type === "fetch" && !event.action.meta?.fetchMore) {
+				fetchStarted.set(hash, Date.now());
+			} else if (event.action.type === "success" && !event.action.manual) {
 				dataFetchStarted.set(hash, fetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY);
 			}
 			// Outside the cache's notification, which is still dispatching the settled fetch.

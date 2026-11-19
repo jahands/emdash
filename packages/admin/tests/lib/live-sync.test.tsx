@@ -1,4 +1,9 @@
-import { QueryClientProvider, useQuery, type QueryClient } from "@tanstack/react-query";
+import {
+	QueryClientProvider,
+	useInfiniteQuery,
+	useQuery,
+	type QueryClient,
+} from "@tanstack/react-query";
 import * as React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { render } from "vitest-browser-react";
@@ -140,18 +145,23 @@ describe("LiveSyncProvider", () => {
 		expect(reads.posts).toBe(3);
 	});
 
-	it("reconnects after the socket drops, and refetches what it may have missed", async () => {
+	it("reconnects after the socket drops, and refetches what it may have missed once the hub has its topics", async () => {
 		const socket = await connect();
 
 		socket.drop(1006);
 
 		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2), { timeout: 3000 });
-		FakeSocket.instances[1]!.open();
+		const next = FakeSocket.instances[1]!;
+		next.open();
+		expect(next.topics()).toEqual(["content/posts", "menus"]);
+		await new Promise((resolve) => setTimeout(resolve, 300));
+		expect(reads).toEqual({ menus: 1, posts: 1 });
+
+		next.presence([], true);
 		await vi.waitFor(() => expect(reads).toEqual({ menus: 2, posts: 2 }));
-		expect(FakeSocket.instances[1]!.topics()).toEqual(["content/posts", "menus"]);
 	});
 
-	it("doesn't refetch on reconnect what the tab already refetched since the socket dropped", async () => {
+	it("refetches on reconnect what the tab read while the socket was down", async () => {
 		const socket = await connect();
 
 		socket.drop(1006);
@@ -161,9 +171,8 @@ describe("LiveSyncProvider", () => {
 
 		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2), { timeout: 3000 });
 		FakeSocket.instances[1]!.open();
-		await vi.waitFor(() => expect(reads.posts).toBe(2));
-		await new Promise((resolve) => setTimeout(resolve, 300));
-		expect(reads.menus).toBe(2);
+		FakeSocket.instances[1]!.presence([], true);
+		await vi.waitFor(() => expect(reads).toEqual({ menus: 3, posts: 2 }));
 	});
 
 	it("moves to a new socket when the hub asks it to renew, without refetching", async () => {
@@ -184,6 +193,43 @@ describe("LiveSyncProvider", () => {
 
 		next.change("menus");
 		await vi.waitFor(() => expect(reads.menus).toBe(2));
+	});
+
+	it("refetches the pages it has when a change arrives before it loads another one", async () => {
+		const firstPageReads: number[] = [];
+		let loadMore = () => {};
+		function Inbox() {
+			const query = useInfiniteQuery({
+				queryKey: ["inbox"],
+				queryFn: ({ pageParam }) => {
+					if (pageParam === 0) firstPageReads.push(Date.now());
+					return Promise.resolve({ page: pageParam });
+				},
+				initialPageParam: 0,
+				getNextPageParam: (last) => last.page + 1,
+				meta: { live: ["comments"] },
+			});
+			loadMore = () => void query.fetchNextPage();
+			return null;
+		}
+		await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Inbox />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["comments"]));
+		socket.change("comments");
+		await vi.waitFor(() => expect(firstPageReads).toHaveLength(2));
+
+		socket.change("comments");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		loadMore();
+		await vi.waitFor(() => expect(firstPageReads).toHaveLength(3), { timeout: 4000 });
 	});
 
 	it("opens no socket when the host runs no hub", async () => {
