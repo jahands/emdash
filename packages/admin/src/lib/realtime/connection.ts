@@ -104,12 +104,21 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	let lifetime = DEFAULT_LIFETIME_MS;
 	/** When each socket opened. */
 	const openedAt = new WeakMap<WebSocket, number>();
-	/** Sockets whose topics the hub has answered. */
-	const acked = new WeakSet<WebSocket>();
+	/**
+	 * The topics version the hub last answered on each socket, or "unversioned" for a hub that
+	 * doesn't echo versions.
+	 */
+	const answered = new WeakMap<WebSocket, number | "unversioned">();
 	/** Each topics frame carries the next version, which the hub echoes in its replies. */
 	let topicsVersion = 0;
 	/** The version of the last topics frame sent on each socket. */
 	const sentVersion = new WeakMap<WebSocket, number>();
+
+	/** Whether the hub has the last topics the tab sent on `ws` in effect. */
+	function caughtUp(ws: WebSocket): boolean {
+		const version = answered.get(ws);
+		return version === "unversioned" || (version !== undefined && version === sentVersion.get(ws));
+	}
 	let renewTimer: number | undefined;
 	let renewAt = Number.POSITIVE_INFINITY;
 	let handoffTimer: number | undefined;
@@ -198,7 +207,7 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 		}
 		cancelRenewal();
 		renewAtOrBefore(endOf(ws) - RENEW_BEFORE_MS * (0.5 + Math.random()));
-		if (missed && acked.has(ws)) {
+		if (missed && caughtUp(ws)) {
 			missed = false;
 			events.resync(Date.now());
 		}
@@ -229,7 +238,7 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			if (frame?.t === "changes" && frame.changes.length > 0) events.changes(frame.changes);
 			else if (frame?.t === "presence") {
 				// The hub answers a socket's topics with every roster under them, once they're in effect.
-				if (frame.all) acked.add(ws);
+				if (frame.all) answered.set(ws, frame.v ?? "unversioned");
 				if (frame.all && ws === renewing) {
 					window.clearTimeout(handoffTimer);
 					handoffTimer = window.setTimeout(() => {
@@ -239,7 +248,7 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 						promote(ws);
 					}, HANDOFF_WAIT_MS);
 				}
-				if (frame.all && ws === socket && missed) {
+				if (frame.all && ws === socket && missed && caughtUp(ws)) {
 					missed = false;
 					events.resync(Date.now());
 				}

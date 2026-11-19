@@ -84,4 +84,19 @@ describe("openLiveConnection", () => {
 		await vi.waitFor(() => expect(old.readyState).toBe(3), { timeout: 7000 });
 		expect(events.resync).toHaveBeenCalledOnce();
 	});
+
+	it("ends the gap after a reconnect only when the hub answers the topics the tab sent last", async () => {
+		const old = await connected(["menus"]);
+		old.drop(1006);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2), { timeout: 3000 });
+		const next = FakeSocket.instances[1]!;
+		next.open();
+		const first = next.topicsVersion();
+		connection!.setTopics(["menus", "widgets"]);
+
+		next.push({ t: "presence", places: [], all: true, v: first });
+		expect(events.resync).not.toHaveBeenCalled();
+		next.ack();
+		expect(events.resync).toHaveBeenCalledOnce();
+	});
 });
