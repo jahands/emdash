@@ -34,9 +34,16 @@ export function invalidateRevalidatingCache<T>(cache: RevalidatingCache<T>): voi
 	invalidateSingleFlightCache(cache.refresh);
 }
 
-/** Install a value read elsewhere, unless the cache already holds one. */
-export function primeRevalidatingCache<T>(cache: RevalidatingCache<T>, value: T): void {
-	if (cache.snapshot) return;
+/**
+ * Install a value read elsewhere, unless the cache already holds one or has been invalidated
+ * since `generation` was taken, before the read.
+ */
+export function primeRevalidatingCache<T>(
+	cache: RevalidatingCache<T>,
+	value: T,
+	generation: number,
+): void {
+	if (cache.snapshot || cache.generation !== generation) return;
 	cache.snapshot = { value };
 	cache.expiresAt = Date.now() + REVALIDATING_CACHE_TTL_MS;
 }

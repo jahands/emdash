@@ -171,9 +171,20 @@ export function invalidateTaxonomyDefsCache(): void {
 	invalidateTaxonomyObjectCache();
 }
 
-/** Cache every locale's definitions, read by a cold start with its other reads. @internal */
-export function primeTaxonomyDefs(rows: readonly Parameters<typeof rowToTaxonomyDef>[0][]): void {
-	primeRevalidatingCache(defsCache, rows.map(rowToTaxonomyDef));
+/** Take before reading definitions to prime the cache with. @internal */
+export function taxonomyDefsGeneration(): number {
+	return defsCache.generation;
+}
+
+/**
+ * Cache every locale's definitions, read by a cold start with its other reads, unless the cache
+ * was invalidated after `generation` was taken. @internal
+ */
+export function primeTaxonomyDefs(
+	rows: readonly Parameters<typeof rowToTaxonomyDef>[0][],
+	generation: number,
+): void {
+	primeRevalidatingCache(defsCache, rows.map(rowToTaxonomyDef), generation);
 }
 
 /** @internal Clear the isolate snapshot between test databases. */

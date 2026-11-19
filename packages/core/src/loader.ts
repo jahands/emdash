@@ -427,11 +427,20 @@ async function getTaxonomyNames(db: Kysely<Database>, collection: string): Promi
 	return names.get(collection) ?? new Set();
 }
 
-/** Cache mappings built from definitions a cold start read with its other reads. @internal */
+/** Take before reading definitions to prime the mappings with. @internal */
+export function taxonomyNamesGeneration(): number {
+	return taxonomyNamesCache.generation;
+}
+
+/**
+ * Cache mappings built from definitions a cold start read with its other reads, unless they were
+ * discarded after `generation` was taken. @internal
+ */
 export function primeTaxonomyNames(
 	defs: readonly { name: string; collections: string | null }[],
+	generation: number,
 ): void {
-	primeRevalidatingCache(taxonomyNamesCache, taxonomyNamesOf(defs));
+	primeRevalidatingCache(taxonomyNamesCache, taxonomyNamesOf(defs), generation);
 }
 
 /** Discard mappings after a local taxonomy-definition write. @internal */

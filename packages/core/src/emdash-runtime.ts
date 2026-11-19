@@ -168,7 +168,7 @@ import { primeRegisteredCollections } from "./schema/collection-slugs-cache.js";
 import { isStoragelessField, isStoragelessFieldRow } from "./schema/types.js";
 import type { CollectionWithFields } from "./schema/types.js";
 import { AUTO_SEED_COMPLETE_OPTION } from "./seed/ownership.js";
-import { primeTaxonomyDefs } from "./taxonomies/index.js";
+import { primeTaxonomyDefs, taxonomyDefsGeneration } from "./taxonomies/index.js";
 import { isMissingTableError } from "./utils/db-errors.js";
 import { hashString } from "./utils/hash.js";
 import { createInitLock, type InitLock, initWithLock } from "./utils/init-lock.js";
@@ -293,7 +293,7 @@ import {
 import { validateEncryptionKeyAtStartup } from "./config/secrets.js";
 import { OptionsRepository } from "./database/repositories/options.js";
 import type { Database } from "./database/types.js";
-import { getDb, primeTaxonomyNames } from "./loader.js";
+import { getDb, primeTaxonomyNames, taxonomyNamesGeneration } from "./loader.js";
 import { isRecord } from "./plugin-utils.js";
 import { CronExecutor, setCronTasksEnabled, type InvokeCronHookFn } from "./plugins/cron.js";
 import { definePlugin } from "./plugins/define-plugin.js";
@@ -2662,6 +2662,8 @@ export class EmDashRuntime {
 		// current saw a fully migrated schema; otherwise they run again once the
 		// policy has finished.
 		const settingsGeneration = siteSettingsGeneration();
+		const defsGeneration = taxonomyDefsGeneration();
+		const namesGeneration = taxonomyNamesGeneration();
 		let folded: ColdStartState | undefined;
 		let migrationsCurrent = false;
 		const foldInto = (state: ColdStartState | null | undefined) => {
@@ -2717,8 +2719,8 @@ export class EmDashRuntime {
 		const reads = coldStart ? toColdStartReads(coldStart) : await runColdStartReads(readDb);
 		if (coldStart && ownsConfiguredDb) {
 			primeBylineFieldDefs(coldStart.bylineFieldsVersion, coldStart.bylineFields);
-			primeTaxonomyDefs(coldStart.taxonomyDefs);
-			primeTaxonomyNames(coldStart.taxonomyDefs);
+			primeTaxonomyDefs(coldStart.taxonomyDefs, defsGeneration);
+			primeTaxonomyNames(coldStart.taxonomyDefs, namesGeneration);
 			try {
 				await primeSiteSettings(coldStart.prefixedOptions, db, settingsGeneration);
 			} catch {
