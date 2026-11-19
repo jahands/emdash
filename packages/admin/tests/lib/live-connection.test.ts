@@ -142,4 +142,23 @@ describe("openLiveConnection", () => {
 			true,
 		);
 	});
+
+	it("takes over at once and shows its rosters when the old socket dropped before it opened", async () => {
+		const old = await connected(["content/posts"]);
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		old.push({ t: "renew" });
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
+		const next = FakeSocket.instances[1]!;
+		old.drop(1006);
+
+		next.open();
+		const ana = { userId: "ana", name: "Ana", clientId: "tab-ana", activity: "editing" as const };
+		next.ack([{ topic: "content/posts/01A", people: [ana] }]);
+
+		expect(events.presence).toHaveBeenLastCalledWith(
+			[{ topic: "content/posts/01A", people: [ana] }],
+			true,
+		);
+		expect(events.resync).toHaveBeenCalledOnce();
+	});
 });

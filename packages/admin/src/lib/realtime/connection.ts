@@ -245,6 +245,9 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			if (!renewal) renewAtOrBefore(endOf(ws) - RENEW_BEFORE_MS * (0.5 + Math.random()));
 			sendTopics(ws);
 			if (place) sendPlace(ws);
+			// The old socket is already gone, so there's nothing to hand off: this one takes over now,
+			// and the gap ends once the hub answers its topics.
+			if (renewal && ws === renewing && !socket) promote(ws);
 			pingTimer = window.setInterval(() => {
 				if (ws.readyState === WebSocket.OPEN) ws.send("ping");
 			}, PING_MS);
