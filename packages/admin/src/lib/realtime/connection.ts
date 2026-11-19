@@ -320,7 +320,16 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 				window.clearTimeout(retryTimer);
 				const ws = socket;
 				socket = null;
-				ws?.close(1000, "The tab is hidden");
+				if (ws) {
+					// The close event can come after the tab shows again and a new socket has caught up,
+					// so the gap starts now and that late close changes nothing.
+					retired.add(ws);
+					if (openedAt.has(ws)) {
+						missed = true;
+						events.presence([], true);
+					}
+					ws.close(1000, "The tab is hidden");
+				}
 				cancelRenewal();
 				retireRenewing();
 			}, HIDDEN_GRACE_MS);

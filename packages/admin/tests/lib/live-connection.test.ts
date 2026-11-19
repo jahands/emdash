@@ -99,4 +99,29 @@ describe("openLiveConnection", () => {
 		next.ack();
 		expect(events.resync).toHaveBeenCalledOnce();
 	});
+
+	it("starts the gap when it closes a hidden tab's socket, whenever that close arrives", async () => {
+		vi.stubGlobal("WebSocket", SlowClosingSocket);
+		vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval"] });
+		const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+		const old = await connected(["menus"]);
+		document.dispatchEvent(new Event("visibilitychange"));
+		await vi.advanceTimersByTimeAsync(5 * 60_000);
+		expect((old as SlowClosingSocket).closeRequested).toBe(true);
+
+		visibility.mockReturnValue("visible");
+		document.dispatchEvent(new Event("visibilitychange"));
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
+		const next = FakeSocket.instances[1]!;
+		next.open();
+		next.ack();
+		expect(events.resync).toHaveBeenCalledOnce();
+
+		events.presence.mockReset();
+		old.drop(1000);
+		expect(events.presence).not.toHaveBeenCalled();
+		next.change("menus");
+		expect(events.changes).toHaveBeenCalledOnce();
+		expect(events.resync).toHaveBeenCalledOnce();
+	});
 });
