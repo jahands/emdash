@@ -10,6 +10,7 @@
  */
 
 import {
+	hashKey,
 	matchQuery,
 	useQueryClient,
 	type Query,
@@ -63,6 +64,8 @@ interface LiveRegistry {
 	readonly registrations: Set<LiveRegistration>;
 	add(registration: LiveRegistration): () => void;
 	onChange: (() => void) | null;
+	/** Told when a registration goes, so nothing queued for it runs after. */
+	onRemove: ((registration: LiveRegistration) => void) | null;
 	/** Where mounted screens say the tab is. The last one mounted wins. */
 	readonly places: LivePlace[];
 	announce(place: LivePlace): () => void;
@@ -103,10 +106,12 @@ function createRegistry(): LiveRegistry {
 			registry.onChange?.();
 			return () => {
 				registry.registrations.delete(registration);
+				registry.onRemove?.(registration);
 				registry.onChange?.();
 			};
 		},
 		onChange: null,
+		onRemove: null,
 		places: [],
 		announce(place) {
 			registry.places.push(place);
@@ -246,18 +251,20 @@ export function useLiveQueries({
 	const queryKeysRef = React.useRef(queryKeys);
 	queryKeysRef.current = queryKeys;
 	const topicsKey = topics.join("\n");
+	const queryKeysKey = hashKey(queryKeys);
 
+	// Registered again for other queries, such as another entry's, so a change to the previous ones
+	// never reaches these.
 	React.useEffect(() => {
 		if (!registry) return;
+		setMissed("none");
 		return registry.add({
 			topics: topicsKey ? topicsKey.split("\n") : NO_TOPICS,
-			get queryKeys() {
-				return queryKeysRef.current;
-			},
+			queryKeys: queryKeysRef.current,
 			held: () => dirtyRef.current,
 			arrived: (arrival) => setMissed((previous) => (previous === "change" ? previous : arrival)),
 		});
-	}, [registry, topicsKey]);
+	}, [registry, topicsKey, queryKeysKey]);
 
 	const refetch = React.useCallback(
 		() =>
@@ -494,6 +501,10 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		}
 	});
 	registry.onChange = scheduleTopics;
+	registry.onRemove = (registration) => {
+		pendingRegistrations.delete(registration);
+		lastRun.delete(registration);
+	};
 	sendTopics();
 
 	// A screen that swaps its activity remounts its announcement; one frame goes out once it settles.
@@ -509,6 +520,7 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	return () => {
 		unsubscribe();
 		registry.onChange = null;
+		registry.onRemove = null;
 		registry.onPlace = null;
 		window.clearTimeout(flushTimer);
 		window.clearTimeout(topicsTimer);

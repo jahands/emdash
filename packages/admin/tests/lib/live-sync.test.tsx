@@ -168,6 +168,47 @@ describe("LiveSyncProvider", () => {
 		expect(Date.now() - read).toBeGreaterThanOrEqual(1900);
 	});
 
+	it("drops a change queued for one entry when the screen moves on to another", async () => {
+		const entryReads: string[] = [];
+		let show: (id: string, dirty: boolean) => void = () => {};
+		function Entry() {
+			const [state, setState] = React.useState({ id: "a", dirty: false });
+			show = (id, dirty) => setState({ id, dirty });
+			useQuery({
+				queryKey: ["entry", state.id],
+				queryFn: () => {
+					entryReads.push(state.id);
+					return Promise.resolve(state.id);
+				},
+			});
+			const live = useLiveQueries({
+				topics: [`content/posts/${state.id}`],
+				queryKeys: [["entry", state.id]],
+				dirty: state.dirty,
+			});
+			return <output>{live.changedElsewhere ? "Changed elsewhere" : "Current"}</output>;
+		}
+		const screen = await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Entry />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["content/posts/a"]));
+		socket.change("content/posts/a", { op: "update" });
+		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a"]));
+		socket.change("content/posts/a", { op: "update" });
+
+		show("b", true);
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+
+		expect(screen.container.textContent).toBe("Current");
+	});
+
 	it("refetches a list less often for its entries' updates than for entries added or removed", async () => {
 		const socket = await connect();
 
