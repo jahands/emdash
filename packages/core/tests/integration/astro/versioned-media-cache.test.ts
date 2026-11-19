@@ -384,6 +384,20 @@ describeEachDialect("version-pinned media caching", (dialect) => {
 		it.each([
 			["a content type no header can carry", () => ({ contentType: "image/写真", size: 8 })],
 			[
+				"a date whose methods throw",
+				() => {
+					const lastModified = new Date("2026-01-01T00:00:00Z");
+					lastModified.toUTCString = () => {
+						throw new Error("exotic date");
+					};
+					return { contentType: "image/png", size: 8, lastModified };
+				},
+			],
+			[
+				"a date-like object",
+				() => ({ contentType: "image/png", size: 8, lastModified: { getTime: () => 0 } }),
+			],
+			[
 				"a getter that throws",
 				() => ({
 					get contentType(): string {

@@ -89,8 +89,10 @@ async function describeStoredFile(
 		if (typeof contentType !== "string" || !HEADER_VALUE.test(contentType)) return undefined;
 		if (typeof size !== "number" || !Number.isSafeInteger(size) || size < 0) return undefined;
 		if (lastModified === undefined) return { contentType, size };
-		if (!(lastModified instanceof Date) || Number.isNaN(lastModified.getTime())) return undefined;
-		return { contentType, size, lastModified };
+		// Throws for anything that isn't a real Date, whatever it overrides.
+		const time: number = Date.prototype.getTime.call(lastModified);
+		if (Number.isNaN(time)) return undefined;
+		return { contentType, size, lastModified: new Date(time) };
 	} catch {
 		return undefined;
 	}
