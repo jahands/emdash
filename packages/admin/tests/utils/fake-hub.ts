@@ -61,6 +61,20 @@ export class FakeSocket extends EventTarget {
 		return undefined;
 	}
 
+	/** The version the last topics frame carried. */
+	topicsVersion(): number | undefined {
+		for (const data of this.sent.toReversed()) {
+			const frame = JSON.parse(data) as { t: string; v?: number };
+			if (frame.t === "topics") return frame.v;
+		}
+		return undefined;
+	}
+
+	/** Answers the last topics frame with the full roster, as the hub does once they're in effect. */
+	ack(places: Array<{ topic: string; people: PresenceEntry[] }> = []) {
+		this.push({ t: "presence", places, all: true, v: this.topicsVersion() });
+	}
+
 	/** The topics the last frame subscribed to. */
 	topics(): string[] {
 		for (const data of this.sent.toReversed()) {

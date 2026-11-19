@@ -98,7 +98,8 @@ export interface HubSockets {
 }
 
 export type ClientFrame =
-	| { t: "topics"; topics: string[] }
+	/** `v`, which grows with each frame, is echoed in the replies to it. Tabs from before it omit it. */
+	| { t: "topics"; topics: string[]; v?: number }
 	/** A null topic says the tab is nowhere the hub shows. */
 	| { t: "here"; topic: string | null; activity?: Activity };
 export type HubFrame =
@@ -107,17 +108,18 @@ export type HubFrame =
 	 * The rosters of the topics at or under the socket's subscriptions that it may see. With
 	 * `all`, the list is every place that has anyone, and a place it leaves out is empty.
 	 */
-	| { t: "presence"; places: PresencePlace[]; all?: true }
+	| { t: "presence"; places: PresencePlace[]; all?: true; v?: number }
 	/**
 	 * Open a new socket, then close this one. Sent once per socket while the hub stays awake,
 	 * near the end of its lifetime. Tabs from before it ignore it.
 	 */
 	| { t: "renew" }
 	/**
-	 * Another socket of the same tab now gets the changes to its topics, so this one can close.
-	 * Every change sent before it reached this socket first. Tabs from before it ignore it.
+	 * Another socket of the same tab now gets the changes to the topics it sent as version `v`, so
+	 * this one can close. Every change sent before it reached this socket first. Tabs from before it
+	 * ignore it.
 	 */
-	| { t: "handoff" };
+	| { t: "handoff"; v?: number };
 
 export interface HubOptions {
 	sockets: HubSockets;
@@ -177,7 +179,7 @@ export class Hub {
 			this.#close(socket, MESSAGE_TOO_BIG, "The message is too big");
 		} else if (this.#live(socket, now)) {
 			const frame = readClientFrame(message);
-			if (frame?.t === "topics") this.#subscribe(socket, frame.topics, now);
+			if (frame?.t === "topics") this.#subscribe(socket, frame.topics, now, frame.v);
 			else if (frame?.t === "here") this.#announce(socket, frame);
 		}
 		this.#sendRosters(now);
@@ -225,7 +227,7 @@ export class Hub {
 		this.#sendRosters(this.#now());
 	}
 
-	#subscribe(socket: HubSocket, requested: string[], now: number): void {
+	#subscribe(socket: HubSocket, requested: string[], now: number, version?: number): void {
 		const topics = [...new Set(requested)]
 			.filter((topic) => maySubscribe(socket.state.role, topic, socket.state.channels))
 			.slice(0, MAX_HUB_TOPICS);
@@ -235,11 +237,12 @@ export class Hub {
 		for (const [topic, people] of this.#rosters(now, (place) => sees(socket.state, place))) {
 			places.push({ topic, people });
 		}
-		const frame: HubFrame = { t: "presence", places, all: true };
+		const echo = version === undefined ? {} : { v: version };
+		const frame: HubFrame = { t: "presence", places, all: true, ...echo };
 		socket.send(JSON.stringify(frame));
 		const { clientId, userId } = socket.state;
 		if (!clientId) return;
-		const handoff: HubFrame = { t: "handoff" };
+		const handoff: HubFrame = { t: "handoff", ...echo };
 		for (const other of this.#sockets.all()) {
 			if (other !== socket && other.state.clientId === clientId && other.state.userId === userId) {
 				other.send(JSON.stringify(handoff));
@@ -391,7 +394,7 @@ function isPlace(value: unknown): value is Place {
 function readClientFrame(
 	message: string,
 ):
-	| { t: "topics"; topics: string[] }
+	| { t: "topics"; topics: string[]; v?: number }
 	| { t: "here"; topic: string | null; activity: Activity }
 	| null {
 	let frame: unknown;
@@ -403,7 +406,10 @@ function readClientFrame(
 	if (typeof frame !== "object" || frame === null || !("t" in frame)) return null;
 	if (frame.t === "topics" && "topics" in frame && Array.isArray(frame.topics)) {
 		const topics = frame.topics.filter((topic): topic is string => typeof topic === "string");
-		return { t: "topics", topics };
+		const v = "v" in frame ? frame.v : undefined;
+		return typeof v === "number" && Number.isSafeInteger(v) && v >= 0
+			? { t: "topics", topics, v }
+			: { t: "topics", topics };
 	}
 	if (frame.t === "here" && "topic" in frame) {
 		const { topic } = frame;

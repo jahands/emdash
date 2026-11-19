@@ -220,7 +220,7 @@ describe("LiveSyncProvider", () => {
 		// Sent to the old socket before the handoff, so the new one never got it.
 		socket.change("menus");
 		await vi.waitFor(() => expect(reads.menus).toBe(2));
-		socket.push({ t: "handoff" });
+		socket.push({ t: "handoff", v: next.topicsVersion() });
 		expect(socket.readyState).toBe(3);
 		await new Promise((resolve) => setTimeout(resolve, 300));
 		expect(reads).toEqual({ menus: 2, posts: 1 });

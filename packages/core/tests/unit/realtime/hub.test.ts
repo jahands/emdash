@@ -277,6 +277,21 @@ describe("Hub", () => {
 			expect(other.frames.filter((frame) => frame.t === "handoff")).toEqual([]);
 		});
 
+		it("echoes a topics frame's version in its roster and in the handoff, and none for a tab that sends none", () => {
+			const { hub, connect } = setup();
+			const old = connect({ clientId: "tab-a" }, ["menus"]);
+			const next = connect({ clientId: "tab-a" });
+
+			hub.receive(next, JSON.stringify({ t: "topics", topics: ["menus"], v: 7 }));
+			hub.receive(next, JSON.stringify({ t: "topics", topics: ["menus"] }));
+
+			expect(next.presence().map((frame) => frame.v)).toEqual([7, undefined]);
+			expect(old.frames.filter((frame) => frame.t === "handoff")).toEqual([
+				{ t: "handoff", v: 7 },
+				{ t: "handoff" },
+			]);
+		});
+
 		it("asks a socket near the end of its lifetime to renew, once", () => {
 			const { hub, connect, advance } = setup();
 			const old = connect({}, ["menus"]);

@@ -106,6 +106,10 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	const openedAt = new WeakMap<WebSocket, number>();
 	/** Sockets whose topics the hub has answered. */
 	const acked = new WeakSet<WebSocket>();
+	/** Each topics frame carries the next version, which the hub echoes in its replies. */
+	let topicsVersion = 0;
+	/** The version of the last topics frame sent on each socket. */
+	const sentVersion = new WeakMap<WebSocket, number>();
 	let renewTimer: number | undefined;
 	let renewAt = Number.POSITIVE_INFINITY;
 	let handoffTimer: number | undefined;
@@ -115,7 +119,10 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	let hiddenTimer: number | undefined;
 
 	function sendTopics(ws: WebSocket | null): void {
-		if (ws?.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ t: "topics", topics }));
+		if (ws?.readyState !== WebSocket.OPEN) return;
+		const v = ++topicsVersion;
+		sentVersion.set(ws, v);
+		ws.send(JSON.stringify({ t: "topics", topics, v }));
 	}
 
 	function sendPlace(ws: WebSocket | null): void {
@@ -238,7 +245,15 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 				}
 				events.presence(frame.places, frame.all);
 			} else if (frame?.t === "handoff" && ws === socket) {
-				if (renewing?.readyState === WebSocket.OPEN) promote(renewing);
+				// A handoff for topics the replacement has since replaced doesn't cover them; one without
+				// a version, from a hub between the two, leaves the move to the fallback below.
+				if (
+					renewing?.readyState === WebSocket.OPEN &&
+					frame.v !== undefined &&
+					frame.v === sentVersion.get(renewing)
+				) {
+					promote(renewing);
+				}
 			} else if (frame?.t === "renew" && ws === socket) {
 				// Spread out over what is left, as the hub asks every socket near its end at once.
 				const left = Math.max(0, endOf(ws) - RENEW_MARGIN_MS - Date.now());
@@ -388,9 +403,9 @@ function socketUrl({ url, ticket }: Target): string {
 
 type Frame =
 	| { t: "changes"; changes: LiveChange[] }
-	| { t: "presence"; places: LivePresencePlace[]; all: boolean }
+	| { t: "presence"; places: LivePresencePlace[]; all: boolean; v?: number }
 	| { t: "renew" }
-	| { t: "handoff" };
+	| { t: "handoff"; v?: number };
 
 function readFrame(text: string): Frame | null {
 	let frame: unknown;
@@ -414,10 +429,10 @@ function readFrame(text: string): Frame | null {
 				Array.isArray(entry.people) &&
 				entry.people.every(isPresenceEntry),
 		);
-		return { t: "presence", places, all: frame.all === true };
+		return { t: "presence", places, all: frame.all === true, ...versionOf(frame) };
 	}
 	if (frame.t === "renew") return { t: "renew" };
-	if (frame.t === "handoff") return { t: "handoff" };
+	if (frame.t === "handoff") return { t: "handoff", ...versionOf(frame) };
 	return null;
 }
 
@@ -433,4 +448,8 @@ function isPresenceEntry(value: unknown): value is LivePresenceEntry {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
+}
+
+function versionOf(frame: Record<string, unknown>): { v?: number } {
+	return typeof frame.v === "number" && Number.isSafeInteger(frame.v) ? { v: frame.v } : {};
 }
