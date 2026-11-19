@@ -287,13 +287,13 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	const cache = queryClient.getQueryCache();
 	const pendingQueries = new Map<string, Pending>();
 	const pendingRegistrations = new Map<LiveRegistration, Pending>();
-	/** Queries a change reached mid-fetch, refetched once that fetch settles. */
-	const trailing = new Map<string, Arrival>();
+	/** Queries a change reached mid-fetch, queued again once that fetch settles. */
+	const trailing = new Map<string, Pending>();
 	/** When each query's current fetch started, and when the fetch that gave its data did. */
 	const fetchStarted = new Map<string, number>();
 	const dataFetchStarted = new Map<string, number>();
-	/** When each query, by hash, or registration last refetched or was told for a live change. */
-	const lastRun = new Map<string | LiveRegistration, number>();
+	/** When each registration last refetched or was told for a live change. */
+	const lastRun = new Map<LiveRegistration, number>();
 	let flushTimer: number | undefined;
 	let flushAt = Number.POSITIVE_INFINITY;
 	let topicsTimer: number | undefined;
@@ -329,7 +329,9 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	};
 
 	const dueAt = (key: string | LiveRegistration, pending: Pending) =>
-		(lastRun.get(key) ?? Number.NEGATIVE_INFINITY) + pending.throttle;
+		// A query's window runs from when its last fetch actually started, whatever started it.
+		((typeof key === "string" ? fetchStarted.get(key) : lastRun.get(key)) ??
+			Number.NEGATIVE_INFINITY) + pending.throttle;
 
 	function schedule(): void {
 		let due = Number.POSITIVE_INFINITY;
@@ -372,7 +374,7 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			if (dueAt(key, value) > now + TIMER_SLACK_MS) continue;
 			pending.delete(key);
 			due.set(key, value);
-			lastRun.set(key, now);
+			if (typeof key !== "string") lastRun.set(key, now);
 		}
 		return due;
 	}
@@ -421,7 +423,7 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 				if ((fetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) > pending.since) continue;
 				// List reads ignore the abort signal, so cancelling would only make the server do the
 				// work again, and steady changes could keep a slow list from ever finishing.
-				trailing.set(hash, merge(trailing.get(hash), pending.arrival));
+				trailing.set(hash, mergePending(trailing.get(hash), pending));
 			} else if ((dataFetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) <= pending.since) {
 				now.add(hash);
 			}
@@ -441,15 +443,14 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		);
 	}
 
+	/** Queues a query that a change reached mid-fetch, now that the fetch settled. */
 	function refetchTrailing(query: Query): void {
-		const arrival = trailing.get(query.queryHash);
-		if (!arrival || query.state.fetchStatus !== "idle") return;
-		trailing.delete(query.queryHash);
-		const holder = [...registry.registrations].find(
-			(registration) => registration.held() && owns(registration, query),
-		);
-		if (holder) holder.arrived(arrival);
-		else invalidate(new Set([query.queryHash]));
+		const hash = query.queryHash;
+		const pending = trailing.get(hash);
+		if (!pending || query.state.fetchStatus !== "idle") return;
+		trailing.delete(hash);
+		pendingQueries.set(hash, mergePending(pendingQueries.get(hash), pending));
+		schedule();
 	}
 
 	function sendTopics(): void {

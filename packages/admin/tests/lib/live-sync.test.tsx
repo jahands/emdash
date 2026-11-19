@@ -117,6 +117,27 @@ describe("LiveSyncProvider", () => {
 		expect(reads.menus).toBe(1);
 	});
 
+	it("waits out the throttle after a read that was running when a change arrived", async () => {
+		const socket = await connect();
+		const starts: number[] = [];
+		const counted = reads.posts;
+		let release = () => {};
+		postsGate = new Promise((resolve) => (release = resolve));
+		void queryClient.refetchQueries({ queryKey: LIST.scope });
+		await vi.waitFor(() => expect(reads.posts).toBe(counted + 1));
+		starts.push(Date.now());
+
+		socket.change("content/posts", { op: "create" });
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		postsGate = null;
+		release();
+		await new Promise((resolve) => setTimeout(resolve, 600));
+		expect(reads.posts).toBe(counted + 1);
+
+		await vi.waitFor(() => expect(reads.posts).toBe(counted + 2), { timeout: 3000 });
+		expect(Date.now() - starts[0]!).toBeGreaterThanOrEqual(1900);
+	});
+
 	it("refetches a list less often for its entries' updates than for entries added or removed", async () => {
 		const socket = await connect();
 
@@ -180,7 +201,8 @@ describe("LiveSyncProvider", () => {
 		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2), { timeout: 3000 });
 		FakeSocket.instances[1]!.open();
 		FakeSocket.instances[1]!.presence([], true);
-		await vi.waitFor(() => expect(reads).toEqual({ menus: 3, posts: 2 }));
+		// The menus refetch waits out the throttle from the read above.
+		await vi.waitFor(() => expect(reads).toEqual({ menus: 3, posts: 2 }), { timeout: 3000 });
 	});
 
 	it("moves to a new socket once the hub hands the old one off, without refetching", async () => {
