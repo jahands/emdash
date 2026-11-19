@@ -67,7 +67,8 @@ export function prefetchWidgetAreas(names: readonly string[]): Promise<unknown> 
 	return Promise.all(
 		names.map((name) =>
 			requestCached(`${WIDGET_AREA_READ}${name}`, async () => {
-				const loaded = await areas;
+				// A layout read may already be waiting on this entry, so a failed batch falls back.
+				const loaded = await areas.catch(() => null);
 				return loaded ? (loaded.get(name) ?? null) : loadWidgetArea(name);
 			}),
 		),

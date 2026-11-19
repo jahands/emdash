@@ -132,6 +132,24 @@ describeEachDialect("widget area request cache", (dialect) => {
 		expect(areas.find((area) => area.name === "footer")).toEqual(await getWidgetArea("footer"));
 	});
 
+	it("loads each area on its own when the prefetch's batched read fails", async () => {
+		const render = () => Promise.all([getWidgetArea("footer"), getWidgetArea("sidebar")]);
+		const expected = await renderWithLayoutPrefetch("/", render);
+		const plugin: KyselyPlugin = {
+			transformQuery(args) {
+				const { sql } = ctx.db.getExecutor().compileQuery(args.node, args.queryId);
+				if (sql.includes(" in (")) throw new Error("batch failed");
+				return args.node;
+			},
+			async transformResult(args) {
+				return args.result;
+			},
+		};
+		vi.mocked(getDb).mockResolvedValue(ctx.db.withPlugin(plugin));
+
+		expect(await renderWithLayoutPrefetch("/", render)).toEqual(expected);
+	});
+
 	it("serves completed prefetch results without further queries", async () => {
 		await renderWithLayoutPrefetch("/", async () => {
 			await getWidgetArea("footer");
