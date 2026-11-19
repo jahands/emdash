@@ -460,7 +460,8 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		for (const [hash, pending] of queries) {
 			const query = cache.get(hash);
 			if (!query) continue;
-			if (query.state.fetchStatus === "fetching") {
+			// A fetch paused between retries, as in a hidden tab, is still to settle.
+			if (query.state.fetchStatus !== "idle") {
 				// List reads ignore the abort signal, so cancelling would only make the server do the
 				// work again, and steady changes could keep a slow list from ever finishing. Queued
 				// again once the fetch settles, the change is dropped only if that fetch succeeded

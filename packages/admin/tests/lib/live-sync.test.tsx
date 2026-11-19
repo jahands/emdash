@@ -1,4 +1,5 @@
 import {
+	focusManager,
 	QueryClientProvider,
 	useInfiniteQuery,
 	useQuery,
@@ -387,6 +388,60 @@ describe("LiveSyncProvider", () => {
 		setDirty(false);
 
 		await vi.waitFor(() => expect(settingsReads).toBe(3), { timeout: 6000 });
+	});
+
+	it("keeps a held change queued while the save's read waits to retry in a hidden tab", async () => {
+		let settingsReads = 0;
+		let failures = 0;
+		let setDirty: (dirty: boolean) => void = () => {};
+		function Settings() {
+			const [dirty, setState] = React.useState(true);
+			setDirty = setState;
+			useQuery({
+				queryKey: ["settings-form"],
+				queryFn: async () => {
+					settingsReads++;
+					if (failures > 0) {
+						failures--;
+						throw new Error("offline");
+					}
+					return {};
+				},
+				retry: 1,
+				retryDelay: 10,
+			});
+			useLiveQueries({ topics: ["settings"], queryKeys: [["settings-form"]], dirty });
+			return null;
+		}
+		await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Settings />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["settings"]));
+		await vi.waitFor(() => expect(settingsReads).toBe(1));
+		socket.change("settings");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		try {
+			failures = 2;
+			focusManager.setFocused(false);
+			void queryClient.invalidateQueries({ queryKey: ["settings-form"] }).catch(() => undefined);
+			await vi.waitFor(() =>
+				expect(queryClient.getQueryState(["settings-form"])?.fetchStatus).toBe("paused"),
+			);
+			setDirty(false);
+			await new Promise((resolve) => setTimeout(resolve, 2500));
+		} finally {
+			focusManager.setFocused(undefined);
+		}
+
+		await vi.waitFor(() => expect(settingsReads).toBe(4), { timeout: 4000 });
 	});
 
 	it("lets the save's own read cover a change held under unsaved edits", async () => {
