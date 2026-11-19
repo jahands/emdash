@@ -124,4 +124,22 @@ describe("openLiveConnection", () => {
 		expect(events.changes).toHaveBeenCalledOnce();
 		expect(events.resync).toHaveBeenCalledOnce();
 	});
+
+	it("shows the replacement's rosters when the old socket drops before its handoff", async () => {
+		const old = await connected(["content/posts"]);
+		vi.spyOn(Math, "random").mockReturnValue(0);
+		old.push({ t: "renew" });
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(2));
+		const next = FakeSocket.instances[1]!;
+		next.open();
+		const ana = { userId: "ana", name: "Ana", clientId: "tab-ana", activity: "editing" as const };
+		next.ack([{ topic: "content/posts/01A", people: [ana] }]);
+
+		old.drop(1006);
+
+		expect(events.presence).toHaveBeenLastCalledWith(
+			[{ topic: "content/posts/01A", people: [ana] }],
+			true,
+		);
+	});
 });

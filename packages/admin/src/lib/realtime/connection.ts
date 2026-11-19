@@ -113,6 +113,20 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 	let topicsVersion = 0;
 	/** The version of the last topics frame sent on each socket. */
 	const sentVersion = new WeakMap<WebSocket, number>();
+	/**
+	 * Who each socket's rosters say is where. Only the tab's socket reports them, so a replacement
+	 * reports its own once it takes over.
+	 */
+	const rosters = new WeakMap<WebSocket, Map<string, LivePresenceEntry[]>>();
+
+	function keepRosters(ws: WebSocket, places: LivePresencePlace[], all: boolean): void {
+		const known = (all ? undefined : rosters.get(ws)) ?? new Map<string, LivePresenceEntry[]>();
+		for (const { topic, people } of places) {
+			if (people.length > 0) known.set(topic, people);
+			else known.delete(topic);
+		}
+		rosters.set(ws, known);
+	}
 
 	/** Whether the hub has the last topics the tab sent on `ws` in effect. */
 	function caughtUp(ws: WebSocket): boolean {
@@ -205,6 +219,10 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 			retired.add(old);
 			old.close(1000, "Renewed");
 		}
+		events.presence(
+			Array.from(rosters.get(ws) ?? [], ([topic, people]) => ({ topic, people })),
+			true,
+		);
 		cancelRenewal();
 		renewAtOrBefore(endOf(ws) - RENEW_BEFORE_MS * (0.5 + Math.random()));
 		if (missed && caughtUp(ws)) {
@@ -252,7 +270,8 @@ export function openLiveConnection(events: LiveConnectionEvents): LiveConnection
 					missed = false;
 					events.resync(Date.now());
 				}
-				events.presence(frame.places, frame.all);
+				keepRosters(ws, frame.places, frame.all);
+				if (ws === socket) events.presence(frame.places, frame.all);
 			} else if (frame?.t === "handoff" && ws === socket) {
 				// A handoff for topics the replacement has since replaced doesn't cover them; one without
 				// a version, from a hub between the two, leaves the move to the fallback below.
