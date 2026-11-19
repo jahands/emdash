@@ -249,6 +249,51 @@ describe("LiveSyncProvider", () => {
 		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a", "b", "a"]));
 	});
 
+	it("keeps a held change queued when the save's own read fails", async () => {
+		let settingsReads = 0;
+		let failNext = false;
+		let setDirty: (dirty: boolean) => void = () => {};
+		function Settings() {
+			const [dirty, setState] = React.useState(true);
+			setDirty = setState;
+			useQuery({
+				queryKey: ["settings-form"],
+				queryFn: async () => {
+					settingsReads++;
+					if (failNext) {
+						failNext = false;
+						// Still running when the caught-up change comes due, two seconds on.
+						await new Promise((resolve) => setTimeout(resolve, 2500));
+						throw new Error("offline");
+					}
+					return {};
+				},
+			});
+			useLiveQueries({ topics: ["settings"], queryKeys: [["settings-form"]], dirty });
+			return null;
+		}
+		await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Settings />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["settings"]));
+		await vi.waitFor(() => expect(settingsReads).toBe(1));
+		socket.change("settings");
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		failNext = true;
+		void queryClient.invalidateQueries({ queryKey: ["settings-form"] }).catch(() => undefined);
+		setDirty(false);
+
+		await vi.waitFor(() => expect(settingsReads).toBe(3), { timeout: 6000 });
+	});
+
 	it("lets the save's own read cover a change held under unsaved edits", async () => {
 		let settingsReads = 0;
 		let setDirty: (dirty: boolean) => void = () => {};

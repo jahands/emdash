@@ -454,9 +454,10 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			const query = cache.get(hash);
 			if (!query) continue;
 			if (query.state.fetchStatus === "fetching") {
-				if ((fetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) > pending.since) continue;
 				// List reads ignore the abort signal, so cancelling would only make the server do the
-				// work again, and steady changes could keep a slow list from ever finishing.
+				// work again, and steady changes could keep a slow list from ever finishing. Queued
+				// again once the fetch settles, the change is dropped only if that fetch succeeded
+				// and started after it.
 				trailing.set(hash, mergePending(trailing.get(hash), pending));
 			} else if ((dataFetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) <= pending.since) {
 				now.add(hash);
