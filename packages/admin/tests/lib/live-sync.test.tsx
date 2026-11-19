@@ -209,6 +209,47 @@ describe("LiveSyncProvider", () => {
 		expect(screen.container.textContent).toBe("Current");
 	});
 
+	it("lets the save's own read cover a change held under unsaved edits", async () => {
+		let settingsReads = 0;
+		let setDirty: (dirty: boolean) => void = () => {};
+		function Settings() {
+			const [dirty, setState] = React.useState(true);
+			setDirty = setState;
+			useQuery({
+				queryKey: ["settings-form"],
+				queryFn: () => {
+					settingsReads++;
+					return Promise.resolve({});
+				},
+			});
+			const live = useLiveQueries({ topics: ["settings"], queryKeys: [["settings-form"]], dirty });
+			return <output>{live.changedElsewhere ? "Changed elsewhere" : "Current"}</output>;
+		}
+		const screen = await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Settings />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["settings"]));
+		await vi.waitFor(() => expect(settingsReads).toBe(1));
+		socket.change("settings");
+		await vi.waitFor(() => expect(screen.container.textContent).toBe("Changed elsewhere"));
+		await new Promise((resolve) => setTimeout(resolve, 20));
+
+		await queryClient.invalidateQueries({ queryKey: ["settings-form"] });
+		setDirty(false);
+		expect(settingsReads).toBe(2);
+		await new Promise((resolve) => setTimeout(resolve, 2500));
+
+		expect(settingsReads).toBe(2);
+		expect(screen.container.textContent).toBe("Current");
+	});
+
 	it("refetches a list less often for its entries' updates than for entries added or removed", async () => {
 		const socket = await connect();
 

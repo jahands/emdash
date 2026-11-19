@@ -56,8 +56,8 @@ interface LiveRegistration {
 	readonly queryKeys: readonly QueryKey[];
 	/** Whether refetching the queries now would replace unsaved edits. */
 	held(): boolean;
-	/** Told instead of refetching while held. */
-	arrived(arrival: Arrival): void;
+	/** Told instead of refetching while held. `since` is as in {@link Pending}. */
+	arrived(arrival: Arrival, since: number): void;
 }
 
 interface LiveRegistry {
@@ -66,6 +66,8 @@ interface LiveRegistry {
 	onChange: (() => void) | null;
 	/** Told when a registration goes, so nothing queued for it runs after. */
 	onRemove: ((registration: LiveRegistration) => void) | null;
+	/** Queues the changes a registration was told about while held, once it no longer is. */
+	onCatchUp: ((registration: LiveRegistration, arrival: Arrival, since: number) => void) | null;
 	/** Where mounted screens say the tab is. The last one mounted wins. */
 	readonly places: LivePlace[];
 	announce(place: LivePlace): () => void;
@@ -112,6 +114,7 @@ function createRegistry(): LiveRegistry {
 		},
 		onChange: null,
 		onRemove: null,
+		onCatchUp: null,
 		places: [],
 		announce(place) {
 			registry.places.push(place);
@@ -246,6 +249,9 @@ export function useLiveQueries({
 	const registry = React.useContext(LiveRegistryContext);
 	const queryClient = useQueryClient();
 	const [missed, setMissed] = React.useState<"none" | Arrival>("none");
+	/** When the latest change held back arrived, as in {@link Pending}. */
+	const missedSinceRef = React.useRef(Number.NEGATIVE_INFINITY);
+	const registrationRef = React.useRef<LiveRegistration | null>(null);
 	const dirtyRef = React.useRef(dirty);
 	dirtyRef.current = dirty;
 	const queryKeysRef = React.useRef(queryKeys);
@@ -258,12 +264,22 @@ export function useLiveQueries({
 	React.useEffect(() => {
 		if (!registry) return;
 		setMissed("none");
-		return registry.add({
+		missedSinceRef.current = Number.NEGATIVE_INFINITY;
+		const registration: LiveRegistration = {
 			topics: topicsKey ? topicsKey.split("\n") : NO_TOPICS,
 			queryKeys: queryKeysRef.current,
 			held: () => dirtyRef.current,
-			arrived: (arrival) => setMissed((previous) => (previous === "change" ? previous : arrival)),
-		});
+			arrived: (arrival, since) => {
+				missedSinceRef.current = Math.max(missedSinceRef.current, since);
+				setMissed((previous) => (previous === "change" ? previous : arrival));
+			},
+		};
+		registrationRef.current = registration;
+		const remove = registry.add(registration);
+		return () => {
+			if (registrationRef.current === registration) registrationRef.current = null;
+			remove();
+		};
 	}, [registry, topicsKey, queryKeysKey]);
 
 	const refetch = React.useCallback(
@@ -274,11 +290,19 @@ export function useLiveQueries({
 		[queryClient],
 	);
 
+	// Through the shared queue, so a read that started after the change, such as the save's own,
+	// already covers it.
 	React.useEffect(() => {
 		if (dirty || missed === "none") return;
 		setMissed("none");
-		void refetch();
-	}, [dirty, missed, refetch]);
+		const registration = registrationRef.current;
+		if (registry?.onCatchUp && registration) {
+			registry.onCatchUp(registration, missed, missedSinceRef.current);
+		} else {
+			void refetch();
+		}
+		missedSinceRef.current = Number.NEGATIVE_INFINITY;
+	}, [dirty, missed, refetch, registry]);
 
 	const loadLatest = React.useCallback(() => {
 		setMissed("none");
@@ -395,13 +419,13 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		}
 
 		const held = [...registry.registrations].filter((registration) => registration.held());
-		const told = new Map<LiveRegistration, Arrival>();
-		const tell = (registration: LiveRegistration, arrival: Arrival) =>
-			told.set(registration, merge(told.get(registration), arrival));
+		const told = new Map<LiveRegistration, Pending>();
+		const tell = (registration: LiveRegistration, pending: Pending) =>
+			told.set(registration, mergePending(told.get(registration), pending));
 		// A registration's queries queue like any other query, so they share its throttle.
 		for (const [registration, pending] of takeDue(pendingRegistrations, startedAt)) {
 			if (held.includes(registration)) {
-				tell(registration, pending.arrival);
+				tell(registration, pending);
 				continue;
 			}
 			for (const query of cache.getAll()) {
@@ -420,9 +444,10 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 			const holder = query && held.find((registration) => owns(registration, query));
 			if (!holder) continue;
 			queries.delete(hash);
-			tell(holder, pending.arrival);
+			tell(holder, pending);
 		}
-		for (const [registration, arrival] of told) registration.arrived(arrival);
+		for (const [registration, pending] of told)
+			registration.arrived(pending.arrival, pending.since);
 
 		const now = new Set<string>();
 		for (const [hash, pending] of queries) {
@@ -505,6 +530,17 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		pendingRegistrations.delete(registration);
 		lastRun.delete(registration);
 	};
+	registry.onCatchUp = (registration, arrival, since) => {
+		pendingRegistrations.set(
+			registration,
+			mergePending(pendingRegistrations.get(registration), {
+				arrival,
+				since,
+				throttle: THROTTLE_MS,
+			}),
+		);
+		schedule();
+	};
 	sendTopics();
 
 	// A screen that swaps its activity remounts its announcement; one frame goes out once it settles.
@@ -521,6 +557,7 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		unsubscribe();
 		registry.onChange = null;
 		registry.onRemove = null;
+		registry.onCatchUp = null;
 		registry.onPlace = null;
 		window.clearTimeout(flushTimer);
 		window.clearTimeout(topicsTimer);
