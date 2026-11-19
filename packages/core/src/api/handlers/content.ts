@@ -3249,7 +3249,7 @@ export async function handleContentCompare(
 		live: Record<string, unknown> | null;
 		draft: Record<string, unknown> | null;
 		/** Which revisions were compared, as the revision list identifies them. */
-		revisions: {
+		revisions?: {
 			live: { id: string; fingerprint: string } | null;
 			draft: { id: string; fingerprint: string } | null;
 		};

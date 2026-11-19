@@ -25,7 +25,8 @@ import {
 } from "./staged-references.js";
 
 export interface RevisionListResponse {
-	items: Array<RevisionWithAuthor & { fingerprint: string }>;
+	/** `fingerprint` is optional so fixtures written for earlier versions still fit. */
+	items: Array<RevisionWithAuthor & { fingerprint?: string }>;
 	total: number;
 }
 
