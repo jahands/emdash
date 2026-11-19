@@ -491,6 +491,14 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 		const pending = trailing.get(hash);
 		if (!pending || query.state.fetchStatus !== "idle") return;
 		trailing.delete(hash);
+		// A fetch that started before the change cleared its query's staleness on success, so it's
+		// marked stale again at once; a screen opened before the queue runs then reads it.
+		if ((dataFetchStarted.get(hash) ?? Number.NEGATIVE_INFINITY) <= pending.since) {
+			void queryClient.invalidateQueries({
+				predicate: (other) => other.queryHash === hash,
+				refetchType: "none",
+			});
+		}
 		pendingQueries.set(hash, mergePending(pendingQueries.get(hash), pending));
 		schedule();
 	}
@@ -535,8 +543,17 @@ function startLiveSync(queryClient: QueryClient, registry: LiveRegistry): () => 
 	});
 	registry.onChange = scheduleTopics;
 	registry.onRemove = (registration) => {
-		// Its queries stay cached; marked stale, the next screen to show them reads them again.
-		if (pendingRegistrations.delete(registration)) {
+		// Its queries stay cached; marked stale, the next screen to show them reads them again. One
+		// mid-fetch keeps the change until that fetch settles, as its answer would clear the mark.
+		const pending = pendingRegistrations.get(registration);
+		if (pending) {
+			pendingRegistrations.delete(registration);
+			for (const query of cache.getAll()) {
+				if (!owns(registration, query)) continue;
+				if (query.state.fetchStatus !== "idle") {
+					trailing.set(query.queryHash, mergePending(trailing.get(query.queryHash), pending));
+				}
+			}
 			void queryClient.invalidateQueries({
 				predicate: (query) => owns(registration, query),
 				refetchType: "none",

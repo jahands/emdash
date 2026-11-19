@@ -295,6 +295,55 @@ describe("LiveSyncProvider", () => {
 		await vi.waitFor(() => expect(entryReads).toEqual(["a", "b", "a"]));
 	});
 
+	it("reads an entry again on return when an older read finished after the screen left it", async () => {
+		const entryReads: string[] = [];
+		let releaseA = () => {};
+		let holdA = false;
+		let show: (id: string) => void = () => {};
+		function Entry() {
+			const [id, setId] = React.useState("a");
+			show = setId;
+			useQuery({
+				queryKey: ["entry", id],
+				queryFn: async () => {
+					entryReads.push(id);
+					if (id === "a" && holdA) {
+						holdA = false;
+						await new Promise<void>((resolve) => (releaseA = resolve));
+					}
+					return id;
+				},
+				staleTime: 60_000,
+				gcTime: 60_000,
+			});
+			useLiveQueries({ topics: [`content/posts/${id}`], queryKeys: [["entry", id]], dirty: false });
+			return null;
+		}
+		await render(
+			<QueryClientProvider client={queryClient}>
+				<LiveSyncProvider enabled>
+					<Entry />
+				</LiveSyncProvider>
+			</QueryClientProvider>,
+		);
+		await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+		const socket = FakeSocket.instances[0]!;
+		socket.open();
+		await vi.waitFor(() => expect(socket.topics()).toEqual(["content/posts/a"]));
+		holdA = true;
+		socket.change("content/posts/a", { op: "update" });
+		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a"]));
+		socket.change("content/posts/a", { op: "update" });
+
+		show("b");
+		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a", "b"]));
+		releaseA();
+		await new Promise((resolve) => setTimeout(resolve, 50));
+		show("a");
+
+		await vi.waitFor(() => expect(entryReads).toEqual(["a", "a", "b", "a"]));
+	});
+
 	it("keeps a held change queued when the save's own read fails", async () => {
 		let settingsReads = 0;
 		let failNext = false;
