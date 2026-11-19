@@ -566,6 +566,16 @@ export const contentCompareResponseSchema = z
 		hasChanges: z.boolean(),
 		live: z.record(z.string(), z.unknown()).nullable(),
 		draft: z.record(z.string(), z.unknown()).nullable(),
+		revisions: z
+			.object({
+				live: z.object({ id: z.string(), fingerprint: z.string() }).nullable(),
+				draft: z.object({ id: z.string(), fingerprint: z.string() }).nullable(),
+			})
+			.optional()
+			.meta({
+				description:
+					"The compared revisions, with the fingerprint the revision list gives each, to tell whether either changed in place since",
+			}),
 	})
 	.meta({ id: "ContentCompareResponse" });
 

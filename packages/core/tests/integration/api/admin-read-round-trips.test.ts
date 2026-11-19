@@ -208,6 +208,11 @@ describeEachDialect("admin read round trips", (dialect) => {
 		expect(data.live.title).toBe("Post 3");
 		expect(data.draft.title).toBe("Pending title");
 		expect(sequentialWaves(result.spans)).toBeLessThanOrEqual(COMPARE_MAX_WAVES);
+		const listed = await handlers.handleRevisionList("posts", draftEntryId);
+		if (!listed.success) throw new Error(listed.error.message);
+		const listedDraft = listed.data.items.find((item) => item.id === data.revisions.draft.id);
+		expect(listedDraft?.fingerprint).toBe(data.revisions.draft.fingerprint);
+		expect(data.revisions.live.fingerprint).not.toBe(data.revisions.draft.fingerprint);
 	});
 
 	it("builds the manifest within the round-trip budget", async () => {

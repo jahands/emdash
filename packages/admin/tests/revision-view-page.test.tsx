@@ -229,8 +229,17 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 			return jsonResponse({ data: { enabled: false, holder: null, heldByCaller: false } });
 		}
 		if (method === "GET" && url === "/_emdash/api/content/posts/post_1/compare") {
+			const [draft] = revisions;
 			return jsonResponse({
-				data: { hasChanges: true, live: LIVE_DATA, draft: revisions[0]?.data ?? null },
+				data: {
+					hasChanges: true,
+					live: LIVE_DATA,
+					draft: draft?.data ?? null,
+					revisions: {
+						live: null,
+						draft: draft ? { id: draft.id, fingerprint: JSON.stringify(draft.data) } : null,
+					},
+				},
 			});
 		}
 		if (method === "GET" && url.startsWith("/_emdash/api/content/posts/post_1/revisions")) {
@@ -243,6 +252,7 @@ function createMockServer({ draftKept = false }: { draftKept?: boolean } = {}) {
 						collection: "posts",
 						entryId: "post_1",
 						data,
+						fingerprint: JSON.stringify(data),
 						authorId: null,
 						author: null,
 						createdAt,
@@ -467,6 +477,25 @@ describe("ContentEditPage revision view", () => {
 
 		server.checkpointDraft({ title: "Checkpointed title" });
 		await screen.queryClient.invalidateQueries({ queryKey: ["revisions"] });
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
+	});
+
+	it("reads the comparison again when the first list it sees has the draft changed since", async () => {
+		server = createMockServer();
+		server.holdNextListRead();
+		const screen = await renderEditPage();
+		const compareReads = () =>
+			server?.requests.filter((request) => request.url.endsWith("/post_1/compare")) ?? [];
+		await screen.getByRole("button", { name: "View changes" }).click();
+		await vi.waitFor(() => expect(compareReads()).toHaveLength(1));
+		await vi.waitFor(() =>
+			expect(screen.queryClient.isFetching({ queryKey: ["contentCompare"] })).toBe(0),
+		);
+
+		server.checkpointDraft({ title: "Checkpointed title" });
+		await screen.queryClient.cancelQueries({ queryKey: ["revisions"] });
+		await screen.queryClient.refetchQueries({ queryKey: ["revisions"] });
+
 		await vi.waitFor(() => expect(compareReads()).toHaveLength(2));
 	});
 

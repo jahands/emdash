@@ -268,31 +268,24 @@ export function useRevisionView({
 				? previous
 				: undefined,
 	});
-	// A save that keeps the draft's id leaves the comparison's key as it was, so it's read again
-	// when the list shows that revision's content changed. Seeing a revision for the first time,
-	// as a longer list can, is no change.
+	// A save that keeps the draft's id leaves the comparison's key as it was. When a list read after
+	// the comparison shows either revision changed in place since, the comparison is read again; a
+	// list older than the comparison, such as a cached one, can't say.
 	const queryClient = useQueryClient();
-	const listedDraft = list?.items.find((item) => item.id === draftRevisionId);
-	const listedLive = list?.items.find((item) => item.id === liveRevisionId);
-	const seenContentRef = React.useRef({ entry: "", contents: new Map<string, string>() });
+	const comparison = compareQuery.data;
+	const compareReadAt = compareQuery.dataUpdatedAt;
+	const listReadAt = query.dataUpdatedAt;
 	React.useEffect(() => {
-		const entry = `${collection}:${entryId ?? ""}`;
-		const seen = seenContentRef.current;
-		if (seen.entry !== entry) seenContentRef.current = { entry, contents: new Map() };
-		const { contents } = seenContentRef.current;
-		let changed = false;
-		for (const item of [listedDraft, listedLive]) {
-			if (!item) continue;
-			const content = JSON.stringify(item.data);
-			const before = contents.get(item.id);
-			contents.set(item.id, content);
-			if (before !== undefined && before !== content) changed = true;
-		}
+		if (!comparison?.revisions || !list || listReadAt <= compareReadAt) return;
+		const changed = [comparison.revisions.draft, comparison.revisions.live].some((compared) => {
+			const listed = compared && list.items.find((item) => item.id === compared.id);
+			return listed?.fingerprint !== undefined && listed.fingerprint !== compared?.fingerprint;
+		});
 		if (!changed) return;
 		void queryClient.invalidateQueries({
 			queryKey: ["contentCompare", collection, entryId ?? ""],
 		});
-	}, [listedDraft, listedLive, queryClient, collection, entryId]);
+	}, [comparison, compareReadAt, list, listReadAt, queryClient, collection, entryId]);
 	const compared = comparing ? compareQuery.data : undefined;
 	const liveDiff = React.useMemo(() => {
 		if (!compared) return null;

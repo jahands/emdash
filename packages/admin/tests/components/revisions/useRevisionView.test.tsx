@@ -180,7 +180,9 @@ describe("useRevisionView's comparison with the live version", () => {
 		);
 		(fetchRevisions as Mock).mockImplementation(
 			async (_collection: string, _entry: string, options?: { limit?: number }) => ({
-				items: all.slice(0, options?.limit ?? all.length),
+				items: all
+					.slice(0, options?.limit ?? all.length)
+					.map((item) => ({ ...item, fingerprint: `fp-${item.id}` })),
 				total: all.length,
 			}),
 		);
@@ -188,6 +190,10 @@ describe("useRevisionView's comparison with the live version", () => {
 			hasChanges: true,
 			live: { title: "Version 1" },
 			draft: { title: "Version 30" },
+			revisions: {
+				live: { id: "rev-1", fingerprint: "fp-rev-1" },
+				draft: { id: "rev-30", fingerprint: "fp-rev-30" },
+			},
 		});
 		const screen = await render(<DraftChanges />);
 

@@ -77,6 +77,7 @@ import {
 	type ResolvedReferenceTargets,
 	writeReferenceSelection,
 } from "./relations.js";
+import { revisionFingerprint } from "./revision.js";
 import {
 	applyStagedReferences,
 	liveReferenceData,
@@ -3229,6 +3230,15 @@ export async function handleContentDiscardDraft(
 /**
  * Compare live and draft revisions
  */
+/** A revision as the revision list identifies it, or null for none. */
+async function identifyRevision(
+	revision: Revision | undefined,
+): Promise<{ id: string; fingerprint: string } | null> {
+	return revision
+		? { id: revision.id, fingerprint: await revisionFingerprint(revision.data) }
+		: null;
+}
+
 export async function handleContentCompare(
 	db: Kysely<Database>,
 	collection: string,
@@ -3238,6 +3248,11 @@ export async function handleContentCompare(
 		hasChanges: boolean;
 		live: Record<string, unknown> | null;
 		draft: Record<string, unknown> | null;
+		/** Which revisions were compared, as the revision list identifies them. */
+		revisions: {
+			live: { id: string; fingerprint: string } | null;
+			draft: { id: string; fingerprint: string } | null;
+		};
 	}>
 > {
 	try {
@@ -3294,6 +3309,7 @@ export async function handleContentCompare(
 					entry.draftRevisionId !== null && entry.draftRevisionId !== entry.liveRevisionId,
 				live: withReferences(live?.data, {}) ?? null,
 				draft: withReferences(draft?.data, readStagedReferences(draft?.data) ?? {}) ?? null,
+				revisions: { live: await identifyRevision(live), draft: await identifyRevision(draft) },
 			},
 		};
 	} catch (error) {

@@ -592,20 +592,23 @@ export async function discardDraft(
 /**
  * Compare live and draft revisions
  */
-export async function compareRevisions(
-	collection: string,
-	id: string,
-): Promise<{
+export interface RevisionComparison {
 	hasChanges: boolean;
 	live: Record<string, unknown> | null;
 	draft: Record<string, unknown> | null;
-}> {
+	/** The compared revisions, with the fingerprints the revision list gives them. */
+	revisions?: {
+		live: { id: string; fingerprint: string } | null;
+		draft: { id: string; fingerprint: string } | null;
+	};
+}
+
+export async function compareRevisions(
+	collection: string,
+	id: string,
+): Promise<RevisionComparison> {
 	const response = await apiFetch(`${API_BASE}/content/${collection}/${id}/compare`);
-	return parseApiResponse<{
-		hasChanges: boolean;
-		live: Record<string, unknown> | null;
-		draft: Record<string, unknown> | null;
-	}>(response, i18n._(msg`Failed to compare revisions`));
+	return parseApiResponse<RevisionComparison>(response, i18n._(msg`Failed to compare revisions`));
 }
 
 // =============================================================================
@@ -628,6 +631,8 @@ export interface RevisionAuthor {
 }
 
 export interface RevisionListItem extends Revision {
+	/** Changes exactly when the revision's stored data does, including a change in place. */
+	fingerprint?: string;
 	/** `null` when no author was recorded or the account no longer exists. */
 	author: RevisionAuthor | null;
 	/**
